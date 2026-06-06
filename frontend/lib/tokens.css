@@ -232,6 +232,20 @@ button { font-family:inherit; }
 .usebar-row .ub i { display:block; height:100%; }
 .usebar-row .uv { width:64px; text-align:right; color:var(--tx-0); }
 
+/* activity feed row (S14) — ported from mock screens.css .feed-row */
+.feed { display:flex; flex-direction:column; }
+.feed-row { display:flex; gap:13px; padding:13px 16px; border-bottom:1px solid color-mix(in oklch, var(--line) 60%, transparent); cursor:pointer; align-items:flex-start; }
+.feed-row:hover { background:var(--bg-2); }
+.feed-row .fr-ic { margin-top:1px; }
+.feed-row .fr-body { flex:1; min-width:0; }
+.feed-row .fr-t { font-size:13px; color:var(--tx-0); line-height:1.4; }
+.feed-row .fr-t b { font-family:var(--mono); font-size:11.5px; color:var(--accent-soft); margin-right:4px; }
+.feed-row .fr-s { font-family:var(--mono); font-size:10.5px; color:var(--tx-2); margin-top:3px; display:flex; gap:12px; flex-wrap:wrap; }
+.feed-row .fr-out { font-family:var(--mono); font-size:11px; color:var(--tx-1); background:var(--bg-0); border:1px solid var(--line); border-radius:7px; padding:9px 11px; margin-top:9px; line-height:1.5; white-space:pre-wrap; display:none; }
+.feed-row.open .fr-out { display:block; }
+.feed-row .fr-chev { color:var(--tx-2); transition:transform .15s; flex-shrink:0; margin-top:2px; }
+.feed-row .fr-chev svg { width:14px; height:14px; }
+
 /* routine card + trigger pill (S13) — ported from mock screens.css */
 .routine-card { background:var(--bg-1); border:1px solid var(--line); border-radius:var(--r); padding:15px 16px; display:flex; flex-direction:column; gap:11px; position:relative; overflow:hidden; }
 .routine-card.off { opacity:.6; }

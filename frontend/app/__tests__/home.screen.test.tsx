@@ -4,13 +4,14 @@
  * getMarket) the useHome hook calls — NOT the lower-level apiGet (module-closure
  * gotcha: a partial apiGet mock doesn't intercept the named fns' internal calls).
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
 const getFinance = vi.fn();
 const getProjects = vi.fn();
 const getMarket = vi.fn();
 const getClaudeUsage = vi.fn();
+const getActivity = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", async () => {
     getProjects: () => getProjects(),
     getMarket: () => getMarket(),
     getClaudeUsage: () => getClaudeUsage(),
+    getActivity: (...a: unknown[]) => getActivity(...a),
   };
 });
 
@@ -26,11 +28,14 @@ import HomePage from "../page";
 
 const USAGE = { success: true, data: { model: "claude-opus", used: 37727, cap: 200000, pct: 18.9, remaining: 162273, resetIn: null, weekly: null, series: [], today: 37727, avgPerDay: 1000, peak: { date: "2026-06-06", label: "T6", tokens: 5000 }, byModel: [], costUSD: 39145, byProject: null, asOf: "2026-06-06", stale: false, source: "stats-cache" } };
 
+const ACTIVITY = { success: true, data: { runs: [{ id: 51, routineId: "market-poll", routineName: "Market Poll", status: "ok", detail: "polled 5", startedAt: "2026-06-06T14:10:00Z", finishedAt: "2026-06-06T14:10:00Z", durationMs: 405 }], count: 1, runsToday: 1, okCount: 1, warnCount: 0, errorCount: 0, successRate: 100, avgDurationMs: 405, byRoutine: [] } };
+
 afterEach(() => {
   getFinance.mockReset();
   getProjects.mockReset();
   getMarket.mockReset();
   getClaudeUsage.mockReset();
+  getActivity.mockReset();
 });
 
 const FIN = { success: true, data: {
@@ -50,6 +55,10 @@ const MKT = { success: true, data: {
 } };
 
 describe("S1 Home Command Center (frontend-owned)", () => {
+  // HomeActivityTile self-fetches /activity (per-tile fail-open) — default it OK
+  // so the unrelated tile never errors/console-noises in these tests.
+  beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY); });
+
   it("all tiles render when all 3 endpoints succeed", async () => {
     getFinance.mockResolvedValueOnce(FIN);
     getProjects.mockResolvedValueOnce(PROJ);
@@ -62,7 +71,7 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     expect(screen.getByTestId("home-alerts")).toBeInTheDocument();
   });
 
-  it("Brief + Activity remain coming-soon stubs (Claude is now LIVE, not a stub)", async () => {
+  it("Brief remains a coming-soon stub; Claude + Activity are now LIVE (not stubs)", async () => {
     getFinance.mockResolvedValueOnce(FIN);
     getProjects.mockResolvedValueOnce(PROJ);
     getMarket.mockResolvedValueOnce(MKT);
@@ -70,10 +79,32 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     render(<HomePage />);
     await waitFor(() => expect(screen.getByTestId("home-brief-stub")).toBeInTheDocument());
     expect(screen.getByTestId("home-brief-stub")).toHaveTextContent(/Sắp có/);
-    expect(screen.getByTestId("home-activity-stub")).toHaveTextContent(/Sắp có/);
-    expect(screen.getByTestId("home-activity-stub")).not.toHaveTextContent(/\d/);
-    // Claude stub is GONE (swapped to live tile)
+    // Activity + Claude stubs are GONE (swapped to live tiles)
+    expect(screen.queryByTestId("home-activity-stub")).toBeNull();
     expect(screen.queryByTestId("home-claude-stub")).toBeNull();
+    expect(screen.getByTestId("home-activity-tile")).toBeInTheDocument();
+  });
+
+  it("Activity tile is now LIVE: shows recent run (routine name) from /activity (per-tile fail-open)", async () => {
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getActivity.mockReset();
+    getActivity.mockResolvedValueOnce(ACTIVITY);
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-activity-tile")).toHaveTextContent("Market Poll"));
+  });
+
+  it("FAIL-OPEN: activity down → activity tile errors, rest of Home renders", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getActivity.mockReset();
+    getActivity.mockRejectedValueOnce(new (ApiError as any)(500, "activity down"));
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-activity-error")).toBeInTheDocument());
+    expect(screen.getByText("OutboundOS")).toBeInTheDocument();
   });
 
   it("Claude tile is now LIVE: shows real pct from /claude-usage (per-tile fail-open)", async () => {

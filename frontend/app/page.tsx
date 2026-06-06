@@ -15,6 +15,7 @@ import { ProgressBar } from "@/components/shared/ProgressBar";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { ComingSoonStub } from "@/components/shared/ComingSoonStub";
 import { HomeClaudeTile } from "@/components/HomeClaudeTile";
+import { HomeActivityTile } from "@/components/HomeActivityTile";
 import { fmtUSD, fmtSign, fmtPct, orDash } from "@/lib/format";
 import { spark } from "@/lib/spark";
 import type { ProjectStatus } from "@/lib/types";
@@ -199,8 +200,8 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Activity Feed — COMING-SOON STUB (S14 unbuilt; in the mock → honest stub, not omitted) */}
-            <ComingSoonStub label="Activity Feed" note="nhật ký automation chưa bật." testId="home-activity-stub" />
+            {/* Activity Feed — LIVE (S14 built; recent runs, per-tile fail-open) */}
+            <HomeActivityTile />
           </div>
         </>
       )}

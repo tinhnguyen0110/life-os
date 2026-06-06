@@ -83,3 +83,29 @@ export function fmtPct(v: number | null | undefined, fallback = "—"): string {
   if (v == null || !Number.isFinite(v)) return fallback;
   return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
 }
+
+/** duration in ms (or null) → "405ms" / "3.1s" / "2m 5s". null/NaN/neg → fallback. */
+export function fmtDuration(ms: number | null | undefined, fallback = "—"): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return fallback;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}m ${s}s`;
+}
+
+/** ISO-8601 (or null) → "HH:MM" clock (local). null/invalid → fallback. */
+export function fmtClock(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return fallback;
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** percent value (0-100) → "80.8%". null → fallback (NOT "0%" — null means no data). */
+export function fmtRate(v: number | null | undefined, fallback = "—"): string {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  return `${v.toFixed(1)}%`;
+}

@@ -79,6 +79,9 @@ try {
 const getFinance = vi.fn();
 const getProjects = vi.fn();
 const getMarket = vi.fn();
+// HomeActivityTile (S10B) self-fetches /activity — mock it so this pre-scaffold
+// suite that renders the full HomePage doesn't hit a real fetch (jsdom).
+const getActivity = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -87,13 +90,18 @@ vi.mock("@/lib/api", async () => {
     getFinance: (...a: unknown[]) => getFinance(...a),
     getProjects: (...a: unknown[]) => getProjects(...a),
     getMarket: (...a: unknown[]) => getMarket(...a),
+    getActivity: (...a: unknown[]) => getActivity(...a),
   };
 });
 
+const ACTIVITY_OK = { success: true, data: { runs: [], count: 0, runsToday: 0, okCount: 0, warnCount: 0, errorCount: 0, successRate: null, avgDurationMs: null, byRoutine: [] } };
+
+beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY_OK); });
 afterEach(() => {
   getFinance.mockReset();
   getProjects.mockReset();
   getMarket.mockReset();
+  getActivity.mockReset();
 });
 
 function ProbeHome() {

@@ -206,6 +206,34 @@ def recent_runs(routine_id: str, limit: int = 50) -> list[sqlite3.Row]:
         return cur.fetchall()
 
 
+def all_runs(limit: int = 100) -> list[sqlite3.Row]:
+    """Most-recent run_log rows across ALL routines (newest first), capped at ``limit``.
+
+    The activity feed (S10B) reads this — ``recent_runs`` is per-routine, this is the
+    cross-routine timeline. Includes ``id`` (the PK) so each run is addressable.
+    """
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT id, routine_id, status, detail, started_at, finished_at FROM run_log "
+            "ORDER BY started_at DESC, id DESC LIMIT ?",
+            (int(limit),),
+        )
+        return cur.fetchall()
+
+
+def run_by_id(run_id: int) -> sqlite3.Row | None:
+    """One run_log row by its PK, or None. The activity detail endpoint (S10B) reads this."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT id, routine_id, status, detail, started_at, finished_at FROM run_log "
+            "WHERE id = ?",
+            (int(run_id),),
+        )
+        return cur.fetchone()
+
+
 def record_run(routine_id: str, status: str, started_at: str,
                finished_at: str | None = None, detail: str | None = None) -> int:
     """Insert a routine run-log entry. Returns the new row id."""
