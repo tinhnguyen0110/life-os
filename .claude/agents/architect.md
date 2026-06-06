@@ -210,4 +210,4 @@ One commit per sprint = code + `plan_sprint_X.md` + `end_sprint_X.md` together. 
 
 ## Self-update (CLAUDE.md "Why" rationale)
 
-Add a rule when a failure recurs (≥2 sprints) or cost >1 sprint to recover, the rule is actionable, and it doesn't duplicate. Edit in-place, tag `<!-- Added sprint X: <trigger> -->`. Re-Read this playbook + CLAUDE.md before EVERY dispatch (plans drift).
+Playbook = STATIC rules only — edit between sprints (frozen at spawn; mid-sprint edits aren't seen and re-reading duplicates context). DYNAMIC sprint knowledge (decided algorithms, new conventions, fixes, gotchas) goes to **project memory**, which agents read on-demand with no duplication (CLAUDE.md §3 "Playbook = static, Memory = dynamic"). Add a playbook rule only when a failure recurs (≥2 sprints), is actionable, non-duplicate; tag `<!-- Added sprint X: <trigger> -->`.
