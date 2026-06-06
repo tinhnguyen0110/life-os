@@ -9,6 +9,8 @@ import type {
   ProjectStatus,
   ProjectsListData,
   FinanceOverview,
+  Holding,
+  HoldingInput,
   ChannelDetail,
   MarketData,
   ClaudeUsage,
@@ -240,6 +242,12 @@ export function getProject(id: string): Promise<ApiResponse<ProjectStatus>> {
 /** S5 — finance overview (totalValue + allocations + dryPowder + pnlTotal). */
 export function getFinance(): Promise<ApiResponse<FinanceOverview>> {
   return apiGet<FinanceOverview>("/finance");
+}
+
+/** S6 — add a holding (POST /finance/holdings). Bad field → ApiError(422) per-field.
+ *  Returns the created Holding (the caller refetches GET /finance for the new overview). */
+export function createHolding(body: HoldingInput): Promise<ApiResponse<Holding>> {
+  return apiPost<Holding>("/finance/holdings", body);
 }
 
 /** S6 — one channel's detail (alloc + priced holdings + ladder). 404 if unknown. */

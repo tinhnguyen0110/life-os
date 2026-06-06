@@ -67,3 +67,31 @@ export function gauge(
     <circle cx="${cx}" cy="${cx}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"
       stroke-dasharray="${c}" stroke-dashoffset="${off}" transform="rotate(-90 ${cx} ${cx})" style="filter:drop-shadow(0 0 5px ${color}90)"/></svg>`;
 }
+
+/**
+ * Allocation donut SVG. Verbatim shape from mock SCREENS.portfolio donut(). Each
+ * segment is {pct (0-100), color}. Pcts need NOT sum to 100 (a gap = un-allocated).
+ * Hardened: empty / all-zero input → a valid empty ring (hole only), never NaN.
+ * `size`/`hole` let callers size it; center label is overlaid by the caller.
+ */
+export function donut(
+  segments: { pct: number; color: string }[],
+  size = 180,
+  hole = 48
+): string {
+  const cx = size / 2;
+  const r = cx - 20;
+  const c = 2 * Math.PI * r;
+  const segs = (segments ?? []).filter((s) => Number.isFinite(s.pct) && s.pct > 0);
+  let acc = 0;
+  const rings = segs
+    .map((s) => {
+      const start = acc;
+      acc += s.pct;
+      const len = (Math.min(s.pct, 100) / 100) * c;
+      const off = c - (start / 100) * c;
+      return `<circle cx="${cx}" cy="${cx}" r="${r}" fill="none" stroke="${s.color}" stroke-width="22" stroke-dasharray="${len.toFixed(2)} ${(c - len).toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" transform="rotate(-90 ${cx} ${cx})"/>`;
+    })
+    .join("");
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${rings}<circle cx="${cx}" cy="${cx}" r="${hole}" fill="var(--bg-1)"/></svg>`;
+}
