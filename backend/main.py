@@ -15,6 +15,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.registry import DiscoveryResult, mount_all
@@ -49,6 +50,17 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Application factory — used by uvicorn and by tests for isolation."""
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+
+    # CORS — let the browser FE (:3010) call the API. Single-user localhost
+    # no-auth (CLAUDE.md §2): this enables browser fetch, it is NOT a security
+    # boundary. Origins are configurable (LIFEOS_CORS_ORIGINS). Added before
+    # mount_all so every mounted module's routes inherit the middleware.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health", tags=["core"])
     def health() -> dict:

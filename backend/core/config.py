@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     # Scheduler can be disabled (e.g. in tests) without touching module code.
     scheduler_enabled: bool = True
 
+    # Browser origins allowed to call the API. Single-user localhost no-auth
+    # (CLAUDE.md §2) — CORS here is a browser-functionality enabler, NOT a
+    # security boundary. Default covers the FE dev server (:3010) + Next default
+    # (:3000). Override via LIFEOS_CORS_ORIGINS (JSON list).
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3010", "http://localhost:3000"]
+    )
+
     # --- Derived paths (always under data_dir) ------------------------------
     @property
     def projects_dir(self) -> Path:

@@ -510,11 +510,22 @@ skip_api = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def api_client(tmp_path_factory):
-    """TestClient with full app — projects module auto-discovered via registry."""
+    """TestClient with full app — projects module auto-discovered via registry.
+
+    Uses explicit save/restore for settings mutations (monkeypatch is
+    function-scoped and incompatible with module-scoped fixtures; raw assignment
+    without teardown leaks global state across the session).
+    """
     import importlib
     tmp = tmp_path_factory.mktemp("projapi")
 
     from core import config
+    # Save originals so teardown restores global settings state exactly.
+    _orig_data_dir = config.settings.data_dir
+    _orig_db_path = config.settings.db_path
+    _orig_scheduler = config.settings.scheduler_enabled
+    _orig_repos = config.settings.project_repos
+
     config.settings.data_dir = tmp / "data"
     config.settings.db_path = tmp / "proj_api_test.db"
     config.settings.scheduler_enabled = False
@@ -533,6 +544,12 @@ def api_client(tmp_path_factory):
     from fastapi.testclient import TestClient
     with TestClient(app) as c:
         yield c
+
+    # Restore global settings — prevents state leak to subsequent tests/fixtures.
+    config.settings.data_dir = _orig_data_dir
+    config.settings.db_path = _orig_db_path
+    config.settings.scheduler_enabled = _orig_scheduler
+    config.settings.project_repos = _orig_repos
     db_mod.close_db()
 
 

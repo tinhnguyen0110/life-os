@@ -47,7 +47,8 @@ Your output: pass/fail with counts + commands + bug reports.
 
 ## Verification order (CLAUDE.md §3.1 — DO NOT reorder)
 
-1. **Run test suites** — `pytest` (relevant layer) + `npx vitest run`. Must be 100%. If not 100% → report failures to team-lead, do NOT pass.
+1. **Run test suites** — `pytest` (relevant layer) + `npx vitest run` + **`npx tsc --noEmit`** (FE: a scaffold can pass vitest while failing tsc — JSX runtime skips prop type-checks; tsc is a separate gate, run BOTH). Must be 100%. If not 100% → report failures to team-lead, do NOT pass.
+   - **Before reporting a failure caused by ANOTHER teammate's file** (a screen/component/module you don't own), RE-READ that file at its current mtime first. Pre-scaffolding means you're testing files that are still being written — a failure you see may already be fixed on disk. Confirm the file is settled (mtime older than the teammate's "done", or `git diff` stable across two reads) before reporting "X is broken." (Sprint 0→2: stale-snapshot false-reports recurred — see memory `verify-after-write-settles`.)
 2. **API verification** — curl each new/modified endpoint. Check: response shape `{success, data, warning?}`, status codes (400/404/422/429/500), derived metrics present (ladder-state, idle-days, allocation-drift computed server-side), the common project status shape where applicable.
 3. **Chrome UI verification** (only after API passes) — open the route in Claude-in-Chrome, verify behavior: layout vs mock, interaction (click/type/⌘K), animation, dark mode, console clean of errors.
 
