@@ -1,0 +1,48 @@
+# docker-compose.yml — life-os dev runtime (BE + FE), one command: `docker compose up`
+#
+# Single-user local app (CLAUDE.md §2 / north-star: simplest thing that fixes the
+# real pain). This replaces the manual server-restart-every-session cycle: both
+# services run persistently with hot-reload + data persists across restarts.
+#
+# Start:   docker compose up        (add -d to detach)
+# Stop:    docker compose down      (data/ + store/ persist via the mounts below)
+# Rebuild: docker compose up --build
+#
+# Ports (memory dev-server-ports): BE :8001 (NOT :8000 = OutboundOS), FE :3010.
+# The browser reaches the API at NEXT_PUBLIC_API_BASE=http://localhost:8001 — the
+# HOST-published BE port, NOT the `backend` service name (that only resolves
+# container-to-container; NEXT_PUBLIC_* runs in the user's browser on the host).
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8001:8001"            # host:container — browser + curl reach life-os here
+    volumes:
+      # Persist the runtime stores across restarts + keep them editable on host.
+      - ./backend/data:/app/data        # md+git store (markdown, git-versioned)
+      - ./backend/store:/app/store      # SQLite time-series (price_history/run_log/usage)
+      # Hot-reload: mount source so code edits reload without a rebuild.
+      - ./backend:/app
+    # (uvicorn --host 0.0.0.0 --port 8001 --reload — from the Dockerfile CMD.)
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Client-side (browser) base URL → MUST be the host-published BE port,
+        # NOT http://backend:8001 (service name resolves only inside the network).
+        API_BASE: http://localhost:8001
+    ports:
+      - "3010:3010"
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8001
+    volumes:
+      - ./frontend:/app
+      # Anonymous volumes so the host's (empty/platform-mismatched) dirs don't
+      # shadow the container's installed deps / build cache.
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    # (pnpm dev -H 0.0.0.0 -p 3010 — from the Dockerfile CMD.)

@@ -1,0 +1,15 @@
+# Keep the image lean + reproducible — exclude installed deps, build output, caches.
+# node_modules is reinstalled in-image from the lockfile (--frozen-lockfile), so
+# host-platform binaries never leak in.
+node_modules/
+.next/
+out/
+build/
+coverage/
+.turbo/
+*.log
+npm-debug.log*
+.env
+.env.local
+.git/
+.DS_Store

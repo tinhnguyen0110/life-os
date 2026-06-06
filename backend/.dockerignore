@@ -1,0 +1,15 @@
+# Keep the image lean + reproducible — exclude runtime artifacts and caches.
+# data/ is the md_store runtime git repo (created at runtime), NOT source.
+data/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.db-wal
+*.db-shm
+.venv/
+venv/
+.env
+.git/
