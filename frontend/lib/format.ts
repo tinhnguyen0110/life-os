@@ -35,3 +35,32 @@ export function idleDays(days: number | null | undefined, fallback = "—"): str
 export function orDash(v: string | null | undefined, fallback = "—"): string {
   return v == null || v === "" ? fallback : v;
 }
+
+/** number (or null) → "$1,234" / "$1.2M" style USD. null/NaN → fallback "—".
+ *  Compact for ≥1M so big net-worth numbers stay readable; plain otherwise. */
+export function fmtUSD(v: number | null | undefined, fallback = "—"): string {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1_000_000) {
+    return `${sign}$${(abs / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 })}M`;
+  }
+  return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/** signed number → "+$1,234" / "−$1,234" (true minus). null/NaN → fallback.
+ *  Use for day/week deltas where the +/− sign carries meaning (color drives tone). */
+export function fmtSign(v: number | null | undefined, fallback = "—"): string {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  const abs = Math.abs(v);
+  const body = abs >= 1_000_000
+    ? `$${(abs / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 })}M`
+    : `$${abs.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return v < 0 ? `−${body}` : `+${body}`;
+}
+
+/** signed percent → "+1.4%" / "−0.6%". null/NaN → fallback. */
+export function fmtPct(v: number | null | undefined, fallback = "—"): string {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
+}

@@ -192,6 +192,115 @@ export interface PricePoint {
   ts: string;
 }
 
+/* ============================================================
+   Finance (S5/S6) — MIRRORS backend modules/finance/schema.py EXACTLY (Sprint 4).
+   Self-describing-raw: every DERIVED field ships with its inputs (PnL carries
+   cost+current; ChannelAlloc carries target+pct so drift is checkable;
+   LadderState carries trigger+current). FE renders + formats + colors — NEVER
+   recomputes drift/pnl/ladder. NOTE (vs my earlier placeholder): the overview is
+   `totalValue` (not total), a single `change` % (not day/week), `allocations`
+   (not allocation), `pnlTotal` (not openPnl). NO series / recentTrades in the
+   finance overview shape.
+   ============================================================ */
+
+/** One position — mirrors `Holding`. RAW qty/avgCost + provenance. */
+export interface Holding {
+  channel: string;
+  symbol: string;
+  qty: number;
+  avgCost: number;
+  source: string;
+  asOf: string | null;
+}
+
+/** Profit/loss carrying its inputs — mirrors `PnL`. */
+export interface PnL {
+  cost: number;
+  current: number;
+  /** current - cost. */
+  abs: number;
+  /** abs/cost*100; null when cost==0. */
+  pct: number | null;
+}
+
+/** A channel allocation slice — mirrors `ChannelAlloc`. drift is a SIGNED number
+ *  (pct - target); |drift|>5 ⇒ rebalance alert. actual % = `pct`.
+ *  NOTE: the LIVE channel-detail serializes an extra `driftAlert: bool` (computed
+ *  in service.py, not in schema.py's ChannelAlloc) — accepted optionally. */
+export interface ChannelAlloc {
+  channel: string;
+  value: number;
+  /** actual % of total portfolio. */
+  pct: number;
+  /** target % (golden-path). */
+  target: number;
+  /** pct - target (signed). */
+  drift: number;
+  /** |drift| > threshold — live-only field (service adds it). */
+  driftAlert?: boolean;
+  pnl: PnL;
+}
+
+/** A holding priced to current market — the S6 detail's holdings[] item shape
+ *  (live /finance/{channel}). Wraps the raw Holding + market price + value + pnl. */
+export interface PricedHolding {
+  holding: Holding;
+  price: number;
+  /** price provenance: coingecko | mock | last-known. */
+  source: string;
+  value: number;
+  pnl: PnL;
+}
+
+/** GET /finance/{channel} — S6 detail composite (alloc + priced holdings + ladder). */
+export interface ChannelDetail {
+  channel: string;
+  alloc: ChannelAlloc;
+  holdings: PricedHolding[];
+  ladder: LadderState | null;
+}
+
+/** DCA buy-ladder state for a channel — mirrors `LadderState`. */
+export interface LadderState {
+  channel: string;
+  referencePrice: number;
+  currentPrice: number;
+  rungsIn: number;
+  /** {pct, triggerPrice} of the next rung below current, or null if all hit. */
+  nextRung: { pct: number; triggerPrice: number } | null;
+  /** (currentPrice - triggerPrice)/currentPrice*100 to nextRung; null if none. */
+  distancePct: number | null;
+}
+
+/** Portfolio value change — mirrors `Change` (self-describing abs+pct). */
+export interface Change {
+  abs: number;
+  pct: number | null;
+}
+
+/** GET /finance overview — mirrors `FinanceOverview` (re-read after schema evolved:
+ *  `change` is now a Change object, `holdings` + `series` added). */
+export interface FinanceOverview {
+  totalValue: number;
+  /** portfolio change {abs, pct}, null if no series. */
+  change: Change | null;
+  holdings: Holding[];
+  allocations: ChannelAlloc[];
+  pnlTotal: PnL;
+  dryPowder: number;
+  /** portfolio value over time ([] if none). */
+  series: number[];
+}
+
+/** POST /finance/holdings body — mirrors `HoldingInput`. */
+export interface HoldingInput {
+  channel: string;
+  symbol: string;
+  qty: number;
+  avgCost: number;
+  source?: string;
+}
+
 /** GET /market `data` envelope — `{quotes, triggers, macro, alertHistory}`. */
 export interface MarketData {
   quotes: AssetQuote[];

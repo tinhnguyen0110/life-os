@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
@@ -129,7 +130,19 @@ def _tracked_repos() -> dict[str, str]:
             meta = _load_meta(pid)
             repo = meta.get("repo")
             if isinstance(repo, str) and repo.strip():
-                repos[pid] = repo.strip()
+                repo = repo.strip()
+                # Stale-path fallback (3B layer-4): if the status.md repo: path no
+                # longer exists BUT pid is a config built-in, keep the config path
+                # — a stale/moved status.md pointer must NOT kill an otherwise-
+                # tracked project (it would read as dead/commits=0). The config
+                # path is the more reliable source when the recorded one is gone.
+                if not Path(repo).expanduser().is_dir() and pid in repos:
+                    logger.warning(
+                        "project %r status.md repo path %r missing — falling back to config path %r",
+                        pid, repo, repos[pid],
+                    )
+                else:
+                    repos[pid] = repo
             elif pid not in repos:
                 # status.md with no repo pointer → notes-only project (no repo).
                 repos[pid] = str(child)
@@ -205,8 +218,6 @@ def register_project(body: ProjectRegisterInput) -> ProjectStatus:
     Validates the repo path is an existing git repo (400 otherwise). id collision
     with an existing status.md → 409. Writes one md_store commit.
     """
-    from pathlib import Path
-
     project_id = slug(body.name)
     repo_path = Path(body.repo).expanduser()
     if not reader._is_git_repo(repo_path):  # noqa: SLF001 — same package

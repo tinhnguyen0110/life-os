@@ -406,6 +406,40 @@ def test_registered_project_discovered_from_status_md(monkeypatch, active_repo, 
     assert any(s.id == "extra" and s.health == "act" for s in statuses)
 
 
+def test_stale_status_md_repo_path_falls_back_to_config(monkeypatch, active_repo, isolated_paths):
+    """3B layer-4: a config project whose status.md `repo:` points at a GONE path
+    must fall back to the config path (not read as dead). Stale status.md ≠ dead project."""
+    from store import md_store
+    # config tracks 'active' at the REAL repo
+    monkeypatch.setattr(service.settings, "project_repos", {"active": str(active_repo)})
+    # but status.md records a stale/nonexistent repo path
+    md_store.write_file(
+        "projects/active/status.md",
+        "---\nname: Active\nrepo: /tmp/this-path-was-moved-and-is-gone\n---\n",
+        "stale path",
+    )
+    tracked = service._tracked_repos()
+    # fell back to the config path, NOT the stale status.md path
+    assert tracked["active"] == str(active_repo), f"should fall back to config, got {tracked['active']}"
+    # and the project reads with REAL health (act), not dead
+    st = service.get_project("active")
+    assert st is not None and st.health == "act"
+
+
+def test_stale_status_md_path_kept_when_not_in_config(monkeypatch, isolated_paths):
+    """A registered-only (non-config) project with a stale path keeps the stale
+    path (no config to fall back to) — it'll read dead, which is honest."""
+    from store import md_store
+    monkeypatch.setattr(service.settings, "project_repos", {})
+    md_store.write_file(
+        "projects/orphan/status.md",
+        "---\nname: Orphan\nrepo: /tmp/gone-orphan-path\n---\n",
+        "orphan stale",
+    )
+    tracked = service._tracked_repos()
+    assert tracked["orphan"] == "/tmp/gone-orphan-path"  # no fallback available
+
+
 def test_hidden_dirs_are_not_projects(monkeypatch, isolated_paths):
     """Sprint 1A regression: a HIDDEN dir under DATA_DIR/projects (.claude agent-
     memory, .git, ...) must NOT surface as a phantom project (honest-mirror, SPEC §0).

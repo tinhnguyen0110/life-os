@@ -8,6 +8,8 @@ import type {
   HealthData,
   ProjectStatus,
   ProjectsListData,
+  FinanceOverview,
+  ChannelDetail,
 } from "./types";
 
 const BASE =
@@ -139,6 +141,16 @@ export function getProjects(): Promise<ApiResponse<ProjectsListData>> {
 /** S3 — one project by id (includes abandoned). 404 → ApiError(404). */
 export function getProject(id: string): Promise<ApiResponse<ProjectStatus>> {
   return apiGet<ProjectStatus>(`/projects/${encodeURIComponent(id)}`);
+}
+
+/** S5 — finance overview (totalValue + allocations + dryPowder + pnlTotal). */
+export function getFinance(): Promise<ApiResponse<FinanceOverview>> {
+  return apiGet<FinanceOverview>("/finance");
+}
+
+/** S6 — one channel's detail (alloc + priced holdings + ladder). 404 if unknown. */
+export function getChannelDetail(channel: string): Promise<ApiResponse<ChannelDetail>> {
+  return apiGet<ChannelDetail>(`/finance/${encodeURIComponent(channel)}`);
 }
 
 export const apiBase = BASE;

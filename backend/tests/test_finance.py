@@ -1,0 +1,209 @@
+"""tests/test_finance.py — finance schema + service (Sprint 4, SPEC §S5/§S6).
+
+Behavior-test math: set holdings + a mocked market price → assert derived numbers
+against HAND-CALC (not field-reads). Market quotes mocked (no real CoinGecko).
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from modules.finance import service
+from modules.finance.schema import GoldenPathInput, HoldingInput
+from modules.market.schema import AssetQuote
+
+
+def _mock_quote(symbol, price):
+    return AssetQuote(symbol=symbol, name=symbol, assetClass="crypto",
+                      price=price, currency="USD", ts="2026-06-06T00:00:00+00:00", source="coingecko")
+
+
+@pytest.fixture
+def mock_prices(monkeypatch):
+    book: dict[str, float] = {}
+
+    def fake_get_quote(symbol):
+        return _mock_quote(symbol, book[symbol]) if symbol in book else None
+
+    monkeypatch.setattr(service.market_service, "get_quote", fake_get_quote)
+    return book
+
+
+# --- holdings persistence (upsert by symbol) ---
+def test_upsert_list_delete_holdings(isolated_paths):
+    assert service.list_holdings() == []
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1.0, avgCost=50000))
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=10, avgCost=400))
+    assert len(service.list_holdings()) == 2
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=2.0, avgCost=55000))
+    btc = [h for h in service.list_holdings() if h.symbol == "BTC"]
+    assert len(btc) == 1 and btc[0].qty == 2.0
+    assert service.delete_holding("BTC") is True
+    assert all(h.symbol != "BTC" for h in service.list_holdings())
+    assert service.delete_holding("BTC") is False
+
+
+def test_malformed_holdings_md_ignored(isolated_paths):
+    from store import md_store
+    md_store.write_file(service.HOLDINGS_MD, "---\nholdings: : : bad\n---\n", "bad")
+    assert service.list_holdings() == []
+
+
+# --- golden path baseline ---
+def test_golden_path_baseline_when_absent(isolated_paths):
+    targets, ladder, warnings = service.get_golden_path()
+    assert targets == {"crypto": 38.0, "etf": 24.0, "vn": 18.0, "dry": 20.0}
+    assert ladder == {}
+    assert any("baseline" in w for w in warnings)
+
+
+def test_golden_path_set_and_get(isolated_paths):
+    service.set_golden_path(GoldenPathInput(
+        targets={"crypto": 50, "dry": 50},
+        ladder={"crypto": {"reference": 60000, "rungs": [-10, -20]}},
+    ))
+    targets, ladder, warnings = service.get_golden_path()
+    assert targets == {"crypto": 50.0, "dry": 50.0}
+    assert ladder["crypto"]["reference"] == 60000
+    assert warnings == []
+
+
+# --- P&L math ---
+def test_pnl_math():
+    pnl = service._pnl(cost=1000.0, current=1200.0)
+    assert pnl.abs == 200.0 and pnl.pct == 20.0
+    assert pnl.cost == 1000.0 and pnl.current == 1200.0
+
+
+def test_pnl_pct_none_when_cost_zero():
+    pnl = service._pnl(cost=0.0, current=500.0)
+    assert pnl.pct is None and pnl.abs == 500.0
+
+
+# --- overview hand-calc ---
+def test_overview_value_pnl_drift_handcalc(isolated_paths, mock_prices):
+    mock_prices["BTC"] = 60000.0
+    mock_prices["VOO"] = 450.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=10, avgCost=400))
+    overview, warnings = service.get_overview()
+    assert overview.totalValue == 64500.0
+    assert overview.pnlTotal.abs == 10500.0
+    assert overview.pnlTotal.pct == round(10500 / 54000 * 100, 2)
+    assert len(overview.holdings) == 2  # holdings list included
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.pct == round(60000 / 64500 * 100, 2)
+    assert crypto.drift == round(crypto.pct - 38.0, 2)
+    assert crypto.driftAlert is True  # 93% vs 38% → |drift|>5
+    assert crypto.pnl.abs == 10000.0
+
+
+def test_overview_drift_alert_false_when_on_target(isolated_paths, mock_prices):
+    # single crypto holding at exactly... make crypto ≈ its 38% target is hard with one
+    # holding; instead test driftAlert=False path with a near-target setup.
+    service.set_golden_path(GoldenPathInput(targets={"crypto": 100.0}, ladder={}))
+    mock_prices["BTC"] = 50000.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    overview, _ = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.pct == 100.0 and crypto.target == 100.0
+    assert crypto.drift == 0.0 and crypto.driftAlert is False
+
+
+def test_overview_empty_no_div0(isolated_paths, mock_prices):
+    overview, _ = service.get_overview()
+    assert overview.totalValue == 0.0
+    assert overview.pnlTotal.pct is None
+    assert overview.change is None
+
+
+def test_overview_price_fail_open_uses_cost(isolated_paths, mock_prices):
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    overview, warnings = service.get_overview()
+    assert overview.totalValue == 50000.0
+    assert any("no market price" in w for w in warnings)
+
+
+def test_overview_fail_open_on_stale_stored_channel(isolated_paths, mock_prices):
+    """Reactive S4 bug: a stored golden_path with a channel from an OLD naming
+    (e.g. 'cash' before cash→dry) must NOT 500 the overview. Skip it + warn;
+    valid channels still computed. RED without the CHANNELS guard in get_overview."""
+    from store import md_store
+    # stale stored target carrying the retired 'cash' channel + a junk one
+    md_store.write_file(
+        service.GOLDEN_PATH_MD,
+        "---\ntargets:\n  crypto: 38\n  cash: 20\n  bogus: 5\n  dry: 20\nladder: {}\n---\n",
+        "stale golden path",
+    )
+    mock_prices["BTC"] = 60000.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+
+    overview, warnings = service.get_overview()  # MUST NOT raise
+    chans = sorted(a.channel for a in overview.allocations)
+    assert "cash" not in chans and "bogus" not in chans, f"unknown channels leaked: {chans}"
+    assert "crypto" in chans  # valid channel still computed
+    assert any("unknown stored channel 'cash'" in w for w in warnings)
+    assert any("unknown stored channel 'bogus'" in w for w in warnings)
+    # valid math still correct
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.pnl.abs == 10000.0
+
+
+def test_dry_powder_is_dry_channel(isolated_paths, mock_prices):
+    mock_prices["USDC"] = 1.0
+    service.upsert_holding(HoldingInput(channel="dry", symbol="USDC", qty=10000, avgCost=1.0))
+    overview, _ = service.get_overview()
+    assert overview.dryPowder == 10000.0
+
+
+# --- ladder hand-calc ---
+def test_ladder_rungs_and_distance():
+    # reference 100, rungs -10/-20/-30 → triggers 90/80/70. current 85.
+    ladder = service._ladder_for("crypto", reference=100.0, current=85.0, rungs=[-10.0, -20.0, -30.0])
+    # entered: triggers ≥ 85 → only 90 → rungsIn=1
+    assert ladder.rungsIn == 1
+    # next not-entered: first trigger below 85 (current>trigger) = 80 (-20%)
+    assert ladder.nextRung == {"pct": -20.0, "triggerPrice": 80.0}
+    assert ladder.distancePct == round((85 - 80) / 85 * 100, 2)
+    assert ladder.referencePrice == 100.0 and ladder.currentPrice == 85.0
+
+
+def test_ladder_all_entered():
+    ladder = service._ladder_for("crypto", reference=100.0, current=60.0, rungs=[-10.0, -20.0, -30.0])
+    assert ladder.rungsIn == 3  # 90,80,70 all ≥ 60
+    assert ladder.nextRung is None and ladder.distancePct is None
+
+
+def test_ladder_none_entered():
+    ladder = service._ladder_for("crypto", reference=100.0, current=95.0, rungs=[-10.0, -20.0, -30.0])
+    assert ladder.rungsIn == 0
+    assert ladder.nextRung == {"pct": -10.0, "triggerPrice": 90.0}
+
+
+# --- channel detail ---
+def test_get_channel_detail_with_ladder(isolated_paths, mock_prices):
+    mock_prices["BTC"] = 90.0
+    service.set_golden_path(GoldenPathInput(
+        targets={"crypto": 100.0},
+        ladder={"crypto": {"reference": 100.0, "rungs": [-10.0, -20.0]}},
+    ))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=100))
+    detail, warnings = service.get_channel("crypto")
+    assert detail is not None
+    assert detail["channel"] == "crypto"
+    assert detail["alloc"]["value"] == 90.0
+    # ladder: ref 100, current 90 → trigger 90 entered (rungsIn=1), next 80
+    assert detail["ladder"]["rungsIn"] == 1
+    assert detail["ladder"]["nextRung"]["triggerPrice"] == 80.0
+
+
+def test_get_channel_unknown_returns_none(isolated_paths, mock_prices):
+    detail, _ = service.get_channel("notachannel")
+    assert detail is None
+
+
+def test_get_channel_target_only_no_holdings(isolated_paths, mock_prices):
+    detail, _ = service.get_channel("vn")  # baseline target, no holdings
+    assert detail is not None
+    assert detail["alloc"]["target"] == 18.0 and detail["alloc"]["value"] == 0.0
+    assert detail["ladder"] is None  # no golden_path ladder config

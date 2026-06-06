@@ -52,6 +52,24 @@ def tracked_assets() -> list[dict]:
     return list(settings.market_assets or [])
 
 
+def get_quote(symbol: str) -> AssetQuote | None:
+    """Single-asset quote for cross-module callers (e.g. finance pricing).
+
+    Reuses the reader (fail-open: CoinGecko down → last-known/mock). Looks the
+    symbol up in the tracked universe for its assetClass/cgId; if it's not tracked,
+    treats it as a crypto-by-symbol best-effort (cgId=symbol lowercased) so an
+    ad-hoc holding can still be priced. Returns None only if the reader yields
+    nothing. Does NOT re-fetch beyond the reader's own one batched call.
+    """
+    asset = next((a for a in tracked_assets() if a.get("symbol") == symbol), None)
+    if asset is None:
+        # Best-effort: assume crypto, cgId = lowercased symbol. Reader fail-opens
+        # to mock/last-known if that id is unknown to CoinGecko.
+        asset = {"symbol": symbol, "name": symbol, "assetClass": "crypto", "cgId": symbol.lower()}
+    quotes, _ = reader.read_quotes([asset])
+    return quotes[0] if quotes else None
+
+
 # --------------------------------------------------------------------------- #
 # changePct — derived server-side from price_history                            #
 # --------------------------------------------------------------------------- #
