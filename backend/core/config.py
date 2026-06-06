@@ -10,6 +10,7 @@ Override any field via environment variables prefixed ``LIFEOS_`` (e.g.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import Field
@@ -22,7 +23,12 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 # siblings of life-os under tinhdev_root. Derived (not hardcoded) so it works on
 # any machine where the repos sit beside life-os; override via LIFEOS_TINHDEV_ROOT
 # or the whole map via LIFEOS_PROJECT_REPOS.
-TINHDEV_ROOT = BACKEND_ROOT.parent.parent
+#
+# Read the env override DIRECTLY (os.environ, not a pydantic field) because
+# _default_project_repos() runs at import time, before Settings() is constructed.
+# In a container BACKEND_ROOT=/app so parent.parent=/ resolves no repos — the
+# compose mount sets LIFEOS_TINHDEV_ROOT=/repos to point at the read-only repo mount.
+TINHDEV_ROOT = Path(os.environ.get("LIFEOS_TINHDEV_ROOT", str(BACKEND_ROOT.parent.parent)))
 
 # Shortlist of projects tracked by default (Sprint 1, ARCH §9 / memory
 # trackable-repos-inventory). id (slug) -> repo folder name under tinhdev_root.

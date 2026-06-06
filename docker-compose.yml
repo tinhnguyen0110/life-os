@@ -24,6 +24,16 @@ services:
       - ./backend/store:/app/store      # SQLite time-series (price_history/run_log/usage)
       # Hot-reload: mount source so code edits reload without a rebuild.
       - ./backend:/app
+      # The user's real project repos sit BESIDE life-os under tinhdev_root. Mount
+      # that parent READ-ONLY so the git-reader sees all of them (the reader never
+      # writes — :ro enforces the read-only invariant). Without this the container
+      # only sees life-os and /projects would show 1 of 6 — Docker must not drop
+      # real data. Path is host-specific (1-dev local); override TINHDEV_HOST_DIR.
+      - ${TINHDEV_HOST_DIR:-..}:/tinhdev:ro
+    environment:
+      # Point the config's TINHDEV_ROOT at the mounted repos (config.py reads this
+      # env directly). Default ../  → /tinhdev so the 6 sibling repos resolve.
+      LIFEOS_TINHDEV_ROOT: /tinhdev
     # (uvicorn --host 0.0.0.0 --port 8001 --reload — from the Dockerfile CMD.)
 
   frontend:
