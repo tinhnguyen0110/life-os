@@ -10,10 +10,18 @@
 
 FROM python:3.11-slim
 
-# git: required by store/md_store.py (every markdown write = one git commit).
+# git: required by store/md_store.py (every markdown write = one git commit) AND
+# by the projects reader (read-only git log over mounted repos).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
+
+# Trust mounted repos regardless of uid. The :ro repo mount is owned by the HOST
+# uid; the container runs a different uid, so git's safe-ownership check would
+# REJECT reading them (fatal: detected dubious ownership) → the reader fail-opens
+# every project to health=dead. This tells git to trust any directory. Safe here:
+# single-user dev container, repos mounted read-only (no write/ownership risk).
+RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
