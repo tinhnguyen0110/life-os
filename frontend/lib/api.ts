@@ -10,6 +10,7 @@ import type {
   ProjectsListData,
   FinanceOverview,
   ChannelDetail,
+  MarketData,
 } from "./types";
 
 const BASE =
@@ -151,6 +152,11 @@ export function getFinance(): Promise<ApiResponse<FinanceOverview>> {
 /** S6 — one channel's detail (alloc + priced holdings + ladder). 404 if unknown. */
 export function getChannelDetail(channel: string): Promise<ApiResponse<ChannelDetail>> {
   return apiGet<ChannelDetail>(`/finance/${encodeURIComponent(channel)}`);
+}
+
+/** S8 — market view (quotes + triggers + macro + alertHistory). */
+export function getMarket(): Promise<ApiResponse<MarketData>> {
+  return apiGet<MarketData>("/market");
 }
 
 export const apiBase = BASE;
