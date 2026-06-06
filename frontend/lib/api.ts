@@ -11,6 +11,7 @@ import type {
   FinanceOverview,
   ChannelDetail,
   MarketData,
+  ClaudeUsage,
 } from "./types";
 
 const BASE =
@@ -191,6 +192,11 @@ export function getChannelDetail(channel: string): Promise<ApiResponse<ChannelDe
 /** S8 — market view (quotes + triggers + macro + alertHistory). */
 export function getMarket(): Promise<ApiResponse<MarketData>> {
   return apiGet<MarketData>("/market");
+}
+
+/** S9 — Claude token usage (gauge + series + byModel + cost; resetIn/byProject stubs). */
+export function getClaudeUsage(): Promise<ApiResponse<ClaudeUsage>> {
+  return apiGet<ClaudeUsage>("/claude-usage");
 }
 
 export const apiBase = BASE;

@@ -294,6 +294,53 @@ export interface NoteInput {
   attach?: Attach;
 }
 
+/* ============================================================
+   Claude Usage (S9) — MIRRORS backend modules/claude_usage/schema.py (Sprint 7,
+   FROZEN). REAL: model/used/cap/pct/remaining/series/today/avgPerDay/peak/byModel/
+   costUSD/asOf/stale/source. STUBS (None unless manual override): resetIn, weekly,
+   byProject. Derived fields carry inputs (pct carries used+cap). render-only.
+   ============================================================ */
+export interface DayBurn {
+  date: string;
+  /** weekday short label T2..CN. */
+  label: string;
+  tokens: number;
+}
+
+export interface ModelBurn {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  total: number;
+  costUSD: number;
+}
+
+export interface ClaudeUsage {
+  model: string;
+  used: number;
+  cap: number;
+  pct: number;
+  remaining: number;
+  /** STUB: null unless manual override. */
+  resetIn: string | null;
+  /** STUB: null unless manual override. */
+  weekly: number | null;
+  series: DayBurn[];
+  today: number;
+  avgPerDay: number;
+  peak: DayBurn;
+  byModel: ModelBurn[];
+  costUSD: number;
+  /** STUB this sprint: always null (per-project not in stats-cache). */
+  byProject: null;
+  asOf: string;
+  stale: boolean;
+  /** 'stats-cache' | 'manual'. */
+  source: string;
+}
+
 /** DCA buy-ladder state for a channel — mirrors `LadderState`. */
 export interface LadderState {
   channel: string;

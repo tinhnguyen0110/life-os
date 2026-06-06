@@ -175,7 +175,7 @@ Why: pre-written plans are 70-80% right but always need tuning. 15 min kickoff p
 ## Context (1 paragraph)
 ## Scope (IN / OUT lists)
 ## Logic/Algorithm (MANDATORY for non-CRUD — see Logic section above; CRUD → "N/A — plain CRUD")
-## Defensive cases (MANDATORY failure modes)
+## Schema/field list (GATING tasks — the COMPLETE final field list IN THE FIRST dispatch message, NOT a stub-to-be-confirmed-later) <!-- Added sprint 6 (backend standup, recurring S3/S4/S6 churn): backend builds on the stub, the full spec trails in a confirm msg, backend re-aligns + a buried additive field (pinned) slips. The single biggest backend speedup = full field list in msg #1, so it implements once + freezes once. List EVERY field with type/default + the mock reference (DB.<entity>) so backend diffs field-by-field at freeze. No "I'll confirm the rest after." -->
 ## Runtime (server start cmd + URLs — BE `uvicorn main:app` :8000 · FE `npm run dev` :3010, NOT :3000/:3100 — see memory dev-server-ports)
 ## Baseline (current test counts, e.g. "pytest 76, vitest 90" — the regression anchor)
 ## Dependencies (available now / blocks)

@@ -36,6 +36,16 @@ export function orDash(v: string | null | undefined, fallback = "—"): string {
   return v == null || v === "" ? fallback : v;
 }
 
+/** token count (or null) → compact "37.7k" / "1.2M" / "950". null/NaN → fallback. */
+export function fmtTokens(v: number | null | undefined, fallback = "—"): string {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 })}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toLocaleString("en-US", { maximumFractionDigits: 1 })}k`;
+  return `${sign}${abs}`;
+}
+
 /** number (or null) → "$1,234" / "$1.2M" style USD. null/NaN → fallback "—".
  *  Compact for ≥1M so big net-worth numbers stay readable; plain otherwise. */
 export function fmtUSD(v: number | null | undefined, fallback = "—"): string {

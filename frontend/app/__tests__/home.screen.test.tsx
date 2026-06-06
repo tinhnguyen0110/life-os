@@ -10,17 +10,27 @@ import { render, screen, waitFor } from "@testing-library/react";
 const getFinance = vi.fn();
 const getProjects = vi.fn();
 const getMarket = vi.fn();
+const getClaudeUsage = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getFinance: () => getFinance(), getProjects: () => getProjects(), getMarket: () => getMarket() };
+  return {
+    ...actual,
+    getFinance: () => getFinance(),
+    getProjects: () => getProjects(),
+    getMarket: () => getMarket(),
+    getClaudeUsage: () => getClaudeUsage(),
+  };
 });
 
 import HomePage from "../page";
+
+const USAGE = { success: true, data: { model: "claude-opus", used: 37727, cap: 200000, pct: 18.9, remaining: 162273, resetIn: null, weekly: null, series: [], today: 37727, avgPerDay: 1000, peak: { date: "2026-06-06", label: "T6", tokens: 5000 }, byModel: [], costUSD: 39145, byProject: null, asOf: "2026-06-06", stale: false, source: "stats-cache" } };
 
 afterEach(() => {
   getFinance.mockReset();
   getProjects.mockReset();
   getMarket.mockReset();
+  getClaudeUsage.mockReset();
 });
 
 const FIN = { success: true, data: {
@@ -52,18 +62,40 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     expect(screen.getByTestId("home-alerts")).toBeInTheDocument();
   });
 
-  it("all THREE coming-soon stubs (Claude/Brief/Activity) show 'Sắp có', never fake numbers", async () => {
+  it("Brief + Activity remain coming-soon stubs (Claude is now LIVE, not a stub)", async () => {
     getFinance.mockResolvedValueOnce(FIN);
     getProjects.mockResolvedValueOnce(PROJ);
     getMarket.mockResolvedValueOnce(MKT);
+    getClaudeUsage.mockResolvedValueOnce(USAGE);
     render(<HomePage />);
-    await waitFor(() => expect(screen.getByTestId("home-claude-stub")).toBeInTheDocument());
-    expect(screen.getByTestId("home-claude-stub")).toHaveTextContent(/Sắp có/);
+    await waitFor(() => expect(screen.getByTestId("home-brief-stub")).toBeInTheDocument());
     expect(screen.getByTestId("home-brief-stub")).toHaveTextContent(/Sắp có/);
     expect(screen.getByTestId("home-activity-stub")).toHaveTextContent(/Sắp có/);
-    // no fabricated number (e.g. quota %) in any stub
-    expect(screen.getByTestId("home-claude-stub")).not.toHaveTextContent(/\d+%/);
     expect(screen.getByTestId("home-activity-stub")).not.toHaveTextContent(/\d/);
+    // Claude stub is GONE (swapped to live tile)
+    expect(screen.queryByTestId("home-claude-stub")).toBeNull();
+  });
+
+  it("Claude tile is now LIVE: shows real pct from /claude-usage (per-tile fail-open)", async () => {
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getClaudeUsage.mockResolvedValueOnce(USAGE);
+    render(<HomePage />);
+    // wait for the live pct to load (tile renders "…" first, then the gauge)
+    await waitFor(() => expect(screen.getByTestId("home-claude-tile")).toHaveTextContent("18.9%"));
+  });
+
+  it("FAIL-OPEN: Claude usage down → Claude tile errors, rest of Home renders", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getClaudeUsage.mockRejectedValueOnce(new (ApiError as any)(500, "usage down"));
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-claude-error")).toBeInTheDocument());
+    // rest of Home unaffected (independent fetch)
+    expect(screen.getByText("OutboundOS")).toBeInTheDocument();
   });
 
   it("FAIL-OPEN: market down → market tile errors, finance+projects render, warning names it", async () => {

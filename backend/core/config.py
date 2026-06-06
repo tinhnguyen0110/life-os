@@ -107,6 +107,15 @@ class Settings(BaseSettings):
     # CoinGecko free API base (no key). Override for tests/proxy via LIFEOS_COINGECKO_BASE.
     coingecko_base: str = "https://api.coingecko.com/api/v3"
 
+    # --- Claude usage (Sprint 7, SPEC §S9) ----------------------------------
+    # Path to Claude Code's stats-cache.json (real token-usage source). Default
+    # ~/.claude/stats-cache.json; override via LIFEOS_CLAUDE_STATS_PATH (tests
+    # point this at a fixture, NOT the real ~/.claude). Machine-portable (3B lesson).
+    claude_stats_path: Path = Field(default_factory=lambda: Path.home() / ".claude" / "stats-cache.json")
+    # Default token cap for the active window (no rate-limit ceiling on disk —
+    # manual-override via PUT). Matches the mock's 200K.
+    claude_usage_cap: int = 200_000
+
     # Browser origins allowed to call the API. Single-user localhost no-auth
     # (CLAUDE.md §2) — CORS here is a browser-functionality enabler, NOT a
     # security boundary. Default covers the FE dev server (:3010) + Next default

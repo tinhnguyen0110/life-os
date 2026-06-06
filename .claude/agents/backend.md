@@ -88,6 +88,7 @@ modules/<name>/
 - **Error codes (REST):** 400 bad request / 404 not found / 422 validation / 429 rate limit / 500 internal. (401/403 N/A — no auth.)
 - **Validation:** Pydantic at the boundary — `min_length`/`max_length`, `Literal` enums, `field_validator` for whitespace where needed.
 - **md_store writes are atomic** — write file + `git add` + `git commit` as one operation. A half-written status.md with no commit is a bug.
+- **Schema FREEZE = field-by-field diff against the AUTHORITATIVE field list, NOT "did I apply my noted changes."** <!-- Added sprint 6: pinned slipped 2× because I diffed my own change-list, froze before comparing the full confirmed field list to schema.py. --> Before announcing a schema FROZEN: put the authoritative field list (the confirmed Logic block / the mock `DB.<entity>` shape) BESIDE your `schema.py` and compare EVERY field one-by-one. The trap: spec arrives in waves (stub → full confirm), you re-align the deltas you consciously noted, but a single additive field buried in a multi-point confirm message gets missed — because you diffed your mental change-list, not the source-of-truth field list. The freeze-announce is gated on that explicit field-by-field diff + the live `curl` payload (announce "FROZEN" only after pytest green AND `curl :800X/<endpoint>` 200 with the real shape AND paste the payload). See memory `schema-freeze-gate`, `mock-diff-catches-dropped-feature`.
 
 ---
 

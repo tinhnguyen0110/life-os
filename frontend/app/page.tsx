@@ -14,6 +14,7 @@ import { HealthChip } from "@/components/shared/HealthChip";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { ComingSoonStub } from "@/components/shared/ComingSoonStub";
+import { HomeClaudeTile } from "@/components/HomeClaudeTile";
 import { fmtUSD, fmtSign, fmtPct, orDash } from "@/lib/format";
 import { spark } from "@/lib/spark";
 import type { ProjectStatus } from "@/lib/types";
@@ -135,8 +136,9 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Claude quota — COMING-SOON STUB (S9 unbuilt; never fake numbers) */}
-            <ComingSoonStub label="Claude · quota" note="chưa nối nguồn usage." testId="home-claude-stub" />
+            {/* Claude quota — LIVE tile (S9 shipped). Self-fetches /claude-usage,
+                fails independently (per-tile fail-open). Click → S9. */}
+            <HomeClaudeTile />
           </div>
 
           {/* mid: projects table (projects) + Brief stub */}

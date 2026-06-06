@@ -30,10 +30,20 @@ services:
       # only sees life-os and /projects would show 1 of 6 — Docker must not drop
       # real data. Path is host-specific (1-dev local); override TINHDEV_HOST_DIR.
       - ${TINHDEV_HOST_DIR:-..}:/tinhdev:ro
+      # S9 Claude Usage reads ~/.claude/stats-cache.json (real token/usage data).
+      # Without this mount the container sees its own empty $HOME → the reader
+      # fail-opens to manual mode and the canonical stack shows NO real usage
+      # (the 3B-class mount gap: data exists on host, container can't see it).
+      # Mount the host's ~/.claude READ-ONLY (reader never writes; single-user).
+      # Override CLAUDE_HOST_DIR if your ~/.claude lives elsewhere.
+      - ${CLAUDE_HOST_DIR:-${HOME}/.claude}:/claude-home:ro
     environment:
       # Point the config's TINHDEV_ROOT at the mounted repos (config.py reads this
       # env directly). Default ../  → /tinhdev so the 6 sibling repos resolve.
       LIFEOS_TINHDEV_ROOT: /tinhdev
+      # S9: point the claude-usage reader at the mounted host ~/.claude (above),
+      # NOT the container's empty $HOME/.claude. config reads this env.
+      LIFEOS_CLAUDE_STATS_PATH: /claude-home/stats-cache.json
     # (uvicorn --host 0.0.0.0 --port 8001 --reload — from the Dockerfile CMD.)
 
   frontend:

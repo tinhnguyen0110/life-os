@@ -221,6 +221,13 @@ button { font-family:inherit; }
 /* badges inline */
 .tagchip { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:100px; padding:2px 9px; }
 
+/* usage bar row (S9 per-model/project) — ported from mock screens.css .usebar-row */
+.usebar-row { display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:12px; padding:8px 0; }
+.usebar-row .ul { width:120px; color:var(--tx-1); }
+.usebar-row .ub { flex:1; height:9px; background:var(--bg-3); border-radius:3px; overflow:hidden; }
+.usebar-row .ub i { display:block; height:100%; }
+.usebar-row .uv { width:64px; text-align:right; color:var(--tx-0); }
+
 /* note card (S10) — ported from mock screens.css .note-card */
 .note-card { background:var(--bg-1); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; display:flex; flex-direction:column; gap:8px; transition:border-color .15s; break-inside:avoid; }
 .note-card:hover { border-color:var(--line-2); }
