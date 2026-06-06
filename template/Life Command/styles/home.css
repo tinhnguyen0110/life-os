@@ -1,0 +1,170 @@
+/* ============================================================
+   LIFE COMMAND — Home Directions
+   Dark trading-desk × hacker-console
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* base */
+  --bg-0: #08080a;        /* deepest */
+  --bg-1: #0d0d10;        /* panel */
+  --bg-2: #121217;        /* raised */
+  --bg-3: #1a1a21;        /* hover */
+  --line: #23232c;        /* hairline */
+  --line-2: #2e2e3a;
+
+  /* text */
+  --tx-0: #ECEAE3;        /* primary, warm white */
+  --tx-1: #9b988e;        /* muted warm */
+  --tx-2: #66645c;        /* faint */
+
+  /* roles */
+  --amber: #F5A623;       /* brand / heat */
+  --amber-soft: #ffce7a;
+  --amber-dim: #5c4318;
+  --green: #34E08A;       /* positive data */
+  --green-dim: #14502f;
+  --red: #FF5C5C;         /* warning / down */
+  --red-dim: #5a1f1f;
+  --blue: #4DA6FF;        /* info / neutral signal */
+
+  --glow-amber: 0 0 0 1px rgba(245,166,35,.35), 0 0 18px -4px rgba(245,166,35,.45);
+  --glow-green: 0 0 0 1px rgba(52,224,138,.35), 0 0 18px -4px rgba(52,224,138,.45);
+
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sans: 'Space Grotesk', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #161616;
+  color: var(--tx-0);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- comparison page chrome ---- */
+.review-head {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 40px 40px 8px;
+}
+.review-head h1 {
+  font-size: 22px; font-weight: 600; letter-spacing: -.01em;
+  color: #fff;
+}
+.review-head p {
+  margin-top: 8px; color: #8c8c8c; font-size: 14px; max-width: 720px;
+  line-height: 1.55;
+}
+.frames { max-width: 1480px; margin: 0 auto; padding: 24px 40px 120px; }
+.frame { margin-top: 56px; }
+.frame-label {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px;
+}
+.frame-label .idx {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: #161616; background: var(--amber);
+  padding: 3px 8px; border-radius: 4px;
+}
+.frame-label h2 { font-size: 17px; font-weight: 600; color: #fff; }
+.frame-label .tag {
+  font-family: var(--mono); font-size: 11.5px; color: #8c8c8c;
+  border: 1px solid #333; border-radius: 100px; padding: 3px 10px;
+}
+.frame-label p { font-size: 13px; color: #8c8c8c; margin-left: auto; max-width: 460px; text-align: right; line-height: 1.45; }
+.stage-wrap {
+  border-radius: 14px; overflow: hidden;
+  border: 1px solid #2a2a2a;
+  box-shadow: 0 30px 80px -40px rgba(0,0,0,.9);
+}
+.stage {
+  width: 1440px; height: 912px;
+  transform-origin: top left;
+  background: var(--bg-0);
+  position: relative;
+  overflow: hidden;
+}
+.stage.scan::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 50;
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.022) 0px, rgba(255,255,255,.022) 1px, transparent 1px, transparent 3px);
+}
+
+/* ============================================================
+   SHARED DASHBOARD PRIMITIVES
+   ============================================================ */
+.app { display: grid; grid-template-columns: 64px 1fr; height: 100%; }
+
+/* sidebar */
+.side {
+  background: var(--bg-1); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 0; gap: 4px;
+}
+.side .logo {
+  width: 36px; height: 36px; border-radius: 9px;
+  display: grid; place-items: center; margin-bottom: 14px;
+  font-family: var(--mono); font-weight: 700; font-size: 18px;
+  color: var(--bg-0); background: var(--amber);
+}
+.side .nav-i {
+  width: 40px; height: 40px; border-radius: 9px;
+  display: grid; place-items: center; color: var(--tx-2);
+  position: relative; cursor: pointer;
+}
+.side .nav-i svg { width: 19px; height: 19px; }
+.side .nav-i:hover { background: var(--bg-3); color: var(--tx-1); }
+.side .nav-i.on { color: var(--amber); background: var(--bg-2); }
+.side .nav-i.on::before {
+  content: ''; position: absolute; left: -14px; top: 9px; bottom: 9px;
+  width: 3px; border-radius: 2px; background: var(--amber);
+}
+.side .sp { flex: 1; }
+.side .divline { width: 26px; height: 1px; background: var(--line); margin: 6px 0; }
+
+.main { overflow: hidden; display: flex; flex-direction: column; }
+
+/* topbar */
+.top {
+  height: 56px; flex-shrink: 0; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--bg-1);
+}
+.greet { display: flex; flex-direction: column; }
+.greet b { font-size: 14px; font-weight: 600; }
+.greet span { font-family: var(--mono); font-size: 11px; color: var(--tx-2); }
+.top .spacer { flex: 1; }
+.pill {
+  font-family: var(--mono); font-size: 11.5px; color: var(--tx-1);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px;
+  display: flex; align-items: center; gap: 7px; background: var(--bg-0);
+}
+.pill b { color: var(--tx-0); font-weight: 600; }
+.dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot.g { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.a { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.dot.r { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+.btn {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 7px 13px; color: var(--tx-0); background: var(--bg-2);
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+}
+.btn svg { width: 14px; height: 14px; }
+.btn.amber { background: var(--amber); color: #161008; border-color: transparent; font-weight: 600; }
+
+/* numbers */
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.kicker {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--tx-2);
+}
+
+/* scrollbars (visual only) */
+.stage ::-webkit-scrollbar { width: 6px; height: 6px; }
+.stage ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
