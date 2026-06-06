@@ -50,6 +50,12 @@ Rules:
 
 If a teammate is silent >20 min after dispatch, or TaskList shows `in_progress` but `git status`/`ls` shows no change → team-lead pings `[STATUS check]` (CLAUDE.md §3). But the teammate's standing obligation is to PROACTIVELY SendMessage, not wait to be chased.
 
+### 2.2 — Every dispatch NAMES the relevant memory files to read first (HARD — user-flagged Sprint 6)
+
+Project memory's INDEX (`MEMORY.md`) loads each session, but the individual `memory/*.md` FILES are read **on-demand** — a freshly-spawned teammate does NOT auto-read them. So a dispatch that doesn't name the relevant memory files = the teammate works blind to every dynamic lesson logged since its playbook was frozen. This is why solved mistakes recurred (S6: backend froze without `pinned` though `schema-freeze-gate` + `mock-diff-catches-dropped-feature` were already in memory; the green-masked-gap nearly shipped though `unhandled-errors-not-green` existed).
+
+**Rule:** every dispatch (architect → teammate, or team-lead → teammate) opens with a `## Read first (memory)` line naming 2-4 role-relevant memory files the teammate MUST `Read` before starting. Role-target it (backend → freeze-gate + 0-errors + decided-algorithm files · FE screen → mock-diff + 0-errors + dev-ports · tester → why-accepted + verify-live-app + behavior-test). This is the ACTIVE enforcement of "Memory = dynamic, read on-demand" (§4 / CLAUDE.md) — the memory only helps if the dispatch points at it. team-lead checks the dispatch named them before greenlighting; if architect omits it, team-lead adds it. (architect playbook has the dispatch-template line.)
+
 ---
 
 ## 3. Sprint Sync — the 2-phase ritual after every sprint

@@ -171,6 +171,7 @@ Why: pre-written plans are 70-80% right but always need tuning. 15 min kickoff p
 
 ```markdown
 [Sprint X — Task #N]
+## Read first (memory — MANDATORY): 2-4 relevant memory files the teammate MUST `Read` before starting (the index loads but FILES are read on-demand — a spawned teammate does NOT auto-read them). Role-target it: backend → `schema-freeze-gate`, `unhandled-errors-not-green`, any decided-algorithm memory for this feature · FE screen → `mock-diff-catches-dropped-feature`, `unhandled-errors-not-green`, `dev-server-ports` · tester → `workaround-then-ask-why-accepted`, `verify-live-app-not-just-suite`, `behavior-test-not-field-read`. Name the FILES explicitly ("Read memory `schema-freeze-gate` + `unhandled-errors-not-green` first"). This is how dynamic lessons reach the teammate — without it they repeat solved mistakes (S6: backend froze without `pinned` though the freeze-gate + mock-diff lessons were already in memory).
 ## Context (1 paragraph)
 ## Scope (IN / OUT lists)
 ## Logic/Algorithm (MANDATORY for non-CRUD — see Logic section above; CRUD → "N/A — plain CRUD")
@@ -188,6 +189,8 @@ For FE module-SCREEN dispatches, ALSO name: the exact mock file to port (per-scr
 
 <!-- Added sprint 1 (Sprint-0 Standup, convergent tester+frontend ask): Runtime/Baseline/Ownership blocks + FE mock-file naming. Teammates were reverse-engineering server URLs/test baselines each sprint; tester overstepped 3× editing tests. Memory mirror: dispatch-standards-additions, dev-server-ports. -->
 
+<!-- Added sprint 6 (user-flagged: "đầu mỗi sprint có dặn teammates đọc lại memory không"): the `## Read first (memory)` block. Memory FILES are read on-demand — a freshly-spawned teammate never auto-reads them, so logged lessons (freeze-gate, mock-diff, 0-errors, why-accepted) didn't reach the implementer and solved mistakes recurred (pinned dropped + frozen-without despite both lessons existing). The dispatch MUST name the relevant memory files per role. Memory mirror: this fix is the active enforcement of CLAUDE.md "Memory = dynamic, read on-demand → dispatch says read memory <file> first". -->
+
 Dispatch ordering: (1) gating task first, alone · (2) fan-out parallel tasks after gate lands · (3) tester unblocked early to pre-scaffold from Exports · (4) your own work parallel where it doesn't block. If kickoff found >30% drift, dispatch may diverge from the plan — the Kickoff section documents WHY; the dispatch is the contract.
 
 ---
@@ -198,7 +201,7 @@ Dispatch ordering: (1) gating task first, alone · (2) fan-out parallel tasks af
 ☐ Schema constraints (`min/max_length`, `Literal`, `field_validator` whitespace) ☐ integration test for endpoint ☐ existing integration tests pass ☐ module auto-discovered (NOT manual `core/`/`main.py` edit) ☐ response `{success,data,warning?}` ☐ error codes 400/404/422/429/500 (no 401/403 — no auth)
 
 **Gate 2 — Function** (touches `backend/` or `frontend/`):
-☐ unit test asserts observable behavior ☐ existing unit tests pass (`pytest`/`npx vitest run`) ☐ edge cases (empty/None/max/malformed) ☐ error path explicit (fail-open vs fail-closed) ☐ types complete (mypy / `npx tsc --noEmit`) ☐ no self-confirming `assert is not None` ☐ FE: Chrome self-verify done (UI tasks)
+☐ unit test asserts observable behavior ☐ existing unit tests pass (`pytest`/`npx vitest run`) ☐ **suite shows 0 errors / 0 unhandled rejections — NOT just "N passed"** (read the full tail; `N passed + X errors` is the suite lying — find what's throwing; an unhandled rejection whose trace points at a NON-test file is a code bug, open that file:line first. See memory `unhandled-errors-not-green`) ☐ edge cases (empty/None/max/malformed) ☐ error path explicit (fail-open vs fail-closed) ☐ types complete (mypy / `npx tsc --noEmit`) ☐ no self-confirming `assert is not None` ☐ FE: Chrome self-verify done (UI tasks)
 
 **Gate 3 — Sprint** (every sprint):
 ☐ `end_sprint_X.md` written w/ verified counts ☐ you spot-checked actual files (full functions) ☐ tester: vitest 100% + pytest layer + Chrome for FE sprints ☐ test counts ≥ baseline ☐ out-of-scope findings flagged ☐ commit format match

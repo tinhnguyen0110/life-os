@@ -30,12 +30,12 @@ backend/store/*.db-wal
 backend/store/*.db-shm
 
 # md+git store — backend/data/ is its OWN git repo (runtime markdown), not source.
-# Track the scaffold .gitkeep markers but ignore generated content + the nested repo.
-backend/data/.git/
-backend/data/projects/*
-backend/data/notes/*
-backend/data/journal/*
+# Ignore the entire runtime tree (incl. the nested repo) but keep scaffold .gitkeep markers.
+backend/data/*
 !backend/data/**/.gitkeep
+
+# Scheduler runtime artifact (APScheduler lock) — not source.
+.claude/scheduled_tasks.lock
 
 # OS / editor
 .DS_Store

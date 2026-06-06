@@ -97,6 +97,40 @@ export async function apiPost<T>(
   return parsed as ApiResponse<T>;
 }
 
+/** PUT wrapper. Same envelope + error handling as apiPost; sends a JSON body. */
+export async function apiPut<T>(
+  path: string,
+  body?: unknown,
+  init?: RequestInit
+): Promise<ApiResponse<T>> {
+  const url = `${BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PUT",
+      ...init,
+      headers: { Accept: "application/json", "Content-Type": "application/json", ...init?.headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(0, `Network error reaching ${url}: ${(e as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch {
+    throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
+  }
+  if (!res.ok) {
+    const msg =
+      (parsed as { detail?: string; message?: string })?.detail ||
+      (parsed as { message?: string })?.message ||
+      `Request to ${url} failed (${res.status})`;
+    throw new ApiError(res.status, msg);
+  }
+  return parsed as ApiResponse<T>;
+}
+
 /** DELETE wrapper. Same envelope + error handling as apiGet. */
 export async function apiDelete<T>(
   path: string,

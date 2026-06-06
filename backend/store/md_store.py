@@ -149,6 +149,45 @@ def exists(path: str | Path) -> bool:
     return target.is_file()
 
 
+def delete_file(path: str | Path, message: str | None = None) -> str | None:
+    """Delete a file inside DATA_DIR and commit the removal. Returns the sha, or
+    None if the file did not exist (no-op, no commit).
+
+    Mirrors write_file's contract: the removal is ``git rm`` + one commit, so
+    history stays complete. Path-escape is rejected (MdStoreError). Idempotent:
+    deleting an absent file is a no-op returning None (callers map to 404 if they
+    need to distinguish — md_store stays fail-soft).
+    """
+    if path is None or str(path).strip() == "":
+        raise ValueError("path must be non-empty")
+    with _write_lock:
+        root, target = _resolve_under_root(path)
+        if not target.is_file():
+            return None
+        _ensure_repo(root)
+        rel = target.relative_to(root).as_posix()
+        rm = _run_git(["rm", "--", rel], root)
+        if rm.returncode != 0:
+            # Fall back to filesystem remove + stage (e.g. file untracked in git).
+            try:
+                target.unlink()
+            except FileNotFoundError:
+                return None
+            _run_git(["add", "--", rel], root)
+        staged = _run_git(["diff", "--cached", "--quiet"], root)
+        if staged.returncode == 0:
+            head = _run_git(["rev-parse", "HEAD"], root)
+            return head.stdout.strip() if head.returncode == 0 else ""
+        msg = message or f"delete {rel}"
+        commit = _run_git(["commit", "-m", msg], root)
+        if commit.returncode != 0:
+            raise MdStoreError(f"git commit (delete) failed for {rel}: {commit.stderr.strip()}")
+        rev = _run_git(["rev-parse", "HEAD"], root)
+        commit_hash = rev.stdout.strip()
+        logger.info("deleted %s (%s)", rel, commit_hash[:8])
+        return commit_hash
+
+
 # --- Back-compat aliases (DATA_DIR-relative semantics for module callers) ---
 # Feature modules pass relative paths; these are the same functions. read() keeps
 # the None-on-missing convenience used internally; read_file() raises (test contract).
