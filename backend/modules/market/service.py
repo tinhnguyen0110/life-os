@@ -1,0 +1,329 @@
+"""modules/market/service.py — market orchestration (Sprint 3, SPEC §S8).
+
+Composes the live market view: quotes (reader) → changePct derived server-side
+from price_history → alert triggers (eval rules) → macro stubs → alert history
+(run_log). Alert rules persist in md_store (`market/alerts.md` front-matter list).
+
+Decide-and-log rules (architect Logic block, verbatim):
+  - changePct: derive from price_history (point ≥24h ago vs latest); if our series
+    is too short, fall back to the feed's usd_24h_change. NEVER trust the feed blindly.
+  - Alert state: hit (above:price≥thr / below:price≤thr) · near (within 5% of thr)
+    · far. distance = (threshold - price) / price.
+  - Macro: stub mock block this build.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import datetime, timedelta, timezone
+
+import yaml
+
+from core.config import settings
+from store import db, md_store
+
+from . import reader
+from .schema import (
+    AlertEvent,
+    AlertRule,
+    AlertState,
+    AlertTrigger,
+    AssetQuote,
+    MacroSignal,
+    PricePoint,
+)
+
+logger = logging.getLogger("life-os.market.service")
+
+ALERTS_MD = "market/alerts.md"
+NEAR_PCT = 5.0                  # within 5% (|distancePct|) of threshold → "near"
+CHANGE_LOOKBACK_HOURS = 24
+MARKET_POLL_ID = "market-poll"  # run_log routine_id alert events are recorded under
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def tracked_assets() -> list[dict]:
+    """The flat tracked-asset list from config (no asset-mgmt API)."""
+    return list(settings.market_assets or [])
+
+
+# --------------------------------------------------------------------------- #
+# changePct — derived server-side from price_history                            #
+# --------------------------------------------------------------------------- #
+def derive_change_pct(symbol: str, latest_price: float, feed_fallback: float | None) -> float | None:
+    """% change vs the price ≥CHANGE_LOOKBACK_HOURS ago from our own series.
+
+    Falls back to the feed's 24h change when our series lacks a point that old.
+    Returns None only when neither source is available. Never divides by zero.
+    """
+    cutoff = (_now() - timedelta(hours=CHANGE_LOOKBACK_HOURS)).isoformat()
+    row = db.price_at_or_before(symbol, cutoff)
+    if row is not None:
+        old = float(row["price"])
+        if old > 0:
+            return round((latest_price - old) / old * 100.0, 2)
+    # Series too short → fall back to the feed's own 24h change (if present).
+    if isinstance(feed_fallback, (int, float)):
+        return round(float(feed_fallback), 2)
+    return None
+
+
+def _apply_change_pct(quotes: list[AssetQuote]) -> list[AssetQuote]:
+    """Fill changePct on each quote from price_history (feed fallback)."""
+    out: list[AssetQuote] = []
+    for q in quotes:
+        feed_fallback = getattr(q, "_feed_change_pct", None)
+        pct = derive_change_pct(q.symbol, q.price, feed_fallback)
+        out.append(q.model_copy(update={"changePct": pct}))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Alert rules — persistence (md_store) + evaluation                             #
+# --------------------------------------------------------------------------- #
+def _parse_rules(content: str | None) -> list[AlertRule]:
+    """Parse the alerts.md front-matter `rules:` list into AlertRule objects."""
+    if not content:
+        return []
+    text = content.lstrip("﻿")
+    if not text.startswith("---"):
+        return []
+    block = text[len("---"):].split("\n---", 1)[0]
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError as exc:
+        logger.warning("malformed alerts.md, ignoring: %s", exc)
+        return []
+    if not isinstance(data, dict):
+        return []
+    rules: list[AlertRule] = []
+    for item in data.get("rules", []) or []:
+        try:
+            rules.append(AlertRule(**item))
+        except Exception as exc:  # one bad rule never breaks the rest
+            logger.warning("skipping invalid alert rule %r: %s", item, exc)
+    return rules
+
+
+def list_rules() -> list[AlertRule]:
+    """All persisted alert rules ([] if none)."""
+    try:
+        content = md_store.read(ALERTS_MD)
+    except Exception as exc:
+        logger.warning("alerts.md read failed: %s", exc)
+        return []
+    return _parse_rules(content)
+
+
+def _write_rules(rules: list[AlertRule]) -> None:
+    """Persist the full rule list to alerts.md as one md_store commit."""
+    payload = {"rules": [r.model_dump() for r in rules]}
+    body = "---\n" + yaml.safe_dump(payload, sort_keys=True, allow_unicode=True).strip() + "\n---\n"
+    md_store.write_file(ALERTS_MD, body, "update market alert rules")
+
+
+def _new_rule_id(symbol: str, existing: list[AlertRule]) -> str:
+    """Server-assigned id = slug(symbol)+counter, unique within the rule set."""
+    base = re.sub(r"[^a-z0-9]+", "-", symbol.lower()).strip("-") or "rule"
+    taken = {r.id for r in existing}
+    n = 1
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
+
+
+def add_rule(symbol: str, op: str, threshold: float, enabled: bool = True) -> AlertRule:
+    """UPSERT an alert rule by (symbol, op): one threshold per symbol+op.
+
+    If a rule with the same (symbol, op) exists, REPLACE it (keeping its id) —
+    re-setting a "BTC above" threshold updates the existing rule rather than
+    creating a duplicate (correct UX, and keeps delete-by-id unambiguous).
+    Otherwise create a new rule with a server-assigned id. Persists + returns it.
+    """
+    rules = list_rules()
+    existing = next((r for r in rules if r.symbol == symbol and r.op == op), None)
+    rule = AlertRule(
+        id=existing.id if existing else _new_rule_id(symbol, rules),
+        symbol=symbol, op=op,  # type: ignore[arg-type]
+        threshold=threshold, enabled=enabled,
+    )
+    others = [r for r in rules if not (r.symbol == symbol and r.op == op)]
+    others.append(rule)
+    _write_rules(others)
+    return rule
+
+
+def delete_rule(rule_id: str) -> bool:
+    """Delete the rule with the given id. Returns True if one was removed."""
+    rules = list_rules()
+    kept = [r for r in rules if r.id != rule_id]
+    removed = len(kept) != len(rules)
+    if removed:
+        _write_rules(kept)
+    return removed
+
+
+def eval_alerts(quotes: list[AssetQuote], rules: list[AlertRule]) -> list[AlertTrigger]:
+    """Evaluate each rule against the matching quote → triggers with hit/near/far state.
+
+    above: price≥threshold = hit; below: price≤threshold = hit. distance =
+    (threshold-price)/price. |distance|≤5% (and not hit) → near, else far.
+    Rules whose symbol has no quote are skipped.
+    """
+    by_symbol = {q.symbol: q for q in quotes}
+    triggers: list[AlertTrigger] = []
+    for rule in rules:
+        q = by_symbol.get(rule.symbol)
+        if q is None:
+            continue
+        if not rule.enabled:
+            continue
+        price = q.price
+        distance_pct = (rule.threshold - price) / price * 100.0 if price > 0 else 0.0
+        state: AlertState
+        if (rule.op == "above" and price >= rule.threshold) or (
+            rule.op == "below" and price <= rule.threshold
+        ):
+            state = "hit"
+        elif abs(distance_pct) <= NEAR_PCT:
+            state = "near"
+        else:
+            state = "far"
+        triggers.append(
+            AlertTrigger(
+                symbol=rule.symbol, op=rule.op, threshold=rule.threshold,
+                price=price, state=state, distancePct=round(distance_pct, 2),
+            )
+        )
+    return triggers
+
+
+# --------------------------------------------------------------------------- #
+# Macro stub + alert history (run_log)                                          #
+# --------------------------------------------------------------------------- #
+def macro_signals() -> list[MacroSignal]:
+    """Stub macro block this build (Fear&Greed/BTC Dominance/Brent). Deterministic.
+
+    value is a display-ready STRING (mixed units). Real feed swaps in later
+    (data-fallback: mock-first, never block on a paid source).
+    """
+    return [
+        MacroSignal(name="Fear & Greed", value="38", status="fear", note="thị trường sợ hãi"),
+        MacroSignal(name="BTC Dominance", value="54%", status="neutral", note=""),
+        MacroSignal(name="Brent Oil", value="$72", status="neutral", note=""),
+    ]
+
+
+def alert_history(limit: int = 50) -> list[AlertEvent]:
+    """Fired alerts from run_log (recorded by the market-poll routine, T3)."""
+    events: list[AlertEvent] = []
+    for row in db.recent_runs(MARKET_POLL_ID, limit=limit):
+        detail = row["detail"]
+        if not detail:
+            continue
+        try:
+            payload = json.loads(detail)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if payload.get("kind") != "alert":
+            continue
+        try:
+            events.append(
+                AlertEvent(
+                    symbol=payload["symbol"], op=payload["op"],
+                    threshold=payload["threshold"], price=payload["price"],
+                    ts=row["started_at"],
+                )
+            )
+        except (KeyError, Exception):  # malformed history row → skip, never crash
+            continue
+    return events
+
+
+# --------------------------------------------------------------------------- #
+# Composite market view + history endpoint                                      #
+# --------------------------------------------------------------------------- #
+def get_market() -> tuple[dict, list[str]]:
+    """The live market view: {quotes, triggers, macro, alertHistory} + warnings."""
+    raw_quotes, warnings = reader.read_quotes(tracked_assets())
+    quotes = _apply_change_pct(raw_quotes)
+    rules = list_rules()
+    triggers = eval_alerts(quotes, rules)
+    data = {
+        "quotes": [q.model_dump() for q in quotes],
+        "triggers": [t.model_dump() for t in triggers],
+        "macro": [m.model_dump() for m in macro_signals()],
+        "alertHistory": [e.model_dump() for e in alert_history()],
+    }
+    return data, warnings
+
+
+def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
+    """price_history points for an asset over the last ``hours`` (oldest→newest).
+
+    ``hours`` windows the series (default 24h); ``limit`` caps the row count.
+    """
+    since = (_now() - timedelta(hours=max(1, hours))).isoformat()
+    rows = db.prices_for(asset, since=since, limit=limit)
+    return [PricePoint(asset=r["asset"], price=float(r["price"]), ts=r["ts"]) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Poll (T3 routine code path): fetch → persist → eval → record fired alerts     #
+# --------------------------------------------------------------------------- #
+def _already_hit(symbol: str, op: str) -> bool:
+    """True if the MOST RECENT recorded alert for (symbol, op) was a hit.
+
+    Edge-trigger: we only record a NEW alert event when the rule transitions INTO
+    hit (was not already the last-recorded hit), so a standing hit doesn't spam
+    run_log every 5 minutes.
+    """
+    for ev in alert_history(limit=100):
+        if ev.symbol == symbol and ev.op == op:
+            return True  # most-recent matching event exists → already fired
+    return False
+
+
+def poll_once() -> dict:
+    """One market-poll pass: persist each quote + record newly-fired alerts.
+
+    Fail-open per asset (reader already degrades a bad feed; persistence of one
+    asset failing never aborts the rest). Edge-triggered alert recording: a rule
+    that is already in its last-recorded hit state is NOT re-recorded. Returns a
+    small summary dict (also used as the run_log detail by the routine wrapper).
+    Detection + record only — no notification side-effects.
+    """
+    import json
+
+    quotes, warnings = reader.read_quotes(tracked_assets())
+    persisted = 0
+    for q in quotes:
+        try:
+            db.record_price(q.symbol, q.price, q.ts, currency=q.currency, source=q.source)
+            persisted += 1
+        except Exception as exc:  # one asset's persist failing must not abort the poll
+            logger.error("market-poll: persist %r failed: %s", q.symbol, exc)
+            warnings.append(f"{q.symbol}: persist failed ({exc})")
+
+    quotes = _apply_change_pct(quotes)
+    triggers = eval_alerts(quotes, list_rules())
+    fired = 0
+    for t in triggers:
+        if t.state != "hit":
+            continue
+        if _already_hit(t.symbol, t.op):
+            continue  # edge-trigger: standing hit, don't re-record
+        db.record_run(
+            MARKET_POLL_ID, "warn", _now().isoformat(),
+            detail=json.dumps({
+                "kind": "alert", "symbol": t.symbol, "op": t.op,
+                "threshold": t.threshold, "price": t.price,
+            }),
+        )
+        fired += 1
+    return {"persisted": persisted, "fired": fired, "warnings": warnings}

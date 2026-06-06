@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { CommandBar } from "./CommandBar";
-import { TickerTape } from "./TickerTape";
+import { LiveTickerTape } from "./TickerTape";
 
 export function ShellLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -23,7 +23,7 @@ export function ShellLayout({ children }: { children: React.ReactNode }) {
           <CommandBar />
           {children}
         </div>
-        <TickerTape />
+        <LiveTickerTape />
       </div>
     </div>
   );

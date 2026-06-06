@@ -140,6 +140,72 @@ def record_price(asset: str, price: float, ts: str, currency: str = "USD",
         return _last_id(cur)
 
 
+def latest_price(asset: str) -> sqlite3.Row | None:
+    """Most recent price_history row for ``asset``, or None if no points yet."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT asset, price, currency, source, ts FROM price_history "
+            "WHERE asset = ? ORDER BY ts DESC, id DESC LIMIT 1",
+            (asset,),
+        )
+        return cur.fetchone()
+
+
+def prices_for(asset: str, since: str | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+    """price_history rows for ``asset``, oldest→newest.
+
+    ``since`` (ISO-8601 UTC) filters to ts >= since; ``limit`` caps the count
+    (most-recent ``limit`` rows, still returned oldest→newest).
+    """
+    conn = get_conn()
+    with _lock:
+        if limit is not None:
+            # Take the most-recent `limit`, then re-sort ascending for the caller.
+            sql = ("SELECT asset, price, currency, source, ts FROM price_history "
+                   "WHERE asset = ?")
+            params: list[object] = [asset]
+            if since is not None:
+                sql += " AND ts >= ?"
+                params.append(since)
+            sql += " ORDER BY ts DESC, id DESC LIMIT ?"
+            params.append(int(limit))
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            return list(reversed(rows))
+        sql = ("SELECT asset, price, currency, source, ts FROM price_history "
+               "WHERE asset = ?")
+        params = [asset]
+        if since is not None:
+            sql += " AND ts >= ?"
+            params.append(since)
+        sql += " ORDER BY ts ASC, id ASC"
+        return conn.execute(sql, tuple(params)).fetchall()
+
+
+def price_at_or_before(asset: str, ts: str) -> sqlite3.Row | None:
+    """Latest price_history row for ``asset`` with ts <= the given ts. None if none."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT asset, price, currency, source, ts FROM price_history "
+            "WHERE asset = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT 1",
+            (asset, ts),
+        )
+        return cur.fetchone()
+
+
+def recent_runs(routine_id: str, limit: int = 50) -> list[sqlite3.Row]:
+    """Most-recent run_log rows for ``routine_id`` (newest first). Alert history reads this."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT routine_id, status, detail, started_at, finished_at FROM run_log "
+            "WHERE routine_id = ? ORDER BY started_at DESC, id DESC LIMIT ?",
+            (routine_id, int(limit)),
+        )
+        return cur.fetchall()
+
+
 def record_run(routine_id: str, status: str, started_at: str,
                finished_at: str | None = None, detail: str | None = None) -> int:
     """Insert a routine run-log entry. Returns the new row id."""

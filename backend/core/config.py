@@ -37,6 +37,17 @@ _SHORTLIST_FOLDERS: dict[str, str] = {
 }
 
 
+def _default_market_assets() -> list[dict]:
+    """Sprint 3 tracked-asset shortlist (SPEC §S8). crypto→CoinGecko, etf/vn→mock."""
+    return [
+        {"symbol": "BTC", "name": "Bitcoin", "assetClass": "crypto", "cgId": "bitcoin"},
+        {"symbol": "ETH", "name": "Ethereum", "assetClass": "crypto", "cgId": "ethereum"},
+        {"symbol": "SOL", "name": "Solana", "assetClass": "crypto", "cgId": "solana"},
+        {"symbol": "VNINDEX", "name": "VN-Index", "assetClass": "vn", "mock": 1283.5},
+        {"symbol": "FUEVFVND", "name": "ETF VFVND", "assetClass": "etf", "mock": 24.8},
+    ]
+
+
 def _default_project_repos() -> dict[str, str]:
     """Resolve the shortlist to absolute paths under TINHDEV_ROOT.
 
@@ -81,6 +92,14 @@ class Settings(BaseSettings):
     app_name: str = "life-os"
     # Scheduler can be disabled (e.g. in tests) without touching module code.
     scheduler_enabled: bool = True
+
+    # --- Market (Sprint 3, SPEC §S8) ---------------------------------------
+    # Tracked assets as a flat list (no asset-mgmt API — single dev). Each entry:
+    # {symbol, name, assetClass, cgId?(crypto), mock?(etf/vn)}. crypto → CoinGecko
+    # (cgId required); etf/vn → deterministic mock seed. Override LIFEOS_MARKET_ASSETS.
+    market_assets: list[dict] = Field(default_factory=lambda: _default_market_assets())
+    # CoinGecko free API base (no key). Override for tests/proxy via LIFEOS_COINGECKO_BASE.
+    coingecko_base: str = "https://api.coingecko.com/api/v3"
 
     # Browser origins allowed to call the API. Single-user localhost no-auth
     # (CLAUDE.md §2) — CORS here is a browser-functionality enabler, NOT a

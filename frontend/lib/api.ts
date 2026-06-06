@@ -94,6 +94,38 @@ export async function apiPost<T>(
   return parsed as ApiResponse<T>;
 }
 
+/** DELETE wrapper. Same envelope + error handling as apiGet. */
+export async function apiDelete<T>(
+  path: string,
+  init?: RequestInit
+): Promise<ApiResponse<T>> {
+  const url = `${BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "DELETE",
+      ...init,
+      headers: { Accept: "application/json", ...init?.headers },
+    });
+  } catch (e) {
+    throw new ApiError(0, `Network error reaching ${url}: ${(e as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch {
+    throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
+  }
+  if (!res.ok) {
+    const msg =
+      (parsed as { detail?: string; message?: string })?.detail ||
+      (parsed as { message?: string })?.message ||
+      `Request to ${url} failed (${res.status})`;
+    throw new ApiError(res.status, msg);
+  }
+  return parsed as ApiResponse<T>;
+}
+
 /** Sprint 0 — health probe (drives the TopBar "API live" pill). */
 export function getHealth(): Promise<ApiResponse<HealthData>> {
   return apiGet<HealthData>("/health");
