@@ -12,6 +12,7 @@ const getProjects = vi.fn();
 const getMarket = vi.fn();
 const getClaudeUsage = vi.fn();
 const getActivity = vi.fn();
+const getBrief = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", async () => {
     getMarket: () => getMarket(),
     getClaudeUsage: () => getClaudeUsage(),
     getActivity: (...a: unknown[]) => getActivity(...a),
+    getBrief: () => getBrief(),
   };
 });
 
@@ -30,12 +32,15 @@ const USAGE = { success: true, data: { model: "claude-opus", used: 37727, cap: 2
 
 const ACTIVITY = { success: true, data: { runs: [{ id: 51, routineId: "market-poll", routineName: "Market Poll", status: "ok", detail: "polled 5", startedAt: "2026-06-06T14:10:00Z", finishedAt: "2026-06-06T14:10:00Z", durationMs: 405 }], count: 1, runsToday: 1, okCount: 1, warnCount: 0, errorCount: 0, successRate: 100, avgDurationMs: 405, byRoutine: [] } };
 
+const BRIEF = { success: true, data: { generatedAt: "2026-06-06T15:32:30Z", asOf: "2026-04-17", source: "template", summary: { netWorth: 63121, projectsActive: 3, claudePct: 18.9, alertsToday: 2 }, priorities: [{ n: 1, text: "crewly đứng 69 ngày", source: "projects", severity: "warn" }], stale: true, warnings: [] } };
+
 afterEach(() => {
   getFinance.mockReset();
   getProjects.mockReset();
   getMarket.mockReset();
   getClaudeUsage.mockReset();
   getActivity.mockReset();
+  getBrief.mockReset();
 });
 
 const FIN = { success: true, data: {
@@ -55,9 +60,9 @@ const MKT = { success: true, data: {
 } };
 
 describe("S1 Home Command Center (frontend-owned)", () => {
-  // HomeActivityTile self-fetches /activity (per-tile fail-open) — default it OK
-  // so the unrelated tile never errors/console-noises in these tests.
-  beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY); });
+  // HomeActivityTile + HomeBriefTile self-fetch /activity + /brief (per-tile
+  // fail-open) — default them OK so unrelated tiles never error/console-noise.
+  beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY); getBrief.mockResolvedValue(BRIEF); });
 
   it("all tiles render when all 3 endpoints succeed", async () => {
     getFinance.mockResolvedValueOnce(FIN);
@@ -71,18 +76,41 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     expect(screen.getByTestId("home-alerts")).toBeInTheDocument();
   });
 
-  it("Brief remains a coming-soon stub; Claude + Activity are now LIVE (not stubs)", async () => {
+  it("ALL Home stubs are now LIVE tiles (Brief was the LAST stub — none remain)", async () => {
     getFinance.mockResolvedValueOnce(FIN);
     getProjects.mockResolvedValueOnce(PROJ);
     getMarket.mockResolvedValueOnce(MKT);
     getClaudeUsage.mockResolvedValueOnce(USAGE);
     render(<HomePage />);
-    await waitFor(() => expect(screen.getByTestId("home-brief-stub")).toBeInTheDocument());
-    expect(screen.getByTestId("home-brief-stub")).toHaveTextContent(/Sắp có/);
-    // Activity + Claude stubs are GONE (swapped to live tiles)
+    await waitFor(() => expect(screen.getByTestId("home-brief-tile")).toBeInTheDocument());
+    // every coming-soon stub is GONE (Brief, Activity, Claude all swapped to live tiles)
+    expect(screen.queryByTestId("home-brief-stub")).toBeNull();
     expect(screen.queryByTestId("home-activity-stub")).toBeNull();
     expect(screen.queryByTestId("home-claude-stub")).toBeNull();
     expect(screen.getByTestId("home-activity-tile")).toBeInTheDocument();
+  });
+
+  it("Brief tile is now LIVE: shows top priority from /brief + 'template' (per-tile fail-open)", async () => {
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getBrief.mockReset();
+    getBrief.mockResolvedValueOnce(BRIEF);
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-brief-tile")).toHaveTextContent("crewly đứng 69 ngày"));
+    expect(screen.getByTestId("home-brief-tile")).toHaveTextContent("template");
+  });
+
+  it("FAIL-OPEN: brief down → brief tile errors, rest of Home renders", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getBrief.mockReset();
+    getBrief.mockRejectedValueOnce(new (ApiError as any)(500, "brief down"));
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-brief-error")).toBeInTheDocument());
+    expect(screen.getByText("OutboundOS")).toBeInTheDocument();
   });
 
   it("Activity tile is now LIVE: shows recent run (routine name) from /activity (per-tile fail-open)", async () => {

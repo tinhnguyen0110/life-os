@@ -21,6 +21,7 @@ import type {
   RunResultView,
   ActivityFeed,
   ActivityRun,
+  Brief,
 } from "./types";
 
 const BASE =
@@ -269,6 +270,16 @@ export function getActivity(opts?: { status?: string; range?: string }): Promise
 /** S14 — one run by its run_log PK. 404 if absent. */
 export function getActivityRun(id: number): Promise<ApiResponse<ActivityRun>> {
   return apiGet<ActivityRun>(`/activity/${id}`);
+}
+
+/** S11 — today's daily brief (template roll-up + severity-ordered priorities). */
+export function getBrief(): Promise<ApiResponse<Brief>> {
+  return apiGet<Brief>("/brief");
+}
+
+/** S11 — past persisted briefs (newest-first). [] if none. */
+export function getBriefHistory(): Promise<ApiResponse<Brief[]>> {
+  return apiGet<Brief[]>("/brief/history");
 }
 
 /** S13 — toggle a routine enabled (PATCH /routines/{id}). */

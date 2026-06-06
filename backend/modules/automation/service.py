@@ -120,10 +120,12 @@ def journal_nudge(alert: dict | None = None) -> tuple[str, str]:
 
 
 def morning_pull() -> tuple[str, str]:
-    """cron 08:00 — read each module's data + record a summary (Brief assembly is S11).
+    """cron 08:00 — read each module's data + ASSEMBLE+PERSIST the daily brief (S11-T2).
 
-    Reads projects + market + finance; records counts. Fail-soft per source (one
-    source down → note it, still record the pull).
+    Reads projects + market + finance for the pull summary, then generates + persists the
+    daily brief to md_store (brief/<date>.md). Fail-soft per source (one source down → note
+    it, still record the pull) AND fail-soft on the brief step (a brief/persist failure
+    notes it but never aborts the pull — the run_log row is the routine's contract).
     """
     parts: list[str] = []
     try:
@@ -144,7 +146,30 @@ def morning_pull() -> tuple[str, str]:
         parts.append(f"finance ${ov.totalValue:,.0f}")
     except Exception as exc:
         parts.append(f"finance ERR ({type(exc).__name__})")
-    status = "warn" if any("ERR" in p for p in parts) else "ok"
+    # The pull's success is decided BEFORE the brief step — a brief-save failure must
+    # not retroactively fail a pull that worked (policy: the pull is morning-pull's
+    # primary contract; the brief snapshot is a best-effort add-on).
+    pull_status = "warn" if any("ERR" in p for p in parts) else "ok"
+
+    # S11-T2: assemble + save the daily brief snapshot (the morning brief the screen reads).
+    # Fail-soft: a brief/save failure is NOTED (so it's visible) but does NOT downgrade a
+    # successful pull to warn — the pull work already completed. (record_routine_run also
+    # wraps the whole routine, so even an uncaught raise here would be a logged error row,
+    # but we catch it to keep the pull's status + the other parts intact.)
+    brief_status = "ok"
+    try:
+        from modules.brief import service as brief_svc
+        b = brief_svc.generate_brief()
+        brief_svc.save_brief(b)
+        parts.append(f"brief {len(b.priorities)} ưu tiên")
+    except Exception as exc:
+        logger.error("morning-pull: brief save failed (pull still ok): %s", exc)
+        parts.append(f"brief ERR ({type(exc).__name__})")
+        brief_status = "warn"
+
+    # If the PULL succeeded, the routine is ok even if the brief add-on warned; if the
+    # pull itself warned, that stands.
+    status = pull_status if pull_status == "warn" else brief_status
     return status, "Morning pull: " + ", ".join(parts)
 
 

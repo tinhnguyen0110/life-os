@@ -3,6 +3,11 @@
 ### GCP Server
 - SSH: `ssh gcp` (alias) or `ssh nguyenxuanhongx@34.21.187.178`
 
+### Dev runtime (canonical stack)
+- **Canonical stack = `docker compose up -d` (DETACHED). NEVER foreground `docker compose up`** — a foreground container stops the moment the shell that launched it ends, so the next teammate's verify hits a DOWN container (HTTP-000) and may misread it as a code bug. Detached keeps it up across turns/teammates. (Recurring flap S7–S11: foreground-up → container down → verifier confused. The fix is everyone starts detached.)
+- **Both services HOT-RELOAD from host bind-mounts** (`./backend:/app` + uvicorn `--reload`; `./frontend:/app` + `next dev`). So a BE or FE **code** change is served live — **NO `--build` needed for code**. `--build` ONLY for: a deps change (requirements.txt / package.json), a Dockerfile change, or a first build. Before concluding "the fix isn't on the container," `curl /health` to confirm it's UP (a down container, not a stale image, is the usual culprit).
+- Ports: BE `:8001`, FE `:3010` (memory `dev-server-ports`). Verify on the CONTAINER (the canonical stack), not bare-metal.
+
 
 ## 1. Core Rules
 * **Team model:** team-lead (you) + 4 agents — `architect`, `backend`, `frontend`, `tester`. Team-lead has NO agent file; you coordinate from this CLAUDE.md + user direction. Each agent's playbook lives in `.claude/agents/<role>.md` and auto-loads when you spawn that role via `Agent({subagent_type: "<role>", ...})` — do NOT ask the agent to load a skill.

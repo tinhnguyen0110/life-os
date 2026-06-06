@@ -45,4 +45,6 @@ Thumbs.db
 
 # Agent memory (per-agent working memory, not source)
 .claude/agent-memory/
+**/.claude/agent-memory/
 frontend/.claude/
+backend/.claude/

@@ -13,9 +13,9 @@ import { useSafeRouter } from "@/lib/useNav";
 import { HealthChip } from "@/components/shared/HealthChip";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { DataTable, type Column } from "@/components/shared/DataTable";
-import { ComingSoonStub } from "@/components/shared/ComingSoonStub";
 import { HomeClaudeTile } from "@/components/HomeClaudeTile";
 import { HomeActivityTile } from "@/components/HomeActivityTile";
+import { HomeBriefTile } from "@/components/HomeBriefTile";
 import { fmtUSD, fmtSign, fmtPct, orDash } from "@/lib/format";
 import { spark } from "@/lib/spark";
 import type { ProjectStatus } from "@/lib/types";
@@ -172,8 +172,8 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Brief — COMING-SOON STUB (S11 unbuilt) */}
-            <ComingSoonStub label="Brief hôm nay" note="bản tóm tắt hằng ngày chưa bật." testId="home-brief-stub" />
+            {/* Brief — LIVE (S11 built; top-N severity-ordered priorities, per-tile fail-open) */}
+            <HomeBriefTile />
           </div>
 
           {/* bottom: alerts (market) + ticker note */}

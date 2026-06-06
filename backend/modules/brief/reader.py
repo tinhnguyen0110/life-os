@@ -1,0 +1,70 @@
+"""modules/brief/reader.py — cross-module fail-soft read harness (S11).
+
+Pulls each source module's data for the brief generator, fail-soft PER SOURCE (one
+module erroring → that source is None + a warning, the brief still generates from the
+rest). Mirrors automation.morning_pull's pull pattern, but returns the structured
+data (not a summary string) for the priority rules to evaluate.
+
+READ-ONLY. NO business logic here — this is plumbing; the priority RULES (which read
+this data) live in service.py per the architect's decided Logic.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+logger = logging.getLogger("life-os.brief.reader")
+
+
+@dataclass
+class Sources:
+    """The cross-module snapshot the brief rules read. Any field is None if its source
+    failed (fail-soft); ``warnings`` collects the per-source failure notes."""
+
+    projects: list | None = None          # list[ProjectStatus]
+    finance: object | None = None         # FinanceOverview
+    market: dict | None = None            # {quotes, triggers, macro}
+    claude: object | None = None          # ClaudeUsage
+    warnings: list[str] = field(default_factory=list)
+
+
+def pull() -> Sources:
+    """Read all source modules, fail-soft per source. Never raises."""
+    src = Sources()
+
+    try:
+        from modules.projects import service as proj
+        statuses, w = proj.list_projects()
+        src.projects = statuses
+        src.warnings.extend(w or [])
+    except Exception as exc:
+        logger.error("brief: projects read failed: %s", exc)
+        src.warnings.append(f"projects nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        from modules.finance import service as fin
+        overview, w = fin.get_overview()
+        src.finance = overview
+        src.warnings.extend(w or [])
+    except Exception as exc:
+        logger.error("brief: finance read failed: %s", exc)
+        src.warnings.append(f"finance nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        from modules.market import service as mkt
+        data, w = mkt.get_market()
+        src.market = data
+        src.warnings.extend(w or [])
+    except Exception as exc:
+        logger.error("brief: market read failed: %s", exc)
+        src.warnings.append(f"market nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        from modules.claude_usage import service as cu
+        src.claude = cu.get_usage()
+    except Exception as exc:
+        logger.error("brief: claude_usage read failed: %s", exc)
+        src.warnings.append(f"claude nguồn lỗi ({type(exc).__name__})")
+
+    return src

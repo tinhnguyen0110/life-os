@@ -232,6 +232,21 @@ button { font-family:inherit; }
 .usebar-row .ub i { display:block; height:100%; }
 .usebar-row .uv { width:64px; text-align:right; color:var(--tx-0); }
 
+/* brief card (S11) — ported from mock screens.css .briefcard.
+   .pr .n severity tone: default copper; .warn → amber, .urgent → red, .info → tx-2. */
+.briefcard { display:flex; flex-direction:column; }
+.briefcard .bh { display:flex; align-items:center; gap:9px; margin-bottom:3px; }
+.briefcard .bh .ic { width:21px; height:21px; border-radius:6px; display:grid; place-items:center; color:#180f04; font-family:var(--mono); font-weight:700; font-size:12px; background:var(--accent-grad); flex-shrink:0; }
+.briefcard .bh b { font-size:13.5px; }
+.briefcard .bh .t { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--tx-2); }
+.briefcard .pr { display:flex; gap:11px; padding:9px 0; border-bottom:1px solid color-mix(in oklch, var(--line) 55%, transparent); font-size:12.5px; color:var(--tx-1); line-height:1.45; }
+.briefcard .pr:last-child { border-bottom:0; }
+.briefcard .pr .n { font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:700; flex-shrink:0; }
+.briefcard .pr.warn .n { color:var(--amber); }
+.briefcard .pr.urgent .n { color:var(--red); }
+.briefcard .pr.info .n { color:var(--tx-2); }
+.briefcard .pr-calm { font-size:12.5px; color:var(--green); padding:10px 0; line-height:1.5; }
+
 /* activity feed row (S14) — ported from mock screens.css .feed-row */
 .feed { display:flex; flex-direction:column; }
 .feed-row { display:flex; gap:13px; padding:13px 16px; border-bottom:1px solid color-mix(in oklch, var(--line) 60%, transparent); cursor:pointer; align-items:flex-start; }

@@ -79,9 +79,11 @@ try {
 const getFinance = vi.fn();
 const getProjects = vi.fn();
 const getMarket = vi.fn();
-// HomeActivityTile (S10B) self-fetches /activity — mock it so this pre-scaffold
-// suite that renders the full HomePage doesn't hit a real fetch (jsdom).
+// HomeActivityTile (S10B) + HomeBriefTile (S11) self-fetch /activity + /brief —
+// mock them so this pre-scaffold suite that renders the full HomePage doesn't hit
+// a real fetch (jsdom).
 const getActivity = vi.fn();
+const getBrief = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -91,17 +93,20 @@ vi.mock("@/lib/api", async () => {
     getProjects: (...a: unknown[]) => getProjects(...a),
     getMarket: (...a: unknown[]) => getMarket(...a),
     getActivity: (...a: unknown[]) => getActivity(...a),
+    getBrief: (...a: unknown[]) => getBrief(...a),
   };
 });
 
 const ACTIVITY_OK = { success: true, data: { runs: [], count: 0, runsToday: 0, okCount: 0, warnCount: 0, errorCount: 0, successRate: null, avgDurationMs: null, byRoutine: [] } };
+const BRIEF_OK = { success: true, data: { generatedAt: "2026-06-06T15:32:30Z", asOf: "2026-04-17", source: "template", summary: { netWorth: null, projectsActive: 0, claudePct: null, alertsToday: 0 }, priorities: [], stale: false, warnings: [] } };
 
-beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY_OK); });
+beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY_OK); getBrief.mockResolvedValue(BRIEF_OK); });
 afterEach(() => {
   getFinance.mockReset();
   getProjects.mockReset();
   getMarket.mockReset();
   getActivity.mockReset();
+  getBrief.mockReset();
 });
 
 function ProbeHome() {
@@ -276,30 +281,31 @@ describe("S1 Home screen (pre-scaffold: skips tiles until T2 lands)", () => {
     await waitFor(() => expect(screen.getByText("life-os")).toBeInTheDocument(), { timeout: 3000 });
   });
 
-  it("Claude quota stub shows 'coming soon' text — NOT a fabricated number", async () => {
+  // UPDATED (S11): Claude tile went LIVE in S9, Brief tile LIVE in S11 — the LAST
+  // Home coming-soon stub is now gone. These two formerly asserted the stubs; the
+  // no-fabrication intent now lives in each live tile's own fail-open/calm tests
+  // (HomeClaudeTile / HomeBriefTile). Here we assert the post-S11 reality: NO Home
+  // stub remains. (getBrief/getActivity default-mocked OK in beforeEach.)
+  it("Claude tile is LIVE (no 'coming soon' stub) — S9 swapped it", async () => {
     if (isStillEmptyScreen() || !HomePage) return;
     getFinance.mockResolvedValue(ENV(FINANCE_OK));
     getProjects.mockResolvedValue(ENV(PROJECTS_OK));
     getMarket.mockResolvedValue(ENV(MARKET_OK));
 
     render(<HomePage />);
-    await waitFor(() => expect(screen.queryAllByText(/sắp có/i).length).toBeGreaterThan(0), { timeout: 3000 });
-    // Must NOT fabricate a quota number (no real S9 data this build)
-    expect(screen.queryByText(/\d+%.*quota/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("home-claude-stub")).toBeNull(), { timeout: 3000 });
   });
 
-  it("Brief stub shows 'coming soon' text — NOT fabricated priorities", async () => {
+  it("Brief tile is LIVE (no 'coming soon' stub) — S11 swapped the LAST stub", async () => {
     if (isStillEmptyScreen() || !HomePage) return;
     getFinance.mockResolvedValue(ENV(FINANCE_OK));
     getProjects.mockResolvedValue(ENV(PROJECTS_OK));
     getMarket.mockResolvedValue(ENV(MARKET_OK));
 
     render(<HomePage />);
-    // At least one "sắp có" rendered (quota + brief both stub)
-    await waitFor(() => {
-      const elements = screen.queryAllByText(/sắp có|coming soon/i);
-      expect(elements.length).toBeGreaterThanOrEqual(1);
-    }, { timeout: 3000 });
+    // Brief stub is gone; the whole Home now has ZERO coming-soon stubs.
+    await waitFor(() => expect(screen.queryByTestId("home-brief-stub")).toBeNull(), { timeout: 3000 });
+    expect(screen.queryAllByText(/sắp có|coming soon/i).length).toBe(0);
   });
 
   it("finance 500 → net-worth tile error, projects tile still renders", async () => {

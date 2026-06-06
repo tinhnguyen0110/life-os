@@ -1,0 +1,284 @@
+"""modules/brief/service.py — template brief generator + 5 priority rules (S11).
+
+DETERMINISTIC RULES on real data — NO AI (CLAUDE.md + ARCH §11 hard constraint). Reads
+the source modules via reader.pull() (fail-soft per source), runs 5 priority rules,
+sorts the emitted priorities by severity (urgent>warn>info, rule-order tiebreak), and
+returns a numbered Brief. honest-empty: no rule fires → priorities=[] + real summary.
+
+Decided thresholds (architect Logic, §Assumptions):
+  - market/ladder: a fired trigger (state=="hit") → urgent; next rung within ≤2%
+    (state=="near" & |distancePct|≤2) → info; else none.
+  - project: build-to-90 (progress≥90 & users==0 & not-abandoned) → urgent;
+    idle (lastDays>7 & not-abandoned) → warn. (abandon-orthogonal, NOT health=dead.)
+  - claude quota: pct≥90 → urgent, pct≥75 → warn, <75 → none; if stale, cap at warn.
+  - finance drift: a channel with driftAlert (|drift|>5, finance owns the rule) → warn.
+  - alerts: the top non-ladder market alert fired today → warn; else none (rule 1 owns
+    ladder hits → no dup here).
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+from store import md_store
+
+from . import reader
+from .schema import Brief, BriefSummary, Priority, Severity
+
+logger = logging.getLogger("life-os.brief.service")
+
+HISTORY_DIR = "brief"  # md_store brief/<date>.md (T2 owns the write side)
+
+# Severity rank for the display sort (higher = shown first).
+_SEV_RANK = {"urgent": 3, "warn": 2, "info": 1}
+# Rule order = generation order = stable tiebreak within a severity (architect Logic).
+_RULE_ORDER = {"market": 1, "projects": 2, "claude": 3, "finance": 4, "alerts": 5}
+
+LADDER_NEAR_PCT = 2.0   # next rung within ≤2% → info ("sắp chạm rung")
+CLAUDE_URGENT_PCT = 90.0
+CLAUDE_WARN_PCT = 75.0
+IDLE_DAYS = 7
+BUILD90_PROGRESS = 90
+PRIORITY_CAP = 5
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+# --------------------------------------------------------------------------- #
+# The 5 priority rules — each reads its source + emits 0-1 Priority             #
+# (n is a placeholder 0 here; the display rank is assigned AFTER the sort)       #
+# --------------------------------------------------------------------------- #
+def _market_priority(market: dict | None) -> Priority | None:
+    """Rule 1 — a fired ladder rung (urgent) or a next rung within ≤2% (info)."""
+    if not market:
+        return None
+    triggers = market.get("triggers") or []
+    # urgent: any fired trigger (price hit the threshold/rung)
+    hits = [t for t in triggers if t.get("state") == "hit"]
+    if hits:
+        t = hits[0]
+        return Priority(n=0, source="market", severity="urgent",
+                        text=f"{t['symbol']} chạm ngưỡng ${t['price']:,.0f} ({t['op']} ${t['threshold']:,.0f}) — cân nhắc DCA.")
+    # info: a next rung within ≤2% (near, tightened from market's 5% to the ladder 2%)
+    near = [t for t in triggers
+            if t.get("state") == "near" and abs(t.get("distancePct", 99)) <= LADDER_NEAR_PCT]
+    if near:
+        t = min(near, key=lambda x: abs(x.get("distancePct", 99)))
+        return Priority(n=0, source="market", severity="info",
+                        text=f"{t['symbol']} sắp chạm rung (${t['price']:,.0f}, cách {abs(t['distancePct']):.1f}%).")
+    return None
+
+
+def _project_priority(projects: list | None) -> Priority | None:
+    """Rule 2 — build-to-90 (urgent) takes precedence over idle (warn). abandon-orthogonal:
+    progress+users, NOT health=dead. list_projects already excludes abandoned."""
+    if not projects:
+        return None
+    build90 = [p for p in projects if (p.progress or 0) >= BUILD90_PROGRESS and p.users == 0]
+    if build90:
+        p = build90[0]
+        return Priority(n=0, source="projects", severity="urgent",
+                        text=f"{p.name} {p.progress}% / 0 user — khớp build-to-90: quyết bỏ hay đẩy ra mắt?")
+    idle = [p for p in projects if p.lastDays is not None and p.lastDays > IDLE_DAYS]
+    if idle:
+        p = max(idle, key=lambda x: x.lastDays or 0)
+        return Priority(n=0, source="projects", severity="warn",
+                        text=f"{p.name} đứng {p.lastDays} ngày — xem lại hay bỏ?")
+    return None
+
+
+def _claude_priority(claude) -> Priority | None:
+    """Rule 3 — quota bands on pct. Stale claude cache caps severity at warn (don't cry
+    urgent on old data) + notes asOf."""
+    if claude is None:
+        return None
+    pct = getattr(claude, "pct", None)
+    if pct is None:
+        return None
+    stale = bool(getattr(claude, "stale", False))
+    asof = getattr(claude, "asOf", None)
+    stale_note = f" (dữ liệu {asof})" if stale else ""
+    if pct >= CLAUDE_URGENT_PCT:
+        sev: Severity = "warn" if stale else "urgent"  # cap at warn on stale
+        return Priority(n=0, source="claude", severity=sev,
+                        text=f"Quota Claude đốt {pct:.0f}% — {'sắp hết' if not stale else 'cao'}, ưu tiên việc quan trọng{stale_note}.")
+    if pct >= CLAUDE_WARN_PCT:
+        return Priority(n=0, source="claude", severity="warn",
+                        text=f"Quota Claude {pct:.0f}% — cao, để ý phần còn lại{stale_note}.")
+    return None
+
+
+def _finance_priority(finance) -> Priority | None:
+    """Rule 4 — a channel with driftAlert (|drift|>5, finance's rule). warn."""
+    if finance is None:
+        return None
+    allocs = getattr(finance, "allocations", None) or []
+    drifted = [a for a in allocs if getattr(a, "driftAlert", False)]
+    if not drifted:
+        return None
+    a = max(drifted, key=lambda x: abs(getattr(x, "drift", 0)))
+    return Priority(n=0, source="finance", severity="warn",
+                    text=f"Phân bổ lệch {a.channel} {a.drift:+.1f}% (mục tiêu {a.target:.0f}%) — rebalance?")
+
+
+def _alerts_priority(market: dict | None) -> Priority | None:
+    """Rule 5 — the top NON-LADDER market alert fired today (warn). Ladder hits are rule
+    1's job → not duplicated here. This build: market alertHistory is ladder-rule alerts,
+    so once rule 1 covers the hits, rule 5 emits nothing unless a distinct alert exists.
+    Surfaces the most-recent alert today that is NOT already the rule-1 hit."""
+    if not market:
+        return None
+    history = market.get("alertHistory") or []
+    today = _today()
+    todays = [e for e in history if isinstance(e.get("ts"), str) and e["ts"][:10] == today]
+    if not todays:
+        return None
+    # rule 1 already surfaces a CURRENTLY-fired trigger; rule 5 surfaces a today alert that
+    # isn't currently a live hit (avoids the dup). If a today alert's symbol is the live
+    # hit, skip it (rule 1 owns it).
+    live_hit_syms = {t.get("symbol") for t in (market.get("triggers") or []) if t.get("state") == "hit"}
+    extra = [e for e in todays if e.get("symbol") not in live_hit_syms]
+    if not extra:
+        return None
+    e = extra[0]  # alertHistory is newest-first
+    return Priority(n=0, source="alerts", severity="warn",
+                    text=f"Cảnh báo {e['symbol']} hôm nay (${e['price']:,.0f}) — đã ghi journal?")
+
+
+# --------------------------------------------------------------------------- #
+# Generate                                                                      #
+# --------------------------------------------------------------------------- #
+def _build_summary(src: reader.Sources) -> BriefSummary:
+    net_worth = getattr(src.finance, "totalValue", None) if src.finance is not None else None
+    claude_pct = getattr(src.claude, "pct", None) if src.claude is not None else None
+    projects_active = 0
+    if src.projects:
+        projects_active = sum(1 for p in src.projects if p.health in ("act", "slow"))
+    alerts_today = 0
+    if src.market:
+        today = _today()
+        alerts_today = sum(1 for e in (src.market.get("alertHistory") or [])
+                           if isinstance(e.get("ts"), str) and e["ts"][:10] == today)
+    return BriefSummary(netWorth=net_worth, projectsActive=projects_active,
+                        claudePct=claude_pct, alertsToday=alerts_today)
+
+
+def _compute_as_of(src: reader.Sources, generated_at: str) -> tuple[str, bool]:
+    """asOf = oldest source freshness (claude carries a real asOf); stale = any stale."""
+    as_of = generated_at
+    stale = False
+    if src.claude is not None:
+        c_asof = getattr(src.claude, "asOf", None)
+        if isinstance(c_asof, str) and c_asof and c_asof < as_of:
+            as_of = c_asof
+        if getattr(src.claude, "stale", False):
+            stale = True
+    return as_of, stale
+
+
+def generate_brief() -> Brief:
+    """Assemble the brief from live data. Fail-soft per source (a source down → warning,
+    its rules skipped, brief still produced). honest-empty: no rule fires → priorities=[]."""
+    generated_at = _now_iso()
+    src = reader.pull()
+
+    # Run the 5 rules (each fail-soft — a rule raising must not abort the brief). Each
+    # thunk wraps one rule so a single failure is contained + the brief still assembles.
+    rules = [
+        ("market", lambda: _market_priority(src.market)),
+        ("projects", lambda: _project_priority(src.projects)),
+        ("claude", lambda: _claude_priority(src.claude)),
+        ("finance", lambda: _finance_priority(src.finance)),
+        ("alerts", lambda: _alerts_priority(src.market)),
+    ]
+    candidates: list[Priority] = []
+    for name, thunk in rules:
+        try:
+            p = thunk()
+            if p is not None:
+                candidates.append(p)
+        except Exception as exc:  # one rule failing never breaks the brief
+            logger.error("brief rule %s failed: %s", name, exc)
+            src.warnings.append(f"quy tắc {name} lỗi")
+
+    # DISPLAY sort: severity DESC, rule-order tiebreak. Assign n AFTER the sort.
+    candidates.sort(key=lambda p: (-_SEV_RANK[p.severity], _RULE_ORDER[p.source]))
+    priorities = [p.model_copy(update={"n": i + 1}) for i, p in enumerate(candidates[:PRIORITY_CAP])]
+
+    as_of, stale = _compute_as_of(src, generated_at)
+    summary = _build_summary(src)
+
+    # All sources down → honest minimal note (still 200).
+    if src.projects is None and src.finance is None and src.market is None and src.claude is None:
+        src.warnings.append("không đủ dữ liệu — mọi nguồn lỗi")
+
+    return Brief(
+        generatedAt=generated_at, asOf=as_of, source="template",
+        summary=summary, priorities=priorities, stale=stale,
+        warnings=src.warnings,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Persistence (S11-T2) — write today's brief to md_store brief/<date>.md         #
+# --------------------------------------------------------------------------- #
+def save_brief(brief: Brief | None = None) -> str:
+    """Generate (if not given) + persist the brief to ``brief/<YYYY-MM-DD>.md`` as YAML
+    front-matter (one md_store commit). Re-persisting the same day OVERWRITES that day's
+    file (a brief is a daily snapshot — the latest assembly wins; md_store keeps git
+    history). Returns the file's md_store path. Raises only on a store write failure
+    (fail-closed write — a persistence failure must be visible, not swallowed)."""
+    import yaml
+
+    if brief is None:
+        brief = generate_brief()
+    date = brief.generatedAt[:10] if brief.generatedAt else _today()
+    rel = f"{HISTORY_DIR}/{date}.md"
+    body = "---\n" + yaml.safe_dump(brief.model_dump(), sort_keys=True, allow_unicode=True).strip() + "\n---\n"
+    md_store.write_file(rel, body, f"brief {date}")
+    return rel
+
+
+# --------------------------------------------------------------------------- #
+# History — read persisted briefs or []                                         #
+# --------------------------------------------------------------------------- #
+def get_history(limit: int = 30) -> list[Brief]:
+    """Past persisted briefs (brief/<date>.md), newest-first. [] if none persisted yet.
+    Fail-open: an unreadable/old file is skipped, never raises. (T2 owns the write side;
+    until then this returns [] honestly — the dispatch's 'History empty → [], 200'.)"""
+    import yaml
+
+    from core.config import settings
+
+    briefs: list[Brief] = []
+    hist_dir = settings.data_dir / HISTORY_DIR
+    try:
+        if not hist_dir.is_dir():
+            return []
+        files = sorted((p for p in hist_dir.iterdir() if p.suffix == ".md"),
+                       key=lambda p: p.name, reverse=True)[:limit]
+    except Exception as exc:
+        logger.warning("brief history list failed: %s", exc)
+        return []
+    for path in files:
+        try:
+            content = md_store.read(f"{HISTORY_DIR}/{path.name}")
+            if not content:
+                continue
+            text = content.lstrip("﻿")
+            if not text.startswith("---"):
+                continue
+            block = text[len("---"):].split("\n---", 1)[0]
+            data = yaml.safe_load(block)
+            if isinstance(data, dict):
+                briefs.append(Brief(**data))
+        except Exception as exc:  # one bad file never breaks the list
+            logger.warning("brief history %s skipped: %s", path.name, exc)
+    return briefs
