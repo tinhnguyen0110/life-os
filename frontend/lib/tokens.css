@@ -220,6 +220,10 @@ button { font-family:inherit; }
 
 /* badges inline */
 .tagchip { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:100px; padding:2px 9px; }
+/* trade action chip (S7 journal) — ported from mock screens.css .tradechip */
+.tradechip { font-family:var(--mono); font-size:10px; font-weight:700; padding:2px 8px; border-radius:5px; }
+.tradechip.buy { color:var(--green); background:var(--green-dim); }
+.tradechip.sell { color:var(--red); background:var(--red-dim); }
 
 /* usage bar row (S9 per-model/project) — ported from mock screens.css .usebar-row */
 .usebar-row { display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:12px; padding:8px 0; }

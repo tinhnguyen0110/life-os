@@ -13,6 +13,9 @@ import type {
   MarketData,
   ClaudeUsage,
   GraveyardStats,
+  JournalStats,
+  JournalEntry,
+  JournalInput,
 } from "./types";
 
 const BASE =
@@ -203,6 +206,21 @@ export function getClaudeUsage(): Promise<ApiResponse<ClaudeUsage>> {
 /** S4 — graveyard (abandoned projects + pattern stats + lessons). */
 export function getGraveyard(): Promise<ApiResponse<GraveyardStats>> {
   return apiGet<GraveyardStats>("/graveyard");
+}
+
+/** S7 — journal (entries + performance/calibration stats). */
+export function getJournal(): Promise<ApiResponse<JournalStats>> {
+  return apiGet<JournalStats>("/journal");
+}
+
+/** S7 — record a trade (POST /journal). */
+export function createJournal(body: JournalInput): Promise<ApiResponse<JournalEntry>> {
+  return apiPost<JournalEntry>("/journal", body);
+}
+
+/** S7 — update/close an entry (PUT /journal/{id}; close = set pnl/outcome/lesson). */
+export function updateJournal(id: string, body: JournalInput): Promise<ApiResponse<JournalEntry>> {
+  return apiPut<JournalEntry>(`/journal/${encodeURIComponent(id)}`, body);
 }
 
 /** S4 — un-graveyard a project (POST /projects/{id}/restore). 404 if unknown. */
