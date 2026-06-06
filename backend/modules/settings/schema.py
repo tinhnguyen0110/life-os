@@ -1,0 +1,46 @@
+"""modules/settings/schema.py — global AppConfig (S12, FROZEN).
+
+The system config the Settings screen edits + the routines read at runtime. Defaults =
+the CURRENT hardcoded behavior (so an absent/fresh config.md reproduces today's app):
+automationEnabled=True, briefHour=8, idleThresholdDays=7, patternCheckEnabled=True,
+errorChannel="inapp", timezone="Asia/Ho_Chi_Minh", displayName="".
+
+Per-field validation at the boundary → a bad PATCH field is a 422 echoing WHICH field
+(not a silent clamp). PATCH is partial (AppConfigPatch — all optional); GET returns the
+full resolved AppConfig.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+ErrorChannel = Literal["discord", "inapp", "none"]
+
+
+class AppConfig(BaseModel):
+    """The full resolved global config (GET /settings returns this)."""
+
+    automationEnabled: bool = Field(default=True, description="master switch — scheduled routines run when True")
+    briefHour: int = Field(default=8, ge=0, le=23, description="hour-of-day (UTC) morning-pull + brief run")
+    idleThresholdDays: int = Field(default=7, ge=1, description="idle-hunter flags projects idle > this many days")
+    patternCheckEnabled: bool = Field(default=True, description="pattern-check (build-to-90) routine on/off")
+    errorChannel: ErrorChannel = Field(default="inapp", description="where routine errors surface")
+    timezone: str = Field(default="Asia/Ho_Chi_Minh", min_length=1, max_length=64, description="display timezone label (stored-only this sprint)")
+    displayName: str = Field(default="", max_length=80, description="owner display name (stored-only this sprint; may be empty)")
+
+
+class AppConfigPatch(BaseModel):
+    """Partial update (PATCH /settings) — every field optional; only provided keys change.
+    Same per-field constraints as AppConfig → a bad value is a per-field 422."""
+
+    model_config = {"extra": "forbid"}  # an unknown field is a 422, not silently ignored
+
+    automationEnabled: bool | None = Field(default=None)
+    briefHour: int | None = Field(default=None, ge=0, le=23)
+    idleThresholdDays: int | None = Field(default=None, ge=1)
+    patternCheckEnabled: bool | None = Field(default=None)
+    errorChannel: ErrorChannel | None = Field(default=None)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    displayName: str | None = Field(default=None, max_length=80)  # may be empty (stored-only)

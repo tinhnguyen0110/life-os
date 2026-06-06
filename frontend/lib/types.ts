@@ -318,6 +318,41 @@ export interface ModelBurn {
 }
 
 /* ============================================================
+   Settings / AppConfig (S12) — MIRRORS backend modules/settings/schema.py (FROZEN).
+   Global app-config the Settings screen edits + routines read. PATCH is partial
+   (every field optional → AppConfigPatch); a bad field is a PER-FIELD 422 (FastAPI
+   detail[] with loc:["body",<field>]). Defaults = current hardcoded behavior.
+   ============================================================ */
+export type ErrorChannel = "discord" | "inapp" | "none";
+
+export interface AppConfig {
+  automationEnabled: boolean;
+  /** hour-of-day 0-23 (UTC) morning-pull + brief run. */
+  briefHour: number;
+  /** idle-hunter flags projects idle > this many days (≥1). */
+  idleThresholdDays: number;
+  patternCheckEnabled: boolean;
+  errorChannel: ErrorChannel;
+  /** display timezone label (stored-only this sprint), 1-64 chars. */
+  timezone: string;
+  /** owner display name (stored-only; may be empty), ≤80 chars. */
+  displayName: string;
+}
+
+/** Partial update — only provided keys change. extra=forbid (unknown key → 422). */
+export type AppConfigPatch = Partial<AppConfig>;
+
+/** One FastAPI validation error item (PATCH 422 → { detail: ValidationErrorItem[] }).
+ *  loc is ["body", <fieldName>, ...]; loc[1] names the offending field. */
+export interface ValidationErrorItem {
+  type: string;
+  loc: (string | number)[];
+  msg: string;
+  input?: unknown;
+  ctx?: Record<string, unknown>;
+}
+
+/* ============================================================
    Brief (S11) — MIRRORS backend modules/brief/schema.py (S11, FROZEN).
    Template-based daily roll-up (NO AI — source is "template", NOT an opus/model
    label). priorities severity-ordered (urgent>warn>info), capped ~5; [] = honest

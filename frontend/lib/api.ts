@@ -22,6 +22,9 @@ import type {
   ActivityFeed,
   ActivityRun,
   Brief,
+  AppConfig,
+  AppConfigPatch,
+  ValidationErrorItem,
 } from "./types";
 
 const BASE =
@@ -29,11 +32,42 @@ const BASE =
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** FastAPI 422 validation detail[] (loc:["body",<field>], msg, ...) when present —
+   *  lets a form map per-field errors. Empty/undefined for non-422 errors. */
+  detail?: ValidationErrorItem[];
+  constructor(status: number, message: string, detail?: ValidationErrorItem[]) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
+
+  /** field → first error message, for per-field form echo. Reads loc[1] as the field. */
+  fieldErrors(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const d of this.detail ?? []) {
+      const field = typeof d.loc?.[1] === "string" ? (d.loc[1] as string) : undefined;
+      if (field && !(field in out)) out[field] = d.msg;
+    }
+    return out;
+  }
+}
+
+/** Build an ApiError from a non-2xx body. Handles FastAPI 422 where `detail` is an
+ *  ARRAY of {loc,msg,...} (per-field) AND the simpler {detail|message: string} case —
+ *  the array is carried on ApiError.detail so a form can echo per field. */
+function errorFromBody(url: string, status: number, parsed: unknown): ApiError {
+  const detailRaw = (parsed as { detail?: unknown })?.detail;
+  if (Array.isArray(detailRaw)) {
+    const items = detailRaw as ValidationErrorItem[];
+    const msg = items.map((i) => `${i.loc?.[1] ?? "?"}: ${i.msg}`).join("; ") || `Validation failed (${status})`;
+    return new ApiError(status, msg, items);
+  }
+  const msg =
+    (typeof detailRaw === "string" ? detailRaw : undefined) ||
+    (parsed as { message?: string })?.message ||
+    `Request to ${url} failed (${status})`;
+  return new ApiError(status, msg);
 }
 
 /**
@@ -58,11 +92,7 @@ export async function apiGet<T>(
     throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
   }
   if (!res.ok) {
-    const msg =
-      (body as { detail?: string; message?: string })?.detail ||
-      (body as { message?: string })?.message ||
-      `Request to ${url} failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    throw errorFromBody(url, res.status, body);
   }
   return body as ApiResponse<T>;
 }
@@ -99,11 +129,7 @@ export async function apiPost<T>(
     throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
   }
   if (!res.ok) {
-    const msg =
-      (parsed as { detail?: string; message?: string })?.detail ||
-      (parsed as { message?: string })?.message ||
-      `Request to ${url} failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    throw errorFromBody(url, res.status, parsed);
   }
   return parsed as ApiResponse<T>;
 }
@@ -133,11 +159,7 @@ export async function apiPut<T>(
     throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
   }
   if (!res.ok) {
-    const msg =
-      (parsed as { detail?: string; message?: string })?.detail ||
-      (parsed as { message?: string })?.message ||
-      `Request to ${url} failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    throw errorFromBody(url, res.status, parsed);
   }
   return parsed as ApiResponse<T>;
 }
@@ -167,11 +189,7 @@ export async function apiPatch<T>(
     throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
   }
   if (!res.ok) {
-    const msg =
-      (parsed as { detail?: string; message?: string })?.detail ||
-      (parsed as { message?: string })?.message ||
-      `Request to ${url} failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    throw errorFromBody(url, res.status, parsed);
   }
   return parsed as ApiResponse<T>;
 }
@@ -199,11 +217,7 @@ export async function apiDelete<T>(
     throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
   }
   if (!res.ok) {
-    const msg =
-      (parsed as { detail?: string; message?: string })?.detail ||
-      (parsed as { message?: string })?.message ||
-      `Request to ${url} failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    throw errorFromBody(url, res.status, parsed);
   }
   return parsed as ApiResponse<T>;
 }
@@ -280,6 +294,17 @@ export function getBrief(): Promise<ApiResponse<Brief>> {
 /** S11 — past persisted briefs (newest-first). [] if none. */
 export function getBriefHistory(): Promise<ApiResponse<Brief[]>> {
   return apiGet<Brief[]>("/brief/history");
+}
+
+/** S12 — full resolved global app-config. */
+export function getSettings(): Promise<ApiResponse<AppConfig>> {
+  return apiGet<AppConfig>("/settings");
+}
+
+/** S12 — partial config update (only provided keys). Bad field → ApiError(422) with
+ *  .fieldErrors() per-field. Returns the new full config (refetch-after-write). */
+export function patchSettings(patch: AppConfigPatch): Promise<ApiResponse<AppConfig>> {
+  return apiPatch<AppConfig>("/settings", patch);
 }
 
 /** S13 — toggle a routine enabled (PATCH /routines/{id}). */

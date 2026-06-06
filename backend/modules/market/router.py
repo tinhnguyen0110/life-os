@@ -87,11 +87,11 @@ def _market_poll_work() -> tuple[str, str]:
 
 
 def market_poll() -> None:
-    """Scheduler entry point — runs the poll via the unified run-record wrapper
-    (records a run_log row, fail-soft per-routine). S10A: all routines share the
+    """Scheduler entry point — runs the poll via the unified run-record wrapper, gated on
+    the master automation switch (S12; no-ops when off). S10A: all routines share the
     wrapper instead of hand-rolling record_run + try/except."""
     from modules.automation import service as auto
-    auto.record_routine_run(MARKET_POLL_ID, _market_poll_work)
+    auto.run_scheduled(MARKET_POLL_ID, _market_poll_work)
 
 
 _MARKET_POLL_ROUTINE = Routine(

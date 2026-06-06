@@ -35,6 +35,40 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # Run-record wrapper — every routine run → 1 run_log row, fail-soft             #
 # --------------------------------------------------------------------------- #
+def automation_on() -> bool:
+    """The master automation switch (settings.automationEnabled). SCHEDULED routine jobs
+    check this + skip when off; the on-demand POST /routines/{id}/run path does NOT (a
+    manual run is an explicit user action). Fail-open: settings unreadable → True (don't
+    silently disable automation because a config read hiccuped)."""
+    try:
+        from modules.settings import service as cfg
+        return cfg.get_config().automationEnabled
+    except Exception as exc:
+        logger.warning("automation_on check failed — defaulting ON: %s", exc)
+        return True
+
+
+def pattern_check_on() -> bool:
+    """Per-routine enable for pattern-check (settings.patternCheckEnabled). Fail-open True."""
+    try:
+        from modules.settings import service as cfg
+        return cfg.get_config().patternCheckEnabled
+    except Exception as exc:
+        logger.warning("pattern_check_on check failed — defaulting ON: %s", exc)
+        return True
+
+
+def run_scheduled(routine_id: str, func, *, gate: bool = True) -> dict | None:
+    """Scheduled-path entry: gate on automationEnabled (master switch) then record the run.
+    Returns None (skipped, no run_log row) when automation is OFF — the cron still fires but
+    the routine no-ops. ``gate=False`` bypasses the master switch (unused; kept explicit).
+    The MANUAL path (run_routine) does NOT call this — it always runs."""
+    if gate and not automation_on():
+        logger.info("automation OFF — skipping scheduled routine %r", routine_id)
+        return None
+    return record_routine_run(routine_id, func)
+
+
 def record_routine_run(routine_id: str, func) -> dict:
     """Run ``func`` and record exactly one run_log row. Returns the run summary.
 
@@ -70,14 +104,20 @@ def record_routine_run(routine_id: str, func) -> dict:
 # The routine algorithms (decided — NO AI, pure rules)                          #
 # --------------------------------------------------------------------------- #
 def idle_hunter() -> tuple[str, str]:
-    """cron 22:00 — projects idle >7 days (lastDays>7, not abandoned) → warn."""
+    """cron 22:00 — projects idle > idleThresholdDays (config; default 7), not abandoned → warn.
+
+    Reads the threshold from settings at RUNTIME (S12 wiring) so a config PATCH takes
+    effect on the next run without a code edit. Fail-open: settings unreadable → default 7.
+    """
     from modules.projects import service as proj
+    from modules.settings import service as cfg
+    threshold = cfg.get_config().idleThresholdDays
     statuses, _ = proj.list_projects()  # excludes abandoned already
-    idle = [s for s in statuses if s.lastDays is not None and s.lastDays > 7]
+    idle = [s for s in statuses if s.lastDays is not None and s.lastDays > threshold]
     if not idle:
-        return "ok", "Không có dự án đứng >7 ngày."
+        return "ok", f"Không có dự án đứng >{threshold} ngày."
     names = ", ".join(f"{s.name} ({s.lastDays}d)" for s in idle)
-    return "warn", f"{len(idle)} dự án đứng >7 ngày: {names}"
+    return "warn", f"{len(idle)} dự án đứng >{threshold} ngày: {names}"
 
 
 def pattern_check() -> tuple[str, str]:

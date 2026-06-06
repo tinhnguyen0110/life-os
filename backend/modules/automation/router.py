@@ -55,13 +55,25 @@ def run_routine(routine_id: str):
 # morning-pull routine (cron 08:00) — owned here, wrapped to record run_log.    #
 # --------------------------------------------------------------------------- #
 def _morning_pull_job() -> None:
-    """Scheduler entry point for morning-pull (records a run_log row, fail-soft)."""
-    service.record_routine_run("morning-pull", service.morning_pull)
+    """Scheduler entry point for morning-pull. Gated on the master automation switch
+    (S12); records a run_log row when on, no-ops when automation is off."""
+    service.run_scheduled("morning-pull", service.morning_pull)
+
+
+def _brief_hour() -> int:
+    """morning-pull cron hour from settings (S12 wiring; default 8). Read at module load
+    = applied at boot. Fail-open to 8 if settings unreadable. (A live briefHour change
+    takes effect on next boot — single-user; documented in §Assumptions.)"""
+    try:
+        from modules.settings import service as cfg
+        return cfg.get_config().briefHour
+    except Exception:
+        return 8
 
 
 _MORNING_PULL_ROUTINE = Routine(
     id="morning-pull", func=_morning_pull_job, trigger="cron",
-    trigger_args={"hour": 8}, name="Morning Pull", enabled=True,
+    trigger_args={"hour": _brief_hour()}, name="Morning Pull", enabled=True,
 )
 
 

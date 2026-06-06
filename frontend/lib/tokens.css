@@ -166,6 +166,26 @@ button { font-family:inherit; }
 .hd { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12px; }
 .hd .d { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
 
+/* settings rows (S12) — ported from mock screens.css .set-group/.set-row */
+.set-group { background:var(--bg-1); border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+.set-row { display:flex; align-items:center; gap:14px; padding:14px 17px; border-bottom:1px solid color-mix(in oklch, var(--line) 60%, transparent); }
+.set-row:last-child { border-bottom:0; }
+.set-row .sr-info { flex:1; min-width:0; }
+.set-row .sr-t { font-size:13px; color:var(--tx-0); }
+.set-row .sr-d { font-size:11.5px; color:var(--tx-2); margin-top:2px; }
+
+/* form field (S12) — shared Field/TextInput/Select; per-field 422 echo via .has-err */
+.field { display:flex; flex-direction:column; gap:5px; }
+.field .flabel { font-size:11.5px; color:var(--tx-1); }
+.finput { font-family:var(--sans); font-size:13px; color:var(--tx-0); background:var(--bg-0); border:1px solid var(--line-2); border-radius:8px; padding:8px 11px; outline:0; width:100%; transition:border-color .15s; }
+.finput:focus { border-color:var(--accent); }
+.finput::placeholder { color:var(--tx-2); }
+.finput.num { font-family:var(--mono); }
+select.finput { cursor:pointer; }
+.field.has-err .finput { border-color:var(--red); }
+.field .ferr { font-size:11px; color:var(--red); font-family:var(--mono); }
+.field .fhint { font-size:11px; color:var(--tx-2); }
+
 /* progress bars */
 .bar { height:6px; background:var(--bg-3); border-radius:3px; overflow:hidden; }
 .bar i { display:block; height:100%; border-radius:3px; }

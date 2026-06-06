@@ -130,10 +130,10 @@ def _wiki_refresh_work() -> tuple[str, str]:
 
 
 def wiki_refresh() -> None:
-    """Scheduler entry point — runs the sweep via the unified run-record wrapper
-    (records a run_log row, fail-soft). S10A: shares the wrapper."""
+    """Scheduler entry point — runs the sweep via the unified run-record wrapper, gated on
+    the master automation switch (S12; no-ops when off). S10A: shares the wrapper."""
     from modules.automation import service as auto
-    auto.record_routine_run(WIKI_REFRESH_ID, _wiki_refresh_work)
+    auto.run_scheduled(WIKI_REFRESH_ID, _wiki_refresh_work)
 
 
 _WIKI_REFRESH_ROUTINE = Routine(
@@ -153,13 +153,18 @@ _WIKI_REFRESH_ROUTINE = Routine(
 # automation.service inside the func avoids a module-load import cycle.
 # --------------------------------------------------------------------------- #
 def _idle_hunter_job() -> None:
+    # Gated on the master automation switch (S12) — no-ops when automation is off.
     from modules.automation import service as auto
-    auto.record_routine_run("idle-hunter", auto.idle_hunter)
+    auto.run_scheduled("idle-hunter", auto.idle_hunter)
 
 
 def _pattern_check_job() -> None:
+    # Gated on BOTH the master switch AND the per-routine patternCheckEnabled (S12).
     from modules.automation import service as auto
-    auto.record_routine_run("pattern-check", auto.pattern_check)
+    if not auto.pattern_check_on():
+        logger.info("pattern-check disabled in settings — skipping")
+        return
+    auto.run_scheduled("pattern-check", auto.pattern_check)
 
 
 _IDLE_HUNTER_ROUTINE = Routine(
