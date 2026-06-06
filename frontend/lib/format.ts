@@ -36,6 +36,15 @@ export function orDash(v: string | null | undefined, fallback = "—"): string {
   return v == null || v === "" ? fallback : v;
 }
 
+/** ISO date (or null) → "MM/YYYY" (graveyard died date). null/invalid → fallback. */
+export function fmtMonthYear(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return fallback;
+  const d = new Date(t);
+  return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+}
+
 /** token count (or null) → compact "37.7k" / "1.2M" / "950". null/NaN → fallback. */
 export function fmtTokens(v: number | null | undefined, fallback = "—"): string {
   if (v == null || !Number.isFinite(v)) return fallback;

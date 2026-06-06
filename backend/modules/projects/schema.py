@@ -77,3 +77,6 @@ class ProjectAbandonInput(BaseModel):
     atProgress: int | None = Field(
         None, ge=0, le=100, description="progress % at abandon, else current"
     )
+    lesson: str | None = Field(
+        None, max_length=2000, description="what was learned (Graveyard lesson); never fabricated"
+    )

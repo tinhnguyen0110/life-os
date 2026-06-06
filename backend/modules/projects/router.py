@@ -90,11 +90,21 @@ def refresh_project(project_id: str):
 
 @router.post("/{project_id}/abandon")
 def abandon_project(project_id: str, body: ProjectAbandonInput):
-    """Flag a project abandoned (graveyard) in status.md. 404 if unknown.
-
-    Orthogonal to health — the commit-age health field is untouched.
+    """Flag a project abandoned (graveyard) in status.md, with optional lesson.
+    404 if unknown. Orthogonal to health — the commit-age health field is untouched.
     """
     status = service.abandon_project(project_id, body)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+    return ok(data=_attach_routines(status).model_dump())
+
+
+@router.post("/{project_id}/restore")
+def restore_project(project_id: str):
+    """Un-graveyard a project: clear abandoned* + lesson → rejoins list_projects.
+    404 if unknown. Idempotent: restoring a non-abandoned project is a 200 no-op.
+    """
+    status = service.restore_project(project_id)
     if status is None:
         raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
     return ok(data=_attach_routines(status).model_dump())

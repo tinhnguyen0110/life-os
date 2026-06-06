@@ -180,6 +180,7 @@ Why: pre-written plans are 70-80% right but always need tuning. 15 min kickoff p
 ## Baseline (current test counts, e.g. "pytest 76, vitest 90" — the regression anchor)
 ## Dependencies (available now / blocks)
 ## Exports (signatures for tester pre-scaffolding)
+## Test ownership split (who writes WHICH tests) <!-- Added sprint 7 (tester standup): tester pre-scaffolded unit tests that backend's own T1/T2 test files superseded = wasted effort. State explicitly: "backend writes unit/API tests in T1/T2; tester scaffolds ONLY Chrome/curl-integration stubs + the value-by-value verify, NOT service unit tests." So tester scaffolds only what the implementer won't cover. -->
 ## Verification (ONE explicit pass criterion/bar + gates — never two implicit bars)
 ## Ownership (failing test → report to team-lead w/ repro, do NOT edit; backend owns pytest fails, frontend owns vitest fails, tester reports never fixes)
 ## Idle behavior (when done / when blocked)

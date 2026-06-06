@@ -12,6 +12,7 @@ import type {
   ChannelDetail,
   MarketData,
   ClaudeUsage,
+  GraveyardStats,
 } from "./types";
 
 const BASE =
@@ -197,6 +198,16 @@ export function getMarket(): Promise<ApiResponse<MarketData>> {
 /** S9 — Claude token usage (gauge + series + byModel + cost; resetIn/byProject stubs). */
 export function getClaudeUsage(): Promise<ApiResponse<ClaudeUsage>> {
   return apiGet<ClaudeUsage>("/claude-usage");
+}
+
+/** S4 — graveyard (abandoned projects + pattern stats + lessons). */
+export function getGraveyard(): Promise<ApiResponse<GraveyardStats>> {
+  return apiGet<GraveyardStats>("/graveyard");
+}
+
+/** S4 — un-graveyard a project (POST /projects/{id}/restore). 404 if unknown. */
+export function restoreProject(id: string): Promise<ApiResponse<ProjectStatus>> {
+  return apiPost<ProjectStatus>(`/projects/${encodeURIComponent(id)}/restore`);
 }
 
 export const apiBase = BASE;

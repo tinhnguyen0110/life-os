@@ -379,6 +379,39 @@ def test_abandon_unknown_id_returns_none(monkeypatch, isolated_paths):
     assert service.abandon_project("ghost", ProjectAbandonInput(reason="x")) is None
 
 
+def test_restore_clears_abandon_flags_but_PRESERVES_lesson(monkeypatch, active_repo, isolated_paths):
+    """S8 restore: clears abandoned* (incl. abandonedUsers) → rejoins list_projects,
+    but PRESERVES `lesson` (hard-won history). TEETH: RED if `lesson` is ever added
+    back to restore_project's clear-set."""
+    monkeypatch.setattr(service.settings, "project_repos", {"active": str(active_repo)})
+    service.abandon_project("active", ProjectAbandonInput(reason="pivot", atProgress=40, lesson="ship smaller"))
+    meta = service._load_meta("active")
+    assert meta["abandoned"] is True and meta["lesson"] == "ship smaller" and meta["abandonedUsers"] == 0
+
+    restored = service.restore_project("active")
+    assert restored is not None and restored.id == "active"
+    # back in list_projects (un-graveyarded)
+    assert any(s.id == "active" for s in service.list_projects()[0])
+    meta2 = service._load_meta("active")
+    # abandon* flags CLEARED
+    for k in ("abandoned", "abandonedReason", "abandonedAt", "abandonedProgress", "abandonedUsers"):
+        assert k not in meta2, f"{k} should be cleared by restore"
+    # lesson PRESERVED (the architect ruling — hard-won history)
+    assert meta2.get("lesson") == "ship smaller"
+
+
+def test_restore_non_abandoned_is_noop(monkeypatch, active_repo, isolated_paths):
+    monkeypatch.setattr(service.settings, "project_repos", {"active": str(active_repo)})
+    # never abandoned → restore returns the project, no error, no-op
+    r = service.restore_project("active")
+    assert r is not None and r.id == "active"
+
+
+def test_restore_unknown_id_returns_none(monkeypatch, isolated_paths):
+    monkeypatch.setattr(service.settings, "project_repos", {})
+    assert service.restore_project("ghost") is None  # router → 404
+
+
 def test_refresh_stamps_last_auto(monkeypatch, active_repo, isolated_paths):
     monkeypatch.setattr(service.settings, "project_repos", {"active": str(active_repo)})
     st = service.refresh_project("active")

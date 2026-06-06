@@ -201,6 +201,31 @@ def get_project(project_id: str) -> ProjectStatus | None:
     return read_one(project_id, repo_path)
 
 
+def list_abandoned() -> tuple[list[tuple[ProjectStatus, dict]], list[str]]:
+    """Abandoned projects as (ProjectStatus, raw status.md meta) pairs + warnings.
+
+    The Graveyard (S8) reads this — it needs BOTH the derived status (health/name/
+    repo) AND the raw abandon-metadata (abandonedReason/abandonedProgress/lesson/
+    users) from status.md. Membership is the `abandoned` flag, NOT health=dead
+    (orthogonal — abandon-orthogonal-to-health). Fail-open: a malformed abandoned
+    project is skipped + warned, never crashes the list.
+    """
+    out: list[tuple[ProjectStatus, dict]] = []
+    warnings: list[str] = []
+    for project_id, repo_path in sorted(_tracked_repos().items()):
+        meta = _load_meta(project_id)
+        if not _is_abandoned(meta):
+            continue
+        try:
+            status = read_one(project_id, repo_path)
+        except Exception as exc:  # fail-open per project
+            logger.error("graveyard: reading abandoned project %r failed: %s", project_id, exc)
+            warnings.append(f"{project_id}: abandoned project unreadable ({exc})")
+            continue
+        out.append((status, meta))
+    return out, warnings
+
+
 # --------------------------------------------------------------------------- #
 # Write paths (md_store = one git commit each) — called by the T2 router        #
 # --------------------------------------------------------------------------- #
@@ -261,10 +286,49 @@ def abandon_project(project_id: str, body: ProjectAbandonInput) -> ProjectStatus
     meta["abandonedProgress"] = (
         body.atProgress if body.atProgress is not None else current_progress
     )
+    # Snapshot users at abandon-time (S8) so the reached/before-user graveyard
+    # pattern stat is immune to later status.md edits (historical truth).
+    current_users = meta.get("users")
+    meta["abandonedUsers"] = current_users if isinstance(current_users, int) else 0
+    # Graveyard lesson (S8) — what was learned. Only stored if provided (never fabricated).
+    if body.lesson is not None and body.lesson.strip():
+        meta["lesson"] = body.lesson.strip()
     # Ensure repo pointer persists so the project stays discoverable.
     meta.setdefault("repo", repo_path)
     md_store.write_file(
         _status_md_rel(project_id), _dump_front_matter(meta, mbody), f"abandon project {project_id}"
+    )
+    return read_one(project_id, repo_path)
+
+
+def restore_project(project_id: str) -> ProjectStatus | None:
+    """Un-graveyard a project: clear abandoned* (abandoned/abandonedReason/
+    abandonedAt/abandonedProgress/abandonedUsers) → it rejoins list_projects.
+    PRESERVES `lesson` (hard-won history; persists if re-abandoned later).
+
+    None if id untracked (router → 404). Idempotent: restoring a NON-abandoned
+    project is a 200 no-op (no write, returns the project). One md_store commit
+    only when something was actually cleared.
+    """
+    repos = _tracked_repos()
+    repo_path = repos.get(project_id)
+    if repo_path is None:
+        return None
+
+    content = md_store.read(_status_md_rel(project_id))
+    meta, mbody = _split_doc(content)
+    # Clear the abandon* flags → rejoins list_projects. PRESERVE `lesson` (hard-won
+    # history; not shown on active screens, persists if re-abandoned). Membership
+    # gate is `abandoned`, so we key the no-op check on it specifically.
+    abandon_keys = ("abandoned", "abandonedReason", "abandonedAt", "abandonedProgress", "abandonedUsers")
+    if not _is_abandoned(meta):
+        # Not abandoned → no-op (idempotent restore). Return current status.
+        return read_one(project_id, repo_path)
+    for k in abandon_keys:
+        meta.pop(k, None)
+    meta.setdefault("repo", repo_path)
+    md_store.write_file(
+        _status_md_rel(project_id), _dump_front_matter(meta, mbody), f"restore project {project_id}"
     )
     return read_one(project_id, repo_path)
 
