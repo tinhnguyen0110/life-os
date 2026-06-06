@@ -175,11 +175,18 @@ Why: pre-written plans are 70-80% right but always need tuning. 15 min kickoff p
 ## Scope (IN / OUT lists)
 ## Logic/Algorithm (MANDATORY for non-CRUD — see Logic section above; CRUD → "N/A — plain CRUD")
 ## Defensive cases (MANDATORY failure modes)
+## Runtime (server start cmd + URLs — BE `uvicorn main:app` :8000 · FE `npm run dev` :3010, NOT :3000/:3100 — see memory dev-server-ports)
+## Baseline (current test counts, e.g. "pytest 76, vitest 90" — the regression anchor)
 ## Dependencies (available now / blocks)
 ## Exports (signatures for tester pre-scaffolding)
-## Verification (explicit pass criteria + gates)
+## Verification (ONE explicit pass criterion/bar + gates — never two implicit bars)
+## Ownership (failing test → report to team-lead w/ repro, do NOT edit; backend owns pytest fails, frontend owns vitest fails, tester reports never fixes)
 ## Idle behavior (when done / when blocked)
 ```
+
+For FE module-SCREEN dispatches, ALSO name: the exact mock file to port (per-screen, e.g. `template/Life Command/app/screens-finance.js`) + the backend schema shape that screen consumes + "render-only, backend computes X" for any derived metric — so FE ports structure + wires real API in one pass, never reverse-engineering business logic into UI.
+
+<!-- Added sprint 1 (Sprint-0 Standup, convergent tester+frontend ask): Runtime/Baseline/Ownership blocks + FE mock-file naming. Teammates were reverse-engineering server URLs/test baselines each sprint; tester overstepped 3× editing tests. Memory mirror: dispatch-standards-additions, dev-server-ports. -->
 
 Dispatch ordering: (1) gating task first, alone · (2) fan-out parallel tasks after gate lands · (3) tester unblocked early to pre-scaffold from Exports · (4) your own work parallel where it doesn't block. If kickoff found >30% drift, dispatch may diverge from the plan — the Kickoff section documents WHY; the dispatch is the contract.
 

@@ -75,7 +75,26 @@ A teammate saying "I was blocked by X" is itself a CLAIM — could be real (fix 
 
 → THEN start the next sprint.
 
-**Ordering matters:** Standup FIRST (collect raw signal from the people who did the work) → Retro SECOND (filter real-vs-blame + assign root cause). Retro-first = team-lead judges blind, misses friction only teammates feel. Standup-only = trusts teammates blindly, violates Rule #0.
+### PHASE 3 — Discord report (MANDATORY after every Sprint Sync — user directive 2026-06-06)
+After Standup + Retro, team-lead sends the user a Discord report (`python .claude/process/notify.py "<msg>"`) — user directive (2026-06-06): **after EVERY sprint, report TWO things: (1) the sprint RESULT, (2) the MEETING (Sprint Sync).** The user reads these async to stay in the loop without watching every step. Two clearly-labelled parts:
+
+**PART 1 — SPRINT RESULT** (what the team produced):
+- **Shipped** — what landed + commit hash + headline counts (pytest/vitest).
+- **Verification** — team-lead's Rule #0 re-run result (pass/fail with numbers).
+- **Features delivered** — the user-visible capability this sprint added (e.g. "Projects screen now reads your real git repos").
+- **Next sprint** — what's coming + any notable decide-and-log call the user may want to review.
+
+**PART 2 — THE MEETING (Sprint Sync)** (how the team worked):
+- **What the immune system caught** — bugs/claims Rule #0 + guards stopped (signal the process works).
+- **Incidents handled** — any failures + how recovered (no work lost).
+- **Standup highlights** — teammate friction + convergent asks + accountability.
+- **Learnings logged** — count + where (memory/playbook/process).
+
+Keep it skimmable (the two headers + bullets). Send it as ONE Discord message (or two if long). This is the user's primary async window into the team — both the output AND the process, every sprint.
+
+**Who sends it:** team-lead sends the Discord report (team-lead did the independent Rule #0 verification → has the full picture of both result + process). In full-auto, architect runs Standup+Retro then signals team-lead "Sprint X synced"; team-lead writes + sends the 2-part report. Never skip it — every sprint, both parts, even a clean sprint (then PART 2 is short: "clean, no incidents").
+
+**Ordering matters:** Standup FIRST (collect raw signal from the people who did the work) → Retro SECOND (filter real-vs-blame + assign root cause) → Discord report THIRD (summarize for the user). Retro-first = team-lead judges blind, misses friction only teammates feel. Standup-only = trusts teammates blindly, violates Rule #0.
 
 ### Handling "I need X to go faster"
 - **Within team-lead's reach** (more fixtures, earlier mock API, clearer dispatch context, a fixture repo path) → grant immediately, no asking the user.

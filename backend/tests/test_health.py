@@ -61,19 +61,28 @@ class TestHealthEndpoint:
         assert "status" in body["data"] and "modules" in body["data"], \
             f"Missing data keys: {body['data']}"
 
-    def test_empty_modules_on_scaffold(self, client: TestClient):
-        """Sprint 0 has no feature modules — modules list must be [] (or empty)."""
+    def test_health_reflects_discovered_modules(self, client: TestClient):
+        """/health.data.modules reflects the registry's actual discovery.
+
+        Sprint 1 adds the first feature module (`projects`), so the list is no
+        longer empty — the invariant is that /health mirrors what mount_all found,
+        and every entry is a clean, non-dunder module name.
+        """
         body = client.get("/health").json()
-        assert body["data"]["modules"] == [], \
-            f"Expected empty modules list, got: {body['data']['modules']}"
+        modules = body["data"]["modules"]
+        assert isinstance(modules, list)
+        # The projects module auto-mounts (Sprint 1) — health must report it.
+        assert "projects" in modules, f"projects not discovered: {modules}"
+        # No dunder/garbage names leaked into discovery.
+        assert all(not m.startswith("__") for m in modules), modules
 
     def test_no_skipped_warning_on_clean_boot(self, client: TestClient):
-        """Clean scaffold: no broken modules → no warning field."""
+        """Clean boot: no module fails to mount → no skip warning on /health."""
         body = client.get("/health").json()
-        # warning is optional; if present and skipped > 0 that's a bug in Sprint 0
-        if "warning" in body:
-            # Sprint 0 modules/ is empty (only __init__.py + .gitkeep) → no skips
-            assert body["data"].get("modules") == [] or True  # pass, just document
+        # A warning is only present when mount_all recorded skips. All real
+        # modules must mount cleanly, so there must be no skip warning.
+        assert not body.get("warning"), \
+            f"module(s) skipped at boot (registry error?): {body.get('warning')}"
 
     def test_docs_endpoint_returns_html(self, client: TestClient):
         """GET /docs must return 200 HTML (OpenAPI UI)."""
@@ -86,8 +95,14 @@ class TestHealthEndpoint:
 class TestHealthRegistryIntegration:
     """Verify C4 + C2 hold together: health reflects registry state."""
 
-    def test_health_after_empty_registry(self, client: TestClient):
-        """With no feature modules, health still returns 200 and modules=[]."""
+    def test_health_reflects_registry_state(self, client: TestClient):
+        """C4+C2: health returns 200 and its modules list mirrors the registry.
+
+        The registry discovered `projects` (Sprint 1); health reports exactly the
+        mounted set — the contract is "health reflects registry", not "registry
+        is empty" (which was only ever true in the Sprint-0 scaffold).
+        """
         body = client.get("/health").json()
         assert body["success"] is True
-        assert body["data"]["modules"] == []
+        assert isinstance(body["data"]["modules"], list)
+        assert "projects" in body["data"]["modules"]

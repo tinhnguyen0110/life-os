@@ -17,6 +17,40 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/ root = parent of this file's parent (core/ -> backend/)
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
+# The repo lives at <tinhdev_root>/life-os/backend, so tinhdev_root is two up from
+# BACKEND_ROOT (backend -> life-os -> tinhdev_root). The shortlist repos are
+# siblings of life-os under tinhdev_root. Derived (not hardcoded) so it works on
+# any machine where the repos sit beside life-os; override via LIFEOS_TINHDEV_ROOT
+# or the whole map via LIFEOS_PROJECT_REPOS.
+TINHDEV_ROOT = BACKEND_ROOT.parent.parent
+
+# Shortlist of projects tracked by default (Sprint 1, ARCH §9 / memory
+# trackable-repos-inventory). id (slug) -> repo folder name under tinhdev_root.
+# life-os points at its own repo root (dogfood). Folder casing matches disk.
+_SHORTLIST_FOLDERS: dict[str, str] = {
+    "devcrew": "DevCrew",
+    "outboundos": "OutboundOS",
+    "crewly": "crewly",
+    "claudemanager": "ClaudeManager",
+    "groundwork": "Groundwork",
+    "life-os": "life-os",
+}
+
+
+def _default_project_repos() -> dict[str, str]:
+    """Resolve the shortlist to absolute paths under TINHDEV_ROOT.
+
+    Only includes a project if its repo dir actually exists on this machine, so a
+    missing sibling repo never registers a dead pointer at import. (The reader is
+    fail-open anyway, but this keeps the default map honest per host.)
+    Override entirely via the LIFEOS_PROJECT_REPOS env var (JSON dict).
+    """
+    out: dict[str, str] = {}
+    for slug, folder in _SHORTLIST_FOLDERS.items():
+        path = (TINHDEV_ROOT / folder).resolve()
+        if path.is_dir():
+            out[slug] = str(path)
+    return out
 
 
 class Settings(BaseSettings):
@@ -38,8 +72,10 @@ class Settings(BaseSettings):
 
     # --- External project repo pointers (read-only ground truth) ------------
     # Maps project id -> absolute path of its git repo. Readers read these
-    # read-only and NEVER write into them (ARCH §6). Populated later (Sprint 1).
-    project_repos: dict[str, str] = Field(default_factory=dict)
+    # read-only and NEVER write into them (ARCH §6). Defaults to the Sprint 1
+    # shortlist resolved under TINHDEV_ROOT (machine-portable — derived, not
+    # hardcoded). Override the whole map via LIFEOS_PROJECT_REPOS (JSON dict).
+    project_repos: dict[str, str] = Field(default_factory=_default_project_repos)
 
     # --- App ----------------------------------------------------------------
     app_name: str = "life-os"

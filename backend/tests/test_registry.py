@@ -371,32 +371,43 @@ class TestIsolationRegressionGuard:
 
     def test_modules_clean_after_injection_scope(self, monkeypatch):
         """
-        Guard: after a test that injected a fake module, mount_all on a fresh
-        app sees NO modules. This runs AFTER the injection test and verifies
-        that monkeypatch.setitem revert actually happened.
+        Guard (TEETH): after a test that injected a fake `canary` module, mount_all
+        on a fresh app must NOT see that fake — the injection's monkeypatch.setitem
+        revert actually happened and nothing leaked into sys.modules.
 
         If raw sys.modules mutation (without monkeypatch) was used in the prior
-        test, 'canary' or the fake 'modules' pkg would still be in sys.modules
-        and this test would FAIL — making the regression visible.
+        test, 'canary' (or the fake 'modules' pkg) would still be in sys.modules
+        and this guard would FAIL — making the isolation regression visible.
+
+        NOTE (Sprint 1): real feature modules (e.g. `projects`) legitimately mount
+        now, so the guard asserts the INVARIANT (no injected fake survives), NOT
+        the ENVIRONMENT (mounted == []). The canary-absence check below is the
+        teeth and stays at full strength.
         """
         import store.db as db_mod
         from core import config
         db_mod.close_db()
         monkeypatch.setattr(config.settings, "scheduler_enabled", False, raising=False)
 
-        # Real modules/ package in the backend only has __init__.py + .gitkeep —
-        # mount_all must return empty (no real feature modules in Sprint 0).
         app = _make_app()
         result = mount_all(app)
 
-        # If 'canary' leaked from prior test, result.mounted would contain it → RED
+        # TEETH: if 'canary' leaked from the prior injection test, it would appear
+        # here → RED. This is the real isolation invariant and must never weaken.
         assert "canary" not in result.mounted, (
             f"'canary' leaked from prior test into sys.modules — "
             f"isolation failed. mounted={result.mounted}"
         )
-        # Mounted list must be empty (Sprint 0 has no feature modules)
-        assert result.mounted == [], (
-            f"Expected empty mounted list in clean state, got: {result.mounted}"
+        # No injected/fake `modules.*` survived either (the leaked-package form).
+        import sys
+        assert not any(m == "canary" or m.startswith("canary.") for m in sys.modules), (
+            "injected 'canary' package leaked into sys.modules after the scope"
+        )
+        # Real modules (e.g. 'projects', Sprint 1) ARE allowed — we assert the
+        # invariant (no fake), not an empty environment. Whatever mounted must be
+        # real, clean module names (no dunder garbage, no injected canary).
+        assert all(not m.startswith("__") and m != "canary" for m in result.mounted), (
+            f"mounted contains an injected/garbage name: {result.mounted}"
         )
 
 
