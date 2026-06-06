@@ -3,7 +3,7 @@
 > **App:** Life OS — all-in-one life tracing OS cá nhân
 > **Cho ai:** chỉ mình tôi (single-user, no-auth, no-billing)
 > **Chốt:** 2026-06-06
-> **Kiến trúc/stack:** xem `life-os-ARCHITECTURE.md` · **Design baseline:** mock `All-in-One Life/Life Command/`
+> **Kiến trúc/stack:** xem `life-os-ARCHITECTURE.md` · **Design baseline:** mock `template/Life Command/`
 
 ---
 
@@ -252,6 +252,6 @@
 
 ## 8. LIÊN HỆ
 - Kiến trúc kỹ thuật: `life-os-ARCHITECTURE.md`
-- Design mock (đã duyệt): `All-in-One Life/Life Command/`
+- Design mock (đã duyệt): `template/Life Command/`
 - Data Finance: golden path `project_investment_golden_path`
 - Lý do tồn tại Graveyard/pattern-check: pattern build-to-90 `project_three_projects_strategy`

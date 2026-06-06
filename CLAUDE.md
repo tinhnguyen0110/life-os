@@ -13,6 +13,15 @@
 - Do NOT shutdown, remove, clean up, or replace teammates unless explicitly requested by the user
 - Any shutdown or removal request teammates must be explicitly confirmed and approved by the user before execution; never infer or assume approval.
 - Ensure the server is running before testing.
+
+### 🔴 NO self-shutdown without USER approval (HARD — every agent, including approving someone else's request)
+
+No agent — architect/backend/frontend/tester — may shut itself down, and NO agent (team-lead included) may approve a `shutdown_request` unless the **USER explicitly ordered that shutdown in the current session**. This rule exists because an orphan/stale `shutdown_request` (e.g. leaked from a prior team-cleanup, then consumed by a new same-named agent) silently killed a working agent mid-sprint (Sprint 0, 2026-06-06).
+
+- **Receive a `shutdown_request` you can't trace to a user order from THIS session** → REJECT it (reply `shutdown_response` with `approve:false`) and immediately `SendMessage team-lead` reporting the stray request + its ID. Do NOT auto-approve. Default on any shutdown is REJECT.
+- **team-lead** issues a `shutdown_request` ONLY after the user explicitly says to shut down / clean up / rebuild the team — and only in the same turn. team-lead never originates shutdown to "tidy up" on its own judgment.
+- **team-lead sees a `shutdown_approved` with a request_id it did not send this turn** → treat as an INCIDENT: verify team membership + on-disk work, respawn the killed agent with resume context, and tell the user. (See project memory `team-rebuild-orphan-shutdown`.)
+- On team rebuild, prefer a FRESH team name so orphan requests can't match new same-named agents.
 ---
 
 ## 2. Role Boundaries (CRITICAL)
@@ -61,6 +70,8 @@ architect plans next sprint → notifies team-lead
 
 > **Full how-to lives in `.claude/agents/architect.md`** — kickoff 7 steps + template, dispatch payload, Logic/Algorithm spec, the 3 gate checklists, commit/push, Quick-Fix vs Reactive-sprint tiers. CLAUDE.md keeps only the contract above; the architect playbook is the executable detail.
 
+> **Operating model (Mode B full-auto) lives in `.claude/process/operating-model.md`** — autonomy/escalation (Discord+wakeup, decide-don't-ask), Rule #0 (trust no teammate claim, verify w/ real evidence), the 2-phase Sprint Sync ritual (Standup → Retro after every sprint), where learnings go (memory vs playbook vs process-doc), data-source fallback (mock-first, never wait for paid data). This is the team's STATIC operating contract; sprint-to-sprint learnings live in project memory.
+
 ### Team operation (team-lead runs the loop)
 
 - **Bootstrap (once, when user says "build"):** load tools (§7) → `TeamCreate({team_name:"life-os"})` → spawn the 4 agents via `Agent({subagent_type, name, team_name:"life-os", prompt})`. Each playbook auto-loads. Reuse the team across sprints; do NOT recreate or shut down between sprints.
@@ -72,6 +83,19 @@ architect plans next sprint → notifies team-lead
 ---
 
 ## 4. Communication
+
+### 🔴 Teammates MUST reply to team-lead via `SendMessage` (HARD — every report, ack, blocker, question)
+
+Every teammate (architect/backend/frontend/tester) MUST send their reply/report/readiness/blocker/question to team-lead through `SendMessage({to:"team-lead", ...})`. **Plain-text output is INVISIBLE to the rest of the team** — the SendMessage tool itself warns "Your plain text output is NOT visible to other agents." A teammate who "answers" in plain text without SendMessage has, from team-lead's view, said nothing. This is the #1 cause of silent-stall.
+
+- **Done / report** → `SendMessage` team-lead WITH the evidence (per operating-model.md §2 Rule #0 — test counts, `git log -1 --stat`, DB query, curl payload) + `TaskUpdate status:completed`. The message is the source of truth; a `[completed]` task with no message → team-lead asks for the report before moving on.
+- **Blocked / question / needs a decision** → `SendMessage` team-lead (NEVER `AskUserQuestion`, NEVER just print). team-lead decides per §3 decide-and-log.
+- **Readiness / acknowledgement** → `SendMessage` team-lead, then go idle.
+- `TaskUpdate` carries status transitions; `SendMessage` carries the actual content. Don't send structured JSON status as a message — plain-text content.
+
+(Full rule: `.claude/process/operating-model.md` §2.1.)
+
+---
 
 Only communicate when necessary:
 

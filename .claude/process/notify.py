@@ -21,7 +21,7 @@ def main() -> int:
         return 0  # nothing to send / not configured — skip silently
     req = urllib.request.Request(
         url, data=json.dumps({"content": msg}).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": "life-os-notify/1.0"},
     )
     try:
         urllib.request.urlopen(req, timeout=10)
