@@ -74,32 +74,24 @@ def delete_alert(rule_id: str):
 # --------------------------------------------------------------------------- #
 # T3 — the market-poll routine (rule-based, no AI; fetch+persist+alert detect)  #
 # --------------------------------------------------------------------------- #
-def market_poll() -> None:
-    """Every 5 min: fetch quotes, persist to price_history, record fired alerts.
+def _market_poll_work() -> tuple[str, str]:
+    """The poll work — returns (status, detail). Raises are caught by the wrapper.
 
-    Fail-open per asset (service.poll_once handles it). Logs a run_log summary so
-    the activity feed sees the poll ran. Never raises — a routine that throws
-    would be lost; we swallow + record an error run instead.
+    Fail-open per asset (service.poll_once handles it). warn if any per-asset warning.
     """
-    from datetime import datetime, timezone
+    summary = service.poll_once()
+    status = "warn" if summary.get("warnings") else "ok"
+    detail = (f"polled: persisted={summary['persisted']} fired={summary['fired']}"
+              + (f" warnings={len(summary['warnings'])}" if summary.get("warnings") else ""))
+    return status, detail
 
-    started = datetime.now(timezone.utc).isoformat()
-    try:
-        summary = service.poll_once()
-        status = "warn" if summary.get("warnings") else "ok"
-        detail = (f"polled: persisted={summary['persisted']} fired={summary['fired']}"
-                  + (f" warnings={len(summary['warnings'])}" if summary.get("warnings") else ""))
-        db.record_run(MARKET_POLL_ID, status, started,
-                      finished_at=datetime.now(timezone.utc).isoformat(), detail=detail)
-        logger.info("market-poll: %s", detail)
-    except Exception as exc:  # never let a routine crash the scheduler
-        logger.error("market-poll failed: %s", exc)
-        try:
-            db.record_run(MARKET_POLL_ID, "error", started,
-                          finished_at=datetime.now(timezone.utc).isoformat(),
-                          detail=f"poll crashed: {exc}")
-        except Exception:  # pragma: no cover - last-resort
-            pass
+
+def market_poll() -> None:
+    """Scheduler entry point — runs the poll via the unified run-record wrapper
+    (records a run_log row, fail-soft per-routine). S10A: all routines share the
+    wrapper instead of hand-rolling record_run + try/except."""
+    from modules.automation import service as auto
+    auto.record_routine_run(MARKET_POLL_ID, _market_poll_work)
 
 
 _MARKET_POLL_ROUTINE = Routine(

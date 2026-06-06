@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useSafePathname } from "@/lib/useNav";
 import { NAV } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
+import { getRoutines } from "@/lib/api";
 
 /** A nav item is active if pathname equals its route, or (for non-home) starts with it. */
 function isActive(route: string, pathname: string): boolean {
@@ -24,6 +25,22 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
   // which would otherwise log a className mismatch). Post-hydration the real path wins.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Wire the /routines (Automation) nav badge to LIVE activeCount (was static "5").
+  // Only this badge this sprint; the other 3 stay static (per dispatch). Fail-soft:
+  // null on error → falls back to the static badge text, never blocks the sidebar.
+  const [activeRoutines, setActiveRoutines] = useState<number | null>(null);
+  useEffect(() => {
+    getRoutines()
+      .then((res) => setActiveRoutines(res?.data?.activeCount ?? null))
+      .catch(() => setActiveRoutines(null));
+  }, []);
+
+  /** Live badge text for /routines; static badge for everything else. */
+  function badgeText(route: string, fallback: string): string {
+    if (route === "/routines" && activeRoutines != null) return String(activeRoutines);
+    return fallback;
+  }
 
   return (
     <aside className="sidebar" data-sidebar>
@@ -63,7 +80,9 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
                   <Icon name={item.icon} />
                   <span className="lbl">{item.label}</span>
                   {item.badge && (
-                    <span className={`badge ${item.badge.cls}`}>{item.badge.text}</span>
+                    <span className={`badge ${item.badge.cls}`} data-testid={`nav-badge-${item.route}`}>
+                      {badgeText(item.route, item.badge.text)}
+                    </span>
                   )}
                 </Link>
               );

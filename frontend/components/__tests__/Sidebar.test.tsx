@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, within, cleanup } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { render, screen, within, cleanup, waitFor } from "@testing-library/react";
 import { Sidebar } from "../Sidebar";
 import { NAV, ALL_ROUTES } from "@/lib/nav";
 
@@ -8,6 +8,12 @@ vi.mock("@/lib/useNav", () => ({
   useSafePathname: () => mockPath,
   useSafeRouter: () => ({ push: vi.fn() }),
 }));
+// Sidebar fetches /routines for the live Automation badge — mock it.
+const getRoutines = vi.fn();
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return { ...actual, getRoutines: () => getRoutines() };
+});
 // next/link → plain anchor in jsdom
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: any) => (
@@ -18,7 +24,28 @@ vi.mock("next/link", () => ({
 }));
 
 describe("Sidebar", () => {
-  afterEach(() => cleanup());
+  beforeEach(() => {
+    // default: getRoutines resolves (so the badge fetch always has a promise);
+    // per-test overrides set specific activeCount / rejection.
+    getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 5, total: 5, runsToday: 0, lastRunAt: null } });
+  });
+  afterEach(() => {
+    cleanup();
+    getRoutines.mockReset();
+  });
+
+  it("Automation nav badge shows LIVE activeCount (was static '5')", async () => {
+    getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 6, total: 6, runsToday: 0, lastRunAt: null } });
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("6"));
+  });
+
+  it("Automation badge fails soft → static fallback when /routines down", async () => {
+    getRoutines.mockRejectedValue(new Error("down"));
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    // falls back to the static badge text "5" (never blocks the sidebar)
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5"));
+  });
 
   it("renders all 6 nav groups", () => {
     mockPath = "/";

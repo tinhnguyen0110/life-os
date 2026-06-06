@@ -9,9 +9,10 @@ vi.mock("@/lib/useNav", () => ({
 }));
 
 const getHealth = vi.fn();
+const getRoutines = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getHealth: () => getHealth() };
+  return { ...actual, getHealth: () => getHealth(), getRoutines: () => getRoutines() };
 });
 
 import { TopBar } from "../TopBar";
@@ -20,6 +21,21 @@ describe("TopBar", () => {
   beforeEach(() => {
     push.mockClear();
     getHealth.mockReset();
+    getRoutines.mockReset();
+    getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 3, total: 4, runsToday: 0, lastRunAt: null } });
+  });
+
+  it("routine-active pill shows the LIVE activeCount (wired to /routines)", async () => {
+    getHealth.mockResolvedValue({ success: true, data: { status: "ok", modules: [] } });
+    render(<TopBar route="Home" />);
+    await waitFor(() => expect(screen.getByTestId("routine-active-pill")).toHaveTextContent("3 routine active"));
+  });
+
+  it("routine pill fails soft → '—', does not crash the TopBar", async () => {
+    getHealth.mockResolvedValue({ success: true, data: { status: "ok", modules: [] } });
+    getRoutines.mockRejectedValueOnce(new Error("down"));
+    render(<TopBar route="Home" />);
+    await waitFor(() => expect(screen.getByTestId("routine-active-pill")).toHaveTextContent("— routine active"));
   });
 
   it("shows breadcrumb for the current route", async () => {

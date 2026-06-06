@@ -24,9 +24,10 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// Prevent real fetch calls in TopBar health probe
+// Prevent real fetch calls in TopBar health probe + routine-active badge
 vi.mock("@/lib/api", () => ({
   getHealth: vi.fn().mockResolvedValue({ success: true, data: { status: "ok", modules: [] } }),
+  getRoutines: vi.fn().mockResolvedValue({ success: true, data: { routines: [], activeCount: 0, total: 0, runsToday: 0, lastRunAt: null } }),
   ApiError: class ApiError extends Error {},
 }));
 

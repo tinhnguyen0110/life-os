@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { useSafeRouter, useSafePathname } from "@/lib/useNav";
 import { CRUMB } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
-import { getHealth, ApiError } from "@/lib/api";
+import { getHealth, getRoutines, ApiError } from "@/lib/api";
 
 type ApiState = "checking" | "live" | "down";
 
@@ -25,6 +25,8 @@ export function TopBar({ route }: { route?: string } = {}) {
   const pathname = useSafePathname();
   const [api, setApi] = useState<ApiState>("checking");
   const [spinning, setSpinning] = useState(false);
+  // Live "routine active" count (S13 badge) — null until loaded / on failure.
+  const [activeRoutines, setActiveRoutines] = useState<number | null>(null);
   // Mount gate: the safe-pathname fallback can differ from the SSR value during
   // hydration, which would log a "Text content did not match" breadcrumb warning.
   // Render a stable crumb on the server/first paint, then the real path crumb.
@@ -45,6 +47,11 @@ export function TopBar({ route }: { route?: string } = {}) {
 
   useEffect(() => {
     probe();
+    // Fetch the live active-routine count for the badge (fail-soft: null on error,
+    // so the pill just hides the number — never blocks the TopBar).
+    getRoutines()
+      .then((res) => setActiveRoutines(res?.data?.activeCount ?? null))
+      .catch(() => setActiveRoutines(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -70,8 +77,9 @@ export function TopBar({ route }: { route?: string } = {}) {
         <span className={`dot ${dotCls}`} />
         API <b>{apiLabel}</b>
       </div>
-      <div className="pill">
-        <span className="dot g" />5 routine <b>active</b>
+      <div className="pill" data-testid="routine-active-pill">
+        <span className="dot g" />
+        {activeRoutines != null ? activeRoutines : "—"} routine <b>active</b>
       </div>
       <div className="pill">
         Sync <b>2 phút trước</b>

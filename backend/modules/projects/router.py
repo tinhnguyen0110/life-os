@@ -113,11 +113,10 @@ def restore_project(project_id: str):
 # --------------------------------------------------------------------------- #
 # T3 — the wiki-refresh routine (rule-based, no AI; read-only git + md_store).  #
 # --------------------------------------------------------------------------- #
-def wiki_refresh() -> None:
-    """Re-read every tracked project's git state + persist lastAuto. Idempotent.
+def _wiki_refresh_work() -> tuple[str, str]:
+    """Re-read every tracked project's git + persist lastAuto. Returns (status, detail).
 
-    Fail-open per project: one unreadable repo never aborts the sweep. Cheap local
-    git reads only — NEVER pulls. Same code path as POST /{id}/refresh.
+    Fail-open per project: one unreadable repo never aborts the sweep. NEVER pulls.
     """
     statuses, _ = service.list_projects()
     refreshed = 0
@@ -125,9 +124,16 @@ def wiki_refresh() -> None:
         try:
             service.refresh_project(status.id)
             refreshed += 1
-        except Exception as exc:  # per-project fail-open — never crash the routine
+        except Exception as exc:  # per-project fail-open
             logger.error("wiki-refresh: project %r failed: %s", status.id, exc)
-    logger.info("wiki-refresh swept %d project(s)", refreshed)
+    return "ok", f"wiki-refresh swept {refreshed} project(s)"
+
+
+def wiki_refresh() -> None:
+    """Scheduler entry point — runs the sweep via the unified run-record wrapper
+    (records a run_log row, fail-soft). S10A: shares the wrapper."""
+    from modules.automation import service as auto
+    auto.record_routine_run(WIKI_REFRESH_ID, _wiki_refresh_work)
 
 
 _WIKI_REFRESH_ROUTINE = Routine(
@@ -140,4 +146,33 @@ _WIKI_REFRESH_ROUTINE = Routine(
 )
 
 
-MODULE = BaseModule(name="projects", router=router, routines=[_WIKI_REFRESH_ROUTINE])
+# --------------------------------------------------------------------------- #
+# S10A — idle-hunter + pattern-check routines (owned by projects, the data home).
+# The scheduler entry points wrap the decided algorithms (in automation.service)
+# via record_routine_run so each timer fire records a run_log row. Lazy import of
+# automation.service inside the func avoids a module-load import cycle.
+# --------------------------------------------------------------------------- #
+def _idle_hunter_job() -> None:
+    from modules.automation import service as auto
+    auto.record_routine_run("idle-hunter", auto.idle_hunter)
+
+
+def _pattern_check_job() -> None:
+    from modules.automation import service as auto
+    auto.record_routine_run("pattern-check", auto.pattern_check)
+
+
+_IDLE_HUNTER_ROUTINE = Routine(
+    id="idle-hunter", func=_idle_hunter_job, trigger="cron",
+    trigger_args={"hour": 22}, name="Idle Hunter", enabled=True,
+)
+_PATTERN_CHECK_ROUTINE = Routine(
+    id="pattern-check", func=_pattern_check_job, trigger="cron",
+    trigger_args={"hour": 9}, name="Pattern Check", enabled=True,
+)
+
+
+MODULE = BaseModule(
+    name="projects", router=router,
+    routines=[_WIKI_REFRESH_ROUTINE, _IDLE_HUNTER_ROUTINE, _PATTERN_CHECK_ROUTINE],
+)

@@ -318,6 +318,46 @@ export interface ModelBurn {
 }
 
 /* ============================================================
+   Automation / Routines (S13) — MIRRORS backend modules/automation/schema.py
+   (Sprint 10A, FROZEN). A routine = a rule-based job (NO AI). lastRun/lastResult/
+   runs from run_log; enabled is the persisted toggle. render-only.
+   ============================================================ */
+export type Trigger = "interval" | "cron" | "date" | "event";
+export type RunResult = "ok" | "warn" | "error";
+
+export interface RoutineInfo {
+  id: string;
+  name: string;
+  trigger: Trigger;
+  /** human display, e.g. "22:00 mỗi tối". */
+  triggerLabel: string;
+  desc: string;
+  action: string;
+  enabled: boolean;
+  lastRun: string | null;
+  lastResult: RunResult | null;
+  runs: number;
+}
+
+export interface RoutinesView {
+  routines: RoutineInfo[];
+  /** enabled count → sidebar badge. */
+  activeCount: number;
+  total: number;
+  runsToday: number;
+  lastRunAt: string | null;
+}
+
+/** POST /routines/{id}/run → the recorded run. */
+export interface RunResultView {
+  id: string;
+  status: RunResult;
+  detail: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+/* ============================================================
    Journal (S7) — MIRRORS backend modules/journal/schema.py (Sprint 9, FROZEN).
    ONE unified entry: trade-log fields + OPTIONAL SPEC decision fields. pnl is a
    free-form percent STRING ("+5.5%", null=open). confidence 0-100. Derived stats

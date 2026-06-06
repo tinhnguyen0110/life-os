@@ -16,6 +16,9 @@ import type {
   JournalStats,
   JournalEntry,
   JournalInput,
+  RoutinesView,
+  RoutineInfo,
+  RunResultView,
 } from "./types";
 
 const BASE =
@@ -136,6 +139,40 @@ export async function apiPut<T>(
   return parsed as ApiResponse<T>;
 }
 
+/** PATCH wrapper. Same envelope + error handling as apiPost; sends a JSON body. */
+export async function apiPatch<T>(
+  path: string,
+  body?: unknown,
+  init?: RequestInit
+): Promise<ApiResponse<T>> {
+  const url = `${BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PATCH",
+      ...init,
+      headers: { Accept: "application/json", "Content-Type": "application/json", ...init?.headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(0, `Network error reaching ${url}: ${(e as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch {
+    throw new ApiError(res.status, `Invalid JSON from ${url} (status ${res.status})`);
+  }
+  if (!res.ok) {
+    const msg =
+      (parsed as { detail?: string; message?: string })?.detail ||
+      (parsed as { message?: string })?.message ||
+      `Request to ${url} failed (${res.status})`;
+    throw new ApiError(res.status, msg);
+  }
+  return parsed as ApiResponse<T>;
+}
+
 /** DELETE wrapper. Same envelope + error handling as apiGet. */
 export async function apiDelete<T>(
   path: string,
@@ -211,6 +248,21 @@ export function getGraveyard(): Promise<ApiResponse<GraveyardStats>> {
 /** S7 — journal (entries + performance/calibration stats). */
 export function getJournal(): Promise<ApiResponse<JournalStats>> {
   return apiGet<JournalStats>("/journal");
+}
+
+/** S13 — routines view (catalog + run_log stats + roll-up). */
+export function getRoutines(): Promise<ApiResponse<RoutinesView>> {
+  return apiGet<RoutinesView>("/routines");
+}
+
+/** S13 — toggle a routine enabled (PATCH /routines/{id}). */
+export function toggleRoutine(id: string, enabled: boolean): Promise<ApiResponse<RoutineInfo>> {
+  return apiPatch<RoutineInfo>(`/routines/${encodeURIComponent(id)}`, { enabled });
+}
+
+/** S13 — run a routine now (POST /routines/{id}/run → recorded run). */
+export function runRoutine(id: string): Promise<ApiResponse<RunResultView>> {
+  return apiPost<RunResultView>(`/routines/${encodeURIComponent(id)}/run`);
 }
 
 /** S7 — record a trade (POST /journal). */
