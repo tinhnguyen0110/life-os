@@ -148,10 +148,16 @@ describe("S12 Settings — honest integration status (NO fake toggles)", () => {
     expect(within(panel).queryByRole("switch")).toBeNull();
   });
 
-  it("Mở Tweaks is honest coming-soon (disabled, no theme system this build)", async () => {
+  it("S13: Mở Tweaks button is ENABLED (theme system shipped) + opens TweaksPanel", async () => {
+    // S12: button was disabled (coming-soon stub). S13: theme system is real — button ENABLED + opens panel.
     getSettings.mockResolvedValueOnce(ENV(CONFIG()));
+    const user = userEvent.setup();
     render(<SettingsPage />);
     await waitFor(() => expect(screen.getByTestId("open-tweaks")).toBeInTheDocument());
-    expect(screen.getByTestId("open-tweaks")).toBeDisabled();
+    // Button must NOT be disabled
+    expect(screen.getByTestId("open-tweaks")).not.toBeDisabled();
+    // Clicking it opens the TweaksPanel (testid tweaks-panel appears)
+    await user.click(screen.getByTestId("open-tweaks"));
+    await waitFor(() => expect(screen.getByTestId("tweaks-panel")).toBeInTheDocument());
   });
 });

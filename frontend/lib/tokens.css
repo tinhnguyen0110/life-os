@@ -46,7 +46,10 @@ button { font-family:inherit; }
    ============================================================ */
 #app { display:grid; grid-template-columns:228px 1fr; height:100vh; }
 #app.collapsed { grid-template-columns:64px 1fr; }
-.scanline #app::after { content:''; position:fixed; inset:0; pointer-events:none; z-index:200;
+/* Scanline (console) overlay — toggled by body.scanline (runtime, applyTweaks)
+   OR html[data-scanline] (no-flash pre-paint script, before <body> exists). S13. */
+.scanline #app::after,
+html[data-scanline] #app::after { content:''; position:fixed; inset:0; pointer-events:none; z-index:200;
   background:repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 3px); }
 
 /* sidebar */
@@ -345,3 +348,36 @@ select.finput { cursor:pointer; }
 .empty-screen h1 { font-size:18px; font-weight:600; color:var(--tx-0); font-family:var(--sans); letter-spacing:-.01em; }
 .empty-screen .es-meta { font-family:var(--mono); font-size:11px; color:var(--tx-2); }
 .empty-screen .es-tag { font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); border:1px solid var(--accent-dim); background:var(--accent-dim); border-radius:100px; padding:2px 9px; }
+
+/* ============================================================
+   TWEAKS PANEL (S13) — ported VERBATIM from mock app.css 239–269.
+   Mock opened it from a global FAB; in life-os it opens from the Settings
+   "Mở Tweaks" button (#tweaksFab dropped). A click-catching backdrop is added
+   so clicking outside closes it. Floating bottom-right panel preserved.
+   ============================================================ */
+#tweaks-backdrop { position:fixed; inset:0; z-index:399; background:transparent; }
+#tweaks { position:fixed; bottom:44px; right:16px; width:286px; z-index:400; overflow:hidden;
+  background:color-mix(in oklch, var(--bg-1) 92%, transparent); backdrop-filter:blur(14px);
+  border:1px solid var(--line-2); border-radius:14px; box-shadow:0 24px 60px -20px rgba(0,0,0,.85); font-family:var(--sans); }
+#tweaks .tw-head { display:flex; align-items:center; gap:9px; padding:13px 15px; border-bottom:1px solid var(--line); }
+#tweaks .dotlogo { width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+#tweaks .tw-head b { font-size:13px; font-weight:600; flex:1; }
+#tweaks .tw-head .x { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; color:var(--tx-2); border:0; background:transparent; }
+#tweaks .tw-head .x:hover { background:var(--bg-3); color:var(--tx-0); }
+#tweaks .tw-body { padding:14px 15px 16px; max-height:80vh; overflow:auto; }
+#tweaks .tw-sec { font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--tx-2); margin:4px 0 9px; }
+#tweaks .tw-sec:not(:first-child) { margin-top:18px; }
+#tweaks .swatches { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+#tweaks .sw { border:1px solid var(--line-2); border-radius:9px; padding:8px 7px 7px; cursor:pointer; display:flex; flex-direction:column; gap:6px; background:var(--bg-0); transition:border-color .12s,transform .08s; }
+#tweaks .sw:hover { border-color:var(--tx-2); }
+#tweaks .sw:active { transform:scale(.97); }
+#tweaks .sw.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), 0 0 14px -4px var(--accent); }
+#tweaks .sw .chip { height:26px; border-radius:6px; }
+#tweaks .sw .nm { font-family:var(--mono); font-size:9.5px; color:var(--tx-1); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#tweaks .sw.on .nm { color:var(--tx-0); }
+#tweaks .seg2 { display:flex; gap:6px; }
+#tweaks .seg2 button { flex:1; font-family:var(--sans); font-size:11.5px; padding:7px 0; border-radius:8px; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); cursor:pointer; }
+#tweaks .seg2 button.on { background:var(--accent); color:#180f04; border-color:transparent; font-weight:600; }
+#tweaks .togrow { display:flex; align-items:center; gap:10px; padding:7px 0; }
+#tweaks .togrow .lbl { flex:1; font-size:12.5px; color:var(--tx-1); }
+#tweaks .tw-foot { font-family:var(--mono); font-size:10px; color:var(--tx-2); margin-top:14px; line-height:1.5; }

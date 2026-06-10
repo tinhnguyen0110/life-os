@@ -9,13 +9,14 @@
    (c) Tích hợp & MCP — HONEST STATUS panel (live / phase-2 badges, NOT fake toggles).
    (d) API endpoints — live-status list.
    (e) link-outs to registry CRUD (projects→/projects, finance→/finance — NOT rebuilt).
-   (f) Mở Tweaks — honest coming-soon (no theme system this build).
+   (f) Mở Tweaks — real panel (S13): theme swatches / BG / glow / scanline, localStorage.
    render-only on reads; NO optimistic writes (mutate→await→refetch).
    ============================================================ */
 import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/useSettings";
 import { useSafeRouter } from "@/lib/useNav";
 import { Field, TextInput, NumberInput, Select, Toggle } from "@/components/shared/Field";
+import { TweaksPanel } from "@/components/TweaksPanel";
 import { apiBase } from "@/lib/api";
 import type { AppConfig, AppConfigPatch } from "@/lib/types";
 
@@ -267,6 +268,9 @@ function ApiStatusPanel() {
 }
 
 function AppearancePanel() {
+  // S13: real Tweaks system — theme / background / effects, persisted to
+  // localStorage["lifeos.tweaks"]. Panel opens as a floating overlay.
+  const [open, setOpen] = useState(false);
   return (
     <div>
       <div className="kicker" style={{ marginBottom: 10 }}>Giao diện</div>
@@ -274,12 +278,12 @@ function AppearancePanel() {
         <div className="set-row">
           <div className="sr-info">
             <div className="sr-t">Tweaks (màu / nền / hiệu ứng)</div>
-            {/* HONEST: no theme/Tweaks system this build → coming-soon, not a fake button. */}
-            <div className="sr-d">Panel tuỳ biến giao diện — sắp có</div>
+            <div className="sr-d">Tông màu thương hiệu · nền · glow / scanline — lưu trên máy này</div>
           </div>
-          <button className="btn sm" type="button" disabled title="Sắp có" data-testid="open-tweaks">Mở Tweaks</button>
+          <button className="btn sm accent" type="button" onClick={() => setOpen(true)} data-testid="open-tweaks">Mở Tweaks</button>
         </div>
       </div>
+      <TweaksPanel open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }

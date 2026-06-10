@@ -48,3 +48,8 @@ Thumbs.db
 **/.claude/agent-memory/
 frontend/.claude/
 backend/.claude/
+
+# Process / know-how — not public
+CLAUDE.md
+.claude/
+sprints/
