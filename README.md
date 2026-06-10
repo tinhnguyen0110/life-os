@@ -18,6 +18,10 @@
 
 ## Screenshots / Demo
 
+![Life OS — Home dashboard](docs/home-dashboard.png)
+
+*The Home command center: total assets, P&L by channel, live Claude-usage quota, running projects, today's brief, alerts & activity — all on one screen.*
+
 ▶️ **[Open the live demo](https://demo.tinhdev.com/life-command/life-command.html)**
 
 ## Tech
