@@ -27,6 +27,8 @@ import type {
   AppConfig,
   AppConfigPatch,
   ValidationErrorItem,
+  ExchangeOverview,
+  CryptoBasis,
 } from "./types";
 
 const BASE =
@@ -338,6 +340,26 @@ export function updateJournal(id: string, body: JournalInput): Promise<ApiRespon
 /** S4 — un-graveyard a project (POST /projects/{id}/restore). 404 if unknown. */
 export function restoreProject(id: string): Promise<ApiResponse<ProjectStatus>> {
   return apiPost<ProjectStatus>(`/projects/${encodeURIComponent(id)}/restore`);
+}
+
+/** OKX exchange overview (balances + positions). configured=false if no API key. */
+export function getExchange(): Promise<ApiResponse<ExchangeOverview>> {
+  return apiGet<ExchangeOverview>("/exchange");
+}
+
+/** Force a fresh pull from OKX (bypasses in-memory cache). */
+export function syncExchange(): Promise<ApiResponse<ExchangeOverview>> {
+  return apiPatch<ExchangeOverview>("/exchange/sync");
+}
+
+/** Finance — get crypto cost basis (snapshot or manual override). */
+export function getCryptoBasis(): Promise<ApiResponse<CryptoBasis>> {
+  return apiGet<CryptoBasis>("/finance/crypto-basis");
+}
+
+/** Finance — user override for crypto cost basis (PUT /finance/crypto-basis). */
+export function setCryptoBasis(basis: number): Promise<ApiResponse<CryptoBasis>> {
+  return apiPut<CryptoBasis>("/finance/crypto-basis", { basis });
 }
 
 export const apiBase = BASE;

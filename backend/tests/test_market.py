@@ -155,6 +155,14 @@ def _fake_resp(data: dict) -> MagicMock:
 class TestReader:
     """B — reader: httpx mocked, fail-open, deterministic mock, timeout."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_feed_cache(self):
+        """Each reader test starts with a cold CoinGecko TTL cache (process-global)."""
+        import modules.market.reader as _r
+        _r._FEED_CACHE.clear()
+        yield
+        _r._FEED_CACHE.clear()
+
     def test_crypto_calls_httpx_not_real_network(self):
         with patch("modules.market.reader.httpx.get", return_value=_fake_resp(FAKE_CG)) as mg:
             quotes, warnings = read_quotes([CRYPTO_BTC, CRYPTO_ETH])
@@ -162,6 +170,30 @@ class TestReader:
         btc = next(q for q in quotes if q.symbol == "BTC")
         assert btc.price == pytest.approx(60818.0)
         assert btc.source == "coingecko"
+
+    def test_coingecko_ttl_cache_skips_second_http_call(self):
+        """Two reads of the same ids within the TTL → ONE httpx call (cache hit)."""
+        with patch("modules.market.reader.httpx.get", return_value=_fake_resp(FAKE_CG)) as mg:
+            read_quotes([CRYPTO_BTC, CRYPTO_ETH])
+            read_quotes([CRYPTO_BTC, CRYPTO_ETH])  # within TTL → served from cache
+            assert mg.call_count == 1, f"second read must hit cache, got {mg.call_count} calls"
+
+    def test_coingecko_failure_within_ttl_serves_cached_feed(self):
+        """A fetch failure reuses the last good feed (stale-but-good, not mock)."""
+        import modules.market.reader as _r
+        # 1st call succeeds → caches
+        with patch("modules.market.reader.httpx.get", return_value=_fake_resp(FAKE_CG)):
+            _r._FEED_CACHE.clear()
+            feed1 = _r._fetch_coingecko(["bitcoin", "ethereum"])
+        assert feed1["bitcoin"]["usd"] == 60818.0
+        # force the TTL to be expired so the next call attempts a fetch...
+        key = "bitcoin,ethereum"
+        ts, body = _r._FEED_CACHE[key]
+        _r._FEED_CACHE[key] = (ts - _r.COINGECKO_TTL_S - 1, body)  # age it past TTL
+        # ...but the fetch fails → should reuse the cached feed, not raise
+        with patch("modules.market.reader.httpx.get", side_effect=Exception("429 rate limited")):
+            feed2 = _r._fetch_coingecko(["bitcoin", "ethereum"])
+        assert feed2["bitcoin"]["usd"] == 60818.0  # served the cached feed
 
     def test_mock_class_no_network_call(self):
         with patch("modules.market.reader.httpx.get") as mg:
@@ -571,13 +603,17 @@ class TestMarketAPI:
         """GET /market/history/BTC: 200 list when series exists; seed a price first."""
         if not _check_router():
             pytest.skip("market router not yet mounted")
-        # Seed a price row so history returns data (empty DB → 404 by design)
+        # Seed a price row so history returns data (empty DB → 404 by design).
+        # ts MUST be recent — history() windows to the last 24h, so a hard-coded
+        # date goes stale and the query returns []. Use now-1h.
+        from datetime import datetime, timedelta, timezone
         from store import db as db_mod
         from core.config import settings
+        recent_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         monkeypatch.setattr(db_mod, "DB_PATH", None)
         db_mod.close_db()
         db_mod.init_db(str(tmp_path / "store" / "test.db"))
-        db_mod.record_price("BTC", 60818.0, "2026-06-06T10:00:00+00:00")
+        db_mod.record_price("BTC", 60818.0, recent_ts)
         db_mod.close_db()
 
         with patch("modules.market.reader.httpx.get", return_value=_fake_resp(FAKE_CG)):

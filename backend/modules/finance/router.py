@@ -16,7 +16,7 @@ from core.base import BaseModule
 from core.responses import ok
 
 from . import service
-from .schema import GoldenPathInput, HoldingInput
+from .schema import CryptoBasisInput, GoldenPathInput, HoldingInput
 
 logger = logging.getLogger("life-os.finance.router")
 
@@ -71,6 +71,20 @@ def set_golden_path(body: GoldenPathInput):
     """
     targets, ladder = service.set_golden_path(body)
     return ok(data={"targets": targets, "ladder": ladder})
+
+
+@router.get("/crypto-basis")
+def get_crypto_basis():
+    """Current crypto cost basis: {basis, source, setAt}. basis=null if never set."""
+    basis, source = service.get_crypto_basis()
+    return ok(data={"basis": basis, "source": source})
+
+
+@router.put("/crypto-basis")
+def set_crypto_basis(body: CryptoBasisInput):
+    """Manual override of crypto cost basis. source='manual'; never overwritten by auto-snapshot."""
+    payload = service.set_crypto_basis(body)
+    return ok(data=payload)
 
 
 @router.get("/{channel}")

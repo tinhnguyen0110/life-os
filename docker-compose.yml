@@ -8,8 +8,8 @@
 # Stop:    docker compose down      (data/ + store/ persist via the mounts below)
 # Rebuild: docker compose up --build
 #
-# Ports (memory dev-server-ports): BE :8001 (NOT :8000 = OutboundOS), FE :3010.
-# The browser reaches the API at NEXT_PUBLIC_API_BASE=http://localhost:8001 — the
+# Ports: BE host :8686 → container :8686 (NOT :8000 = OutboundOS), FE :3010.
+# The browser reaches the API at NEXT_PUBLIC_API_BASE=http://localhost:8686 — the
 # HOST-published BE port, NOT the `backend` service name (that only resolves
 # container-to-container; NEXT_PUBLIC_* runs in the user's browser on the host).
 
@@ -17,7 +17,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8001:8001"            # host:container — browser + curl reach life-os here
+      - "8686:8686"            # host:container — browser + curl reach life-os here
     volumes:
       # Persist the runtime stores across restarts + keep them editable on host.
       - ./backend/data:/app/data        # md+git store (markdown, git-versioned)
@@ -44,19 +44,25 @@ services:
       # S9: point the claude-usage reader at the mounted host ~/.claude (above),
       # NOT the container's empty $HOME/.claude. config reads this env.
       LIFEOS_CLAUDE_STATS_PATH: /claude-home/stats-cache.json
-    # (uvicorn --host 0.0.0.0 --port 8001 --reload — from the Dockerfile CMD.)
+      # S9 quota: live 5h/7d rate-limit + reset + context snapshot, tee'd by the
+      # host statusline command into ~/.claude/quota-snapshot.json (mounted above).
+      LIFEOS_CLAUDE_QUOTA_PATH: /claude-home/quota-snapshot.json
+      # S9 tokens: PRIMARY source — live session transcripts (.jsonl) under the
+      # mounted host ~/.claude/projects. Real tokens/cost/byProject (stats-cache died).
+      LIFEOS_CLAUDE_PROJECTS_DIR: /claude-home/projects
+    # (uvicorn --host 0.0.0.0 --port 8686 --reload — from the Dockerfile CMD.)
 
   frontend:
     build:
       context: ./frontend
       args:
         # Client-side (browser) base URL → MUST be the host-published BE port,
-        # NOT http://backend:8001 (service name resolves only inside the network).
-        API_BASE: http://localhost:8001
+        # NOT http://backend:8686 (service name resolves only inside the network).
+        API_BASE: http://localhost:8686
     ports:
       - "3010:3010"
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8001
+      NEXT_PUBLIC_API_BASE: http://localhost:8686
     volumes:
       - ./frontend:/app
       # Anonymous volumes so the host's (empty/platform-mismatched) dirs don't

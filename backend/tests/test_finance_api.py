@@ -39,6 +39,13 @@ def app_client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fin_service.market_service, "get_quote", fake_get_quote)
 
+    # Disable the live OKX crypto override — these integration tests hand-calc the
+    # crypto channel from manual holdings. If OKX is configured in the local env
+    # (it is — live snapshot), _okx_crypto_value() would override crypto value and
+    # break every assertion (e.g. alloc.value 60000 → live ~10626). Same isolation
+    # as test_finance.py's no_okx_override fixture.
+    monkeypatch.setattr(fin_service, "_okx_crypto_value", lambda: (None, None))
+
     import main as main_mod
     importlib.reload(main_mod)
     app = main_mod.create_app()

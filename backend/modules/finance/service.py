@@ -23,12 +23,14 @@ from datetime import datetime, timezone
 
 import yaml
 
+from modules.exchange import service as exchange_service
 from modules.market import service as market_service
 from store import db, md_store
 
 from .schema import (
     Change,
     ChannelAlloc,
+    CryptoBasisInput,
     FinanceOverview,
     GoldenPathInput,
     Holding,
@@ -41,6 +43,7 @@ logger = logging.getLogger("life-os.finance.service")
 
 HOLDINGS_MD = "finance/holdings.md"
 GOLDEN_PATH_MD = "finance/golden_path.md"
+CRYPTO_BASIS_MD = "finance/crypto_basis.md"
 DRIFT_ALERT_PCT = 5.0
 DRY_CHANNEL = "dry"
 CHANNELS = ("crypto", "etf", "vn", "dry")
@@ -156,6 +159,65 @@ def set_golden_path(body: GoldenPathInput) -> tuple[dict[str, float], dict[str, 
 
 
 # --------------------------------------------------------------------------- #
+# Crypto cost basis — snapshot-on-first-connect or user manual override         #
+# --------------------------------------------------------------------------- #
+def get_crypto_basis() -> tuple[float | None, str]:
+    """(basis_usd, source). Returns (None, 'unset') if never set.
+
+    source is one of: 'snapshot' (auto-captured from first OKX value) |
+    'manual' (user PUT override). Manual is never overwritten by snapshot.
+    """
+    try:
+        content = md_store.read(CRYPTO_BASIS_MD)
+    except Exception as exc:
+        logger.debug("crypto_basis.md not found (will snapshot on first OKX value): %s", exc)
+        return None, "unset"
+    data = _parse_front_matter(content)
+    basis = data.get("basis")
+    source = data.get("source", "unset")
+    if basis is None:
+        return None, str(source)
+    try:
+        return float(basis), str(source)
+    except (TypeError, ValueError):
+        return None, "unset"
+
+
+def _ensure_crypto_basis(okx_total: float) -> float:
+    """Return the stored cost basis; snapshot okx_total if not yet set.
+
+    Rules (decided-and-logged):
+    - basis is None → snapshot okx_total now, source="snapshot"
+    - basis already set (snapshot or manual) → return as-is; NEVER override
+    This means the very first GET /finance after OKX connect locks in cost.
+    User can override at any time via PUT /finance/crypto-basis.
+    """
+    basis, _ = get_crypto_basis()
+    if basis is None and okx_total > 0:
+        snapped = round(okx_total, 2)
+        _write_front_matter(CRYPTO_BASIS_MD, {
+            "basis": snapped,
+            "source": "snapshot",
+            "setAt": _now_iso(),
+        }, "snapshot crypto basis from OKX")
+        logger.info("crypto basis snapshotted: %.2f USD", snapped)
+        return snapped
+    return basis if basis is not None else 0.0
+
+
+def set_crypto_basis(body: CryptoBasisInput) -> dict:
+    """User manual override. Writes source='manual' — snapshot never overwrites this."""
+    payload = {
+        "basis": round(body.basis, 2),
+        "source": "manual",
+        "setAt": _now_iso(),
+    }
+    _write_front_matter(CRYPTO_BASIS_MD, payload, "manual crypto basis override")
+    logger.info("crypto basis manually set: %.2f USD", body.basis)
+    return payload
+
+
+# --------------------------------------------------------------------------- #
 # Pricing + P&L                                                                 #
 # --------------------------------------------------------------------------- #
 def _price_of(symbol: str, avg_cost: float) -> tuple[float, str, str | None]:
@@ -226,11 +288,41 @@ def _series() -> list[float]:
     return []
 
 
+def _okx_crypto_value() -> tuple[float | None, str | None]:
+    """Return (okx_total_usd, warning_or_None) when OKX is configured and has value.
+
+    Fail-open: exchange_service.get_overview() never raises. Returns (None, None) if
+    unconfigured or totalUsdValue == 0 → caller keeps manual-price fallback unchanged.
+    """
+    try:
+        snap, _ = exchange_service.get_overview()
+        if snap.configured and snap.totalUsdValue > 0:
+            return snap.totalUsdValue, None
+    except Exception as exc:
+        logger.warning("OKX overview unexpected error (fail-open): %s", exc)
+    return None, None
+
+
 def get_overview() -> tuple[FinanceOverview, list[str]]:
     holdings = list_holdings()
     targets, _ladder, gp_warnings = get_golden_path()
     by_channel, price_warnings = _aggregate(holdings)
     warnings = gp_warnings + price_warnings
+
+    # OKX override: if configured, replace crypto channel value with live OKX totalUsdValue.
+    # Cost basis = snapshot on first call (or user manual override via PUT /crypto-basis).
+    # Holdings list from manual holdings (kept for individual position detail).
+    okx_value, okx_warn = _okx_crypto_value()
+    if okx_value is not None:
+        crypto_cost = _ensure_crypto_basis(okx_value)
+        crypto_holdings = by_channel.get("crypto", {}).get("holdings", [])
+        by_channel["crypto"] = {
+            "value": round(okx_value, 2),
+            "cost": crypto_cost,
+            "holdings": crypto_holdings,
+        }
+    if okx_warn:
+        warnings.append(okx_warn)
 
     total_value = round(sum(c["value"] for c in by_channel.values()), 2)
     total_cost = round(sum(c["cost"] for c in by_channel.values()), 2)
@@ -282,6 +374,20 @@ def get_channel(channel: str) -> tuple[dict | None, list[str]]:
     all_by_channel, price_warnings = _aggregate(list_holdings())
     warnings = gp_warnings + price_warnings
     agg = all_by_channel.get(channel, {"value": 0.0, "cost": 0.0, "holdings": []})
+
+    # OKX override for crypto channel: replace value with live OKX totalUsdValue.
+    # Cost basis from snapshot/manual; total_value recomputed after override.
+    if channel == "crypto":
+        okx_value, okx_warn = _okx_crypto_value()
+        if okx_value is not None:
+            crypto_cost = _ensure_crypto_basis(okx_value)
+            agg = dict(agg)  # don't mutate all_by_channel
+            agg["value"] = round(okx_value, 2)
+            agg["cost"] = crypto_cost
+            all_by_channel = dict(all_by_channel)
+            all_by_channel["crypto"] = agg
+        if okx_warn:
+            warnings.append(okx_warn)
 
     total_value = round(sum(c["value"] for c in all_by_channel.values()), 2)
     pct = round(agg["value"] / total_value * 100.0, 2) if total_value > 0 else 0.0

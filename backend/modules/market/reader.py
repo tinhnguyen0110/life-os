@@ -17,6 +17,7 @@ when our series is too short, and the reader surfaces it via `feed_change_pct`.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -30,6 +31,17 @@ logger = logging.getLogger("life-os.market.reader")
 
 COINGECKO_TIMEOUT_S = 8.0
 _MOCK_BASE_DEFAULT = 100.0
+
+# CoinGecko TTL cache (perf): /market hits CoinGecko on every request; a 5-min poll
+# already keeps prices warm, so a fresh live call per page-view is wasted network
+# (measured /market ~134ms, all of it the HTTP round-trip). Cache the raw feed for
+# COINGECKO_TTL_S keyed by the requested id set, so repeated GET /market (and the
+# per-holding /finance quotes that flow through here) serve the last good feed.
+# Also de-risks the external dep: a 429/outage inside the TTL window reuses the
+# last good response instead of failing open to mock. monotonic clock = immune to
+# wall-clock jumps. Single entry per id-set is plenty (one user, few id sets).
+COINGECKO_TTL_S = 30.0
+_FEED_CACHE: dict[str, tuple[float, dict]] = {}  # key → (monotonic_ts, raw feed)
 
 
 def _now_iso() -> str:
@@ -98,18 +110,38 @@ def _fetch_coingecko(cg_ids: list[str]) -> dict:
     """ONE batched CoinGecko /simple/price call for all crypto ids. Raises on failure.
 
     Returns the raw mapping {cg_id: {"usd": float, "usd_24h_change": float}}.
+
+    TTL-cached for COINGECKO_TTL_S keyed by the sorted id set: a repeat call within
+    the window returns the last good feed (no network). A fresh fetch refreshes the
+    cache; a fetch FAILURE inside the window falls back to the cached feed (if any)
+    rather than propagating — only raises when there's nothing cached to reuse.
     """
+    key = ",".join(sorted(cg_ids))
+    now = time.monotonic()
+    cached = _FEED_CACHE.get(key)
+    if cached is not None and (now - cached[0]) < COINGECKO_TTL_S:
+        return cached[1]  # warm within TTL — no network
+
     url = f"{settings.coingecko_base}/simple/price"
     params = {
         "ids": ",".join(cg_ids),
         "vs_currencies": "usd",
         "include_24hr_change": "true",
     }
-    resp = httpx.get(url, params=params, timeout=COINGECKO_TIMEOUT_S)
-    resp.raise_for_status()
-    body = resp.json()
-    if not isinstance(body, dict):
-        raise ValueError(f"unexpected CoinGecko body type: {type(body).__name__}")
+    try:
+        resp = httpx.get(url, params=params, timeout=COINGECKO_TIMEOUT_S)
+        resp.raise_for_status()
+        body = resp.json()
+        if not isinstance(body, dict):
+            raise ValueError(f"unexpected CoinGecko body type: {type(body).__name__}")
+    except Exception:
+        # network/HTTP/parse failure → reuse the last good feed if the cache has one
+        # (stale-but-good beats failing open to mock); else propagate to the caller.
+        if cached is not None:
+            logger.warning("CoinGecko fetch failed — serving cached feed (%.0fs old)", now - cached[0])
+            return cached[1]
+        raise
+    _FEED_CACHE[key] = (now, body)
     return body
 
 

@@ -25,13 +25,13 @@ router = APIRouter(tags=["claude-usage"])
 
 @router.get("")
 def get_usage(window: str = "5h"):
-    """The composite Claude usage view. Fail-open to manual mode if no stats-cache."""
+    """The composite Claude usage view. Live transcripts → stats-cache → empty."""
     usage = service.get_usage(window=window)
     warning = None
-    if usage.source == "manual":
-        warning = "stats-cache.json not found — manual mode"
+    if usage.tokenSource == "none":
+        warning = "no token data — transcripts dir + stats-cache.json both absent"
     elif usage.stale:
-        warning = f"usage data is stale (as of {usage.asOf})"
+        warning = f"token data is stale (as of {usage.asOf})"
     return ok(data=usage.model_dump(), warning=warning)
 
 

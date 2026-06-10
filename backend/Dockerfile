@@ -1,10 +1,8 @@
 # backend/Dockerfile — life-os FastAPI backend (dev-mode).
 #
 # Single-user local app (CLAUDE.md §2 — no auth, no multi-tenant). This image runs
-# the API with uvicorn --reload for local development. Build with a non-:8001 host
-# port mapping while the live :8001 instance is in use:
-#   docker build -t life-os-backend ./backend
-#   docker run --rm -p 8002:8001 life-os-backend   # host 8002 → container 8001
+# the API with uvicorn --reload for local development. The container listens
+# on :8686; docker-compose publishes it on host :8686.
 #
 # git is installed because the md_store layer commits markdown writes (store/md_store.py).
 
@@ -33,9 +31,8 @@ RUN pip install --no-cache-dir .
 # App source. .dockerignore keeps runtime data/, caches, and the venv out.
 COPY . .
 
-EXPOSE 8001
+EXPOSE 8686
 
 # Dev-mode: --reload so code edits hot-reload. Bind 0.0.0.0 so the port maps out
-# of the container. Port 8001 per the team's dev-server-ports convention
-# (NOT :8000 = OutboundOS).
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+# of the container. Port 8686 (NOT :8000 = OutboundOS).
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8686", "--reload"]

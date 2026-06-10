@@ -317,6 +317,18 @@ export interface ModelBurn {
   costUSD: number;
 }
 
+/** Per-project token + derived-cost (LIVE from transcript cwd attribution). */
+export interface ProjectBurn {
+  project: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  total: number;
+  costUSD: number;
+  msgs: number;
+}
+
 /* ============================================================
    Settings / AppConfig (S12) — MIRRORS backend modules/settings/schema.py (FROZEN).
    Global app-config the Settings screen edits + routines read. PATCH is partial
@@ -592,21 +604,37 @@ export interface ClaudeUsage {
   cap: number;
   pct: number;
   remaining: number;
-  /** STUB: null unless manual override. */
+  /** LIVE 5h-window reset countdown (quota snapshot) or manual override; null if neither. */
   resetIn: string | null;
-  /** STUB: null unless manual override. */
+  /** LIVE 7-day used % (quota snapshot) or manual override; null if neither. */
   weekly: number | null;
+  /** LIVE: 5h rate-limit used % (quota snapshot). null if snapshot absent. */
+  pct5h: number | null;
+  /** LIVE: 7-day reset countdown (quota snapshot). */
+  resetWeek: string | null;
+  /** LIVE: current SESSION context-window used % (quota snapshot). */
+  ctxPct: number | null;
+  /** LIVE: current session context tokens used (raw). */
+  ctxUsed: number | null;
+  /** LIVE: current session context window size (opus 1M, sonnet 200k). */
+  ctxMax: number | null;
+  /** LIVE: model of the current session (from statusline). */
+  ctxModel: string | null;
+  /** 'snapshot' (live statusline tee) | 'manual' | 'stub'. */
+  quotaSource: string;
   series: DayBurn[];
   today: number;
   avgPerDay: number;
   peak: DayBurn;
   byModel: ModelBurn[];
   costUSD: number;
-  /** STUB this sprint: always null (per-project not in stats-cache). */
-  byProject: null;
+  /** LIVE per-project burn (transcript cwd), total desc. [] if no transcripts. */
+  byProject: ProjectBurn[];
+  /** 'transcripts' (live .jsonl) | 'stats-cache' | 'none'. */
+  tokenSource: string;
   asOf: string;
   stale: boolean;
-  /** 'stats-cache' | 'manual'. */
+  /** mirror of tokenSource (legacy field). */
   source: string;
 }
 
@@ -657,4 +685,47 @@ export interface MarketData {
   triggers: AlertTrigger[];
   macro: MacroSignal[];
   alertHistory: AlertEvent[];
+}
+
+/* ============================================================
+   OKX Exchange — mirrors modules/exchange/schema.py
+   ============================================================ */
+
+/** One asset balance on OKX — mirrors `OkxBalance`. */
+export interface OkxBalance {
+  symbol: string;
+  available: number;
+  frozen: number;
+  total: number;
+  usdValue: number | null;
+}
+
+/** One open position (margin/futures) — mirrors `OkxPosition`. */
+export interface OkxPosition {
+  instId: string;
+  side: string;
+  qty: number;
+  avgOpenPrice: number;
+  unrealizedPnl: number;
+  margin: number;
+  lever: string;
+}
+
+/** Crypto cost-basis snapshot — mirrors `CryptoBasis` (GET /finance/crypto-basis). */
+export interface CryptoBasis {
+  /** cost basis in USD; null if not yet set. */
+  basis: number | null;
+  /** "snapshot" = auto-computed from holdings; "manual" = user override. */
+  source: "snapshot" | "manual";
+  /** ISO-8601 UTC when last set; null if never. */
+  setAt: string | null;
+}
+
+/** OKX account overview — mirrors `ExchangeOverview`. */
+export interface ExchangeOverview {
+  totalUsdValue: number;
+  balances: OkxBalance[];
+  positions: OkxPosition[];
+  syncedAt: string | null;
+  configured: boolean;
 }

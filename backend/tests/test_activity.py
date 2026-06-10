@@ -402,12 +402,12 @@ def test_get_run_unknown_returns_none(isolated_paths):
 
 
 # =========================================================================== #
-# SECTION B — API (skip-guarded: server at :8001 WITH activity module loaded)   #
+# SECTION B — API (skip-guarded: server at :8686 WITH activity module loaded)   #
 # =========================================================================== #
 
 requests = pytest.importorskip("requests", reason="requests not installed")
 
-BASE = "http://localhost:8001"
+BASE = "http://localhost:8686"
 
 
 def _server_up() -> bool:
@@ -421,7 +421,7 @@ def _server_up() -> bool:
 def server():
     """Skip API section if server not up OR pre-T1 (activity module not registered)."""
     if not _server_up():
-        pytest.skip("BE server not running at :8001 — API tests skipped")
+        pytest.skip("BE server not running at :8686 — API tests skipped")
     try:
         r = requests.get(f"{BASE}/health", timeout=2)
         modules = r.json()["data"].get("modules", [])

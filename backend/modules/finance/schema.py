@@ -106,3 +106,9 @@ class HoldingInput(BaseModel):
     qty: float = Field(..., ge=0)
     avgCost: float = Field(..., ge=0)
     source: str = Field("manual")
+
+
+class CryptoBasisInput(BaseModel):
+    """Body to manually override the crypto cost basis (USD total)."""
+
+    basis: float = Field(..., ge=0, description="total cost basis in USD")

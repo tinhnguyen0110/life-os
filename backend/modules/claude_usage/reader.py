@@ -36,3 +36,28 @@ def read_stats(path: str | Path | None = None) -> dict | None:
         logger.warning("stats-cache.json is not a JSON object — manual mode")
         return None
     return data
+
+
+def read_quota(path: str | Path | None = None) -> dict | None:
+    """Load the live quota snapshot (5h/7d rate-limit + reset + context).
+
+    Tee'd by the host statusline command into ~/.claude/quota-snapshot.json (the
+    ONLY place Claude Code exposes rate_limits — pushed via statusline stdin, never
+    persisted elsewhere). ``path`` defaults to ``settings.claude_quota_path``.
+    Returns None on missing/unreadable/malformed — service degrades to stub quota
+    (never an exception), exactly like read_stats.
+    """
+    p = Path(path) if path is not None else Path(settings.claude_quota_path)
+    p = p.expanduser()
+    if not p.is_file():
+        logger.info("quota-snapshot.json not found at %s — quota stub", p)
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        logger.warning("quota-snapshot.json unreadable/malformed (%s) — quota stub", exc)
+        return None
+    if not isinstance(data, dict):
+        logger.warning("quota-snapshot.json is not a JSON object — quota stub")
+        return None
+    return data

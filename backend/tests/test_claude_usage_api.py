@@ -37,6 +37,12 @@ def app_client(tmp_path, monkeypatch):
                                            "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}},
     }))
     monkeypatch.setattr(settings, "claude_stats_path", fix)
+    # Isolate the live sources so these tests exercise the stats-cache fixture, not
+    # the dev machine's real ~/.claude (transcripts is PRIMARY now; quota is live).
+    monkeypatch.setattr(settings, "claude_quota_path", tmp_path / "absent-quota.json")
+    monkeypatch.setattr(settings, "claude_projects_dir", tmp_path / "absent-projects")
+    from modules.claude_usage import transcripts
+    transcripts._CACHE.clear()
 
     db.close_db()
     import main as main_mod
@@ -68,7 +74,7 @@ def test_get_usage_envelope(app_client):
     assert not (required - set(d)), f"missing keys: {required - set(d)}"
     assert d["source"] == "stats-cache"
     assert d["used"] == 50_000 and d["today"] == 50_000
-    assert d["byModel"][0]["costUSD"] == 15.0  # 1M opus input @ 15/1M
+    assert d["byModel"][0]["costUSD"] == 5.0  # 1M opus-4-7 input @ 5/1M (NEW 4.5+ tier)
 
 
 def test_get_usage_pct_self_describing(app_client):
@@ -76,15 +82,16 @@ def test_get_usage_pct_self_describing(app_client):
     assert d["pct"] == round(d["used"] / d["cap"] * 100, 1)  # checkable from payload
 
 
-# --- fail-open manual mode (200, not 500) ---
-def test_get_usage_manual_mode_when_no_stats(app_client, monkeypatch, tmp_path):
+# --- fail-open empty mode (200, not 500) when NO token source at all ---
+def test_get_usage_empty_mode_when_no_sources(app_client, monkeypatch, tmp_path):
     from core.config import settings
     monkeypatch.setattr(settings, "claude_stats_path", tmp_path / "gone.json")
+    # projects dir already isolated-absent by app_client fixture → no transcripts either
     resp = app_client.get("/claude-usage")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["data"]["source"] == "manual"
-    assert body.get("warning") and "manual mode" in body["warning"]
+    assert body["data"]["source"] == "none" and body["data"]["tokenSource"] == "none"
+    assert body.get("warning") and "no token data" in body["warning"]
 
 
 # --- PUT /claude-usage/override ---

@@ -32,6 +32,19 @@ class ModelBurn(BaseModel):
     costUSD: float = Field(..., ge=0, description="derived from pricing table (cache unpriced)")
 
 
+class ProjectBurn(BaseModel):
+    """Per-project token + derived-cost breakdown (from transcript cwd attribution)."""
+
+    project: str = Field(..., description="project name (cwd basename)")
+    inputTokens: int = Field(..., ge=0)
+    outputTokens: int = Field(..., ge=0)
+    cacheReadTokens: int = Field(..., ge=0)
+    cacheCreateTokens: int = Field(..., ge=0)
+    total: int = Field(..., ge=0, description="inputTokens + outputTokens")
+    costUSD: float = Field(..., ge=0, description="derived from pricing table")
+    msgs: int = Field(..., ge=0, description="assistant-message count")
+
+
 class ClaudeUsage(BaseModel):
     """GET /claude-usage .data — composite usage view."""
 
@@ -40,17 +53,25 @@ class ClaudeUsage(BaseModel):
     cap: int = Field(..., ge=0, description="configured cap (default 200_000; manual-override) — NOT from disk")
     pct: float = Field(..., description="round(used/cap*100, 1) — carries {used, cap}")
     remaining: int = Field(..., ge=0, description="max(cap - used, 0)")
-    resetIn: str | None = Field(None, description="STUB: None unless manual override")
-    weekly: int | None = Field(None, description="STUB: None unless manual override")
+    resetIn: str | None = Field(None, description="5h-window reset countdown (live quota snapshot) or manual override")
+    weekly: int | None = Field(None, description="7-day used % (live quota snapshot) or manual override")
+    pct5h: float | None = Field(None, description="LIVE: 5h rate-limit used % (quota snapshot) — None if snapshot absent")
+    resetWeek: str | None = Field(None, description="LIVE: 7-day reset countdown (quota snapshot)")
+    ctxPct: float | None = Field(None, description="LIVE: current SESSION context-window used % (quota snapshot)")
+    ctxUsed: int | None = Field(None, description="LIVE: current session context tokens used (raw)")
+    ctxMax: int | None = Field(None, description="LIVE: current session context window size (model-dependent: opus 1M, sonnet 200k)")
+    ctxModel: str | None = Field(None, description="LIVE: model of the current session (from statusline)")
+    quotaSource: str = Field("stub", description="'snapshot' (live statusline tee) | 'manual' | 'stub'")
     series: list[DayBurn] = Field(default_factory=list, description="last 7 days (chart)")
     today: int = Field(..., ge=0, description="today's (or lastComputedDate's) tokens")
     avgPerDay: int = Field(..., ge=0, description="7-day mean tokens (round int)")
     peak: DayBurn = Field(..., description="highest-burn day in series")
     byModel: list[ModelBurn] = Field(default_factory=list, description="per model, total desc")
     costUSD: float = Field(..., ge=0, description="derived: sum of per-model cost — NOT stats-cache costUSD")
-    byProject: None = Field(None, description="STUB this sprint (per-project not in stats-cache)")
-    asOf: str = Field(..., description="lastComputedDate (freshness)")
-    stale: bool = Field(..., description="asOf < today")
+    byProject: list[ProjectBurn] = Field(default_factory=list, description="per project (transcript cwd), total desc — LIVE")
+    tokenSource: str = Field("stats-cache", description="'transcripts' (live .jsonl) | 'stats-cache' | 'none'")
+    asOf: str = Field(..., description="freshness date — newest transcript day, or stats lastComputedDate")
+    stale: bool = Field(..., description="asOf < yesterday")
     source: str = Field(..., description="'stats-cache' | 'manual'")
 
 

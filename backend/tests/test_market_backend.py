@@ -18,6 +18,16 @@ from modules.market.schema import AlertRule, AssetQuote, MacroSignal
 
 CG_URL = "https://api.coingecko.com/api/v3/simple/price"
 
+
+@pytest.fixture(autouse=True)
+def _clear_market_feed_cache():
+    """Process-global CoinGecko TTL cache must start cold for EVERY market test —
+    else a prior test's cached feed serves and the next test's mock isn't called."""
+    reader._FEED_CACHE.clear()
+    yield
+    reader._FEED_CACHE.clear()
+
+
 CRYPTO_ASSETS = [
     {"symbol": "BTC", "name": "Bitcoin", "assetClass": "crypto", "cgId": "bitcoin"},
     {"symbol": "ETH", "name": "Ethereum", "assetClass": "crypto", "cgId": "ethereum"},

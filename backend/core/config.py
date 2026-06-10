@@ -112,16 +112,34 @@ class Settings(BaseSettings):
     # ~/.claude/stats-cache.json; override via LIFEOS_CLAUDE_STATS_PATH (tests
     # point this at a fixture, NOT the real ~/.claude). Machine-portable (3B lesson).
     claude_stats_path: Path = Field(default_factory=lambda: Path.home() / ".claude" / "stats-cache.json")
+    # Path to the live quota snapshot tee'd by the statusline command (real 5h/7d
+    # rate-limit % + reset timestamps + context %). Claude Code pushes rate_limits
+    # ONLY via the statusline stdin; statusline-command.sh tee's it here so the
+    # backend can read it. Default ~/.claude/quota-snapshot.json; override via
+    # LIFEOS_CLAUDE_QUOTA_PATH (tests point at a fixture). Fail-open if absent.
+    claude_quota_path: Path = Field(default_factory=lambda: Path.home() / ".claude" / "quota-snapshot.json")
+    # Dir holding Claude Code session transcripts (~/.claude/projects/<slug>/*.jsonl).
+    # The LIVE token/cost/byProject source — each assistant message carries a real
+    # `usage` block + cwd + model + timestamp (stats-cache.json died 2026-04-17).
+    # Parsed incrementally (mtime cache). Override via LIFEOS_CLAUDE_PROJECTS_DIR
+    # (tests point at a fixture). Fail-open: missing dir → empty, never raises.
+    claude_projects_dir: Path = Field(default_factory=lambda: Path.home() / ".claude" / "projects")
     # Default token cap for the active window (no rate-limit ceiling on disk —
     # manual-override via PUT). Matches the mock's 200K.
     claude_usage_cap: int = 200_000
+
+    # --- OKX exchange (read-only API key, optional) -------------------------
+    # Set via .env or env vars. Left empty → exchange module returns stub/empty.
+    okx_api_key: str = Field(default="", description="OKX API key")
+    okx_api_secret: str = Field(default="", description="OKX API secret")
+    okx_api_passphrase: str = Field(default="", description="OKX API passphrase")
 
     # Browser origins allowed to call the API. Single-user localhost no-auth
     # (CLAUDE.md §2) — CORS here is a browser-functionality enabler, NOT a
     # security boundary. Default covers the FE dev server (:3010) + Next default
     # (:3000). Override via LIFEOS_CORS_ORIGINS (JSON list).
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3010", "http://localhost:3000"]
+        default_factory=lambda: ["*"]
     )
 
     # --- Derived paths (always under data_dir) ------------------------------

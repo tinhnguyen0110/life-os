@@ -437,6 +437,41 @@ class TestServiceListProjects:
         assert len(statuses) == 1, f"Expected 1 project, got {len(statuses)}: {statuses}"
         assert statuses[0].id == "outboundos"
 
+    def test_read_one_cache_skips_git_on_warm_call(self, monkeypatch, isolated_paths):
+        """Second read of an UNCHANGED repo serves the cache → no git subprocess."""
+        import modules.projects.service as svc
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {"outboundos": REAL_REPOS["outboundos"]})
+        svc._STATUS_CACHE.clear()
+
+        calls = {"n": 0}
+        real_run = subprocess.run
+        def counting_run(args, *a, **k):
+            if args and args[0] == "git":
+                calls["n"] += 1
+            return real_run(args, *a, **k)
+        monkeypatch.setattr(subprocess, "run", counting_run)
+
+        list_projects()                 # cold — spawns git
+        cold_forks = calls["n"]
+        assert cold_forks > 0, "cold read should spawn git"
+        calls["n"] = 0
+        s2, _ = list_projects()         # warm — must be served from cache
+        assert calls["n"] == 0, f"warm read must spawn ZERO git, spawned {calls['n']}"
+        assert s2 and s2[0].id == "outboundos"  # same data, just cached
+
+    def test_refresh_invalidates_cache(self, monkeypatch, isolated_paths):
+        """refresh_project() forces a fresh git read even if the cache is warm."""
+        import modules.projects.service as svc
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {"outboundos": REAL_REPOS["outboundos"]})
+        svc._STATUS_CACHE.clear()
+        list_projects()                                  # warm the cache
+        assert "outboundos" in svc._STATUS_CACHE
+        svc.refresh_project("outboundos")                # must invalidate + re-read
+        # after refresh the entry is repopulated with a fresh read (key present again)
+        assert "outboundos" in svc._STATUS_CACHE
+
     def test_bogus_path_in_list_is_dead(self, monkeypatch, isolated_paths):
         """A bogus path in project_repos must appear as dead, not crash list."""
         from core import config

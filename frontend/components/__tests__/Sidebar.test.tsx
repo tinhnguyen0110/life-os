@@ -57,14 +57,14 @@ describe("Sidebar", () => {
     expect(NAV).toHaveLength(6);
   });
 
-  it("renders a link for every nav route (13 nav items → 14 screens incl Home)", () => {
+  it("renders a link for every nav route (14 nav items incl OKX Exchange)", () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     for (const route of ALL_ROUTES) {
       expect(container.querySelector(`a[href="${route}"]`)).toBeTruthy();
     }
-    // 13 nav items + the settings user link
-    expect(ALL_ROUTES).toHaveLength(13);
+    // 14 nav items (13 original + OKX Exchange)
+    expect(ALL_ROUTES).toHaveLength(14);
   });
 
   it("marks the active route with `on` and aria-current", () => {

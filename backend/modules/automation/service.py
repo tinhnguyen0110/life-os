@@ -290,8 +290,11 @@ def set_enabled(routine_id: str, enabled: bool) -> RoutineInfo | None:
 # --------------------------------------------------------------------------- #
 # List + run                                                                    #
 # --------------------------------------------------------------------------- #
-def _routine_info(cat: dict) -> RoutineInfo:
-    rows = db.recent_runs(cat["id"], limit=1000)
+def _routine_info(cat: dict, rows: list | None = None) -> RoutineInfo:
+    """Build a RoutineInfo. ``rows`` (this routine's run_log) may be passed in to
+    avoid a redundant db.recent_runs call when the caller already has them."""
+    if rows is None:
+        rows = db.recent_runs(cat["id"], limit=1000)
     last = rows[0] if rows else None
     return RoutineInfo(
         id=cat["id"], name=cat["name"], trigger=cat["trigger"],
@@ -304,18 +307,25 @@ def _routine_info(cat: dict) -> RoutineInfo:
 
 
 def list_routines() -> RoutinesView:
-    """All routines + per-id run_log stats + roll-up. Never raises."""
-    infos = [_routine_info(c) for c in _CATALOG]
+    """All routines + per-id run_log stats + roll-up. Never raises.
+
+    Fetches each routine's run_log ONCE (was: twice — once in _routine_info and
+    again in the roll-up loop) and reuses the rows for both the per-routine info and
+    the runsToday / lastRunAt aggregates.
+    """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    # runsToday / lastRunAt across all routines.
+    infos: list[RoutineInfo] = []
     runs_today = 0
     last_run_at: str | None = None
     for c in _CATALOG:
-        for row in db.recent_runs(c["id"], limit=1000):
-            if isinstance(row["started_at"], str) and row["started_at"][:10] == today:
+        rows = db.recent_runs(c["id"], limit=1000)  # single fetch per routine
+        infos.append(_routine_info(c, rows=rows))
+        for row in rows:
+            sa = row["started_at"]
+            if isinstance(sa, str) and sa[:10] == today:
                 runs_today += 1
-            if last_run_at is None or (isinstance(row["started_at"], str) and row["started_at"] > last_run_at):
-                last_run_at = row["started_at"]
+            if isinstance(sa, str) and (last_run_at is None or sa > last_run_at):
+                last_run_at = sa
     return RoutinesView(
         routines=infos, activeCount=sum(1 for i in infos if i.enabled),
         total=len(infos), runsToday=runs_today, lastRunAt=last_run_at,

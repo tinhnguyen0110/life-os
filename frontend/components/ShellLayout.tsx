@@ -20,7 +20,8 @@ export function ShellLayout({ children }: { children: React.ReactNode }) {
       <div className="main">
         <TopBar />
         <div className="view">
-          <CommandBar />
+          {/* CommandBar hidden — not wired yet; unhide when commands are ready */}
+          <div style={{ display: "none" }}><CommandBar /></div>
           {children}
         </div>
         <LiveTickerTape />

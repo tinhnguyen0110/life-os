@@ -13,14 +13,15 @@ describe("nav config (D3 — 14 screens, 6 groups, no AI)", () => {
     ]);
   });
 
-  it("covers all 14 screens S1–S14 across nav items", () => {
+  it("covers all 14 screens S1–S14 + OKX Exchange across nav items", () => {
     const screens = NAV.flatMap((g) => g.items.map((i) => i.screen));
-    // 13 nav items map to 14 screens (S3 detail + S6 detail resolve under parents)
     const unique = new Set(screens);
-    // S1..S14 minus S3 (detail of S2) — nav shows 13 distinct entries
+    // S1..S14 minus S3 (detail of S2), PLUS the OKX Exchange screen (S-okx) →
+    // 14 distinct nav entries. (S3/S6 detail views resolve under their parents.)
     expect(screens).toContain("S1");
     expect(screens).toContain("S14");
-    expect(unique.size).toBe(13);
+    expect(screens).toContain("S-okx");
+    expect(unique.size).toBe(14);
   });
 
   it("every nav route has a breadcrumb entry", () => {

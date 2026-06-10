@@ -18,6 +18,19 @@ def _mock_quote(symbol, price):
                       price=price, currency="USD", ts="2026-06-06T00:00:00+00:00", source="coingecko")
 
 
+@pytest.fixture(autouse=True)
+def no_okx_override(monkeypatch):
+    """Disable OKX override for all finance unit tests.
+
+    test_finance.py tests manual-holdings logic in isolation. If OKX is configured
+    in the local env (which it is — live $10k snapshot in cache), _okx_crypto_value()
+    would override the crypto channel value and break every hand-calc assertion.
+    Patch it to return (None, None) — i.e. "not configured / no value" — so tests
+    exercise the manual pricing path exclusively.
+    """
+    monkeypatch.setattr(service, "_okx_crypto_value", lambda: (None, None))
+
+
 @pytest.fixture
 def mock_prices(monkeypatch):
     book: dict[str, float] = {}
@@ -207,3 +220,66 @@ def test_get_channel_target_only_no_holdings(isolated_paths, mock_prices):
     assert detail is not None
     assert detail["alloc"]["target"] == 18.0 and detail["alloc"]["value"] == 0.0
     assert detail["ladder"] is None  # no golden_path ladder config
+
+
+# --- crypto basis ---
+
+def test_get_crypto_basis_unset(isolated_paths):
+    """Before any OKX call, basis is None and source is 'unset'."""
+    basis, source = service.get_crypto_basis()
+    assert basis is None
+    assert source == "unset"
+
+
+def test_ensure_crypto_basis_snapshots_on_first_call(isolated_paths):
+    """_ensure_crypto_basis snapshots okx_total when basis not yet set."""
+    result = service._ensure_crypto_basis(10000.0)
+    assert result == 10000.0
+    basis, source = service.get_crypto_basis()
+    assert basis == 10000.0
+    assert source == "snapshot"
+
+
+def test_ensure_crypto_basis_does_not_override_existing(isolated_paths):
+    """Second call to _ensure_crypto_basis keeps the first snapshot, does not change it."""
+    service._ensure_crypto_basis(10000.0)  # first: snapshots at 10000
+    result = service._ensure_crypto_basis(15000.0)  # second: must stay at 10000
+    assert result == 10000.0
+    basis, _ = service.get_crypto_basis()
+    assert basis == 10000.0  # unchanged
+
+
+def test_set_crypto_basis_manual_override(isolated_paths):
+    """PUT /crypto-basis sets source='manual'; subsequent _ensure does not override."""
+    from modules.finance.schema import CryptoBasisInput
+    # First snapshot
+    service._ensure_crypto_basis(10000.0)
+    # User override
+    service.set_crypto_basis(CryptoBasisInput(basis=12000.0))
+    basis, source = service.get_crypto_basis()
+    assert basis == 12000.0
+    assert source == "manual"
+    # _ensure should NOT override manual
+    result = service._ensure_crypto_basis(15000.0)
+    assert result == 12000.0
+    basis2, source2 = service.get_crypto_basis()
+    assert basis2 == 12000.0 and source2 == "manual"
+
+
+def test_overview_with_okx_uses_basis_as_cost(isolated_paths, monkeypatch):
+    """When OKX is live, overview crypto.cost = snapshotted basis, NOT manual holdings cost."""
+    okx_val = 10500.0
+    monkeypatch.setattr(service, "_okx_crypto_value", lambda: (okx_val, None))
+    overview, _ = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    # First call → basis snapshotted = 10500, P&L ≈ 0
+    assert crypto.value == 10500.0
+    assert crypto.pnl.cost == 10500.0
+    assert crypto.pnl.abs == 0.0
+    # Second call with higher OKX value — basis stays at snapshot
+    monkeypatch.setattr(service, "_okx_crypto_value", lambda: (11000.0, None))
+    overview2, _ = service.get_overview()
+    crypto2 = next(a for a in overview2.allocations if a.channel == "crypto")
+    assert crypto2.value == 11000.0
+    assert crypto2.pnl.cost == 10500.0  # unchanged
+    assert crypto2.pnl.abs == 500.0  # P&L = 11000 - 10500

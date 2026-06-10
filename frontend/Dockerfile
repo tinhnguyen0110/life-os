@@ -9,7 +9,7 @@
 # Port 3010 per the team's dev-server-ports convention (NOT :3000 = a different
 # app on this host). The browser hits the backend at NEXT_PUBLIC_API_BASE — a
 # CLIENT-side var baked at build/runtime; since the browser runs on the HOST, it
-# must point at the host-published backend port (default http://localhost:8001),
+# must point at the host-published backend port (default http://localhost:8686),
 # NOT an in-network service name. Override at build/run if the host port differs.
 
 # node:20-slim per architect's S3B-T2 dispatch (Next 14 supports node 18+).
@@ -38,7 +38,7 @@ COPY . .
 
 # Client-side API base — the browser (on the host) reaches the backend via the
 # host-published port. Overridable: docker build --build-arg API_BASE=... .
-ARG API_BASE=http://localhost:8001
+ARG API_BASE=http://localhost:8686
 ENV NEXT_PUBLIC_API_BASE=${API_BASE}
 
 EXPOSE 3010

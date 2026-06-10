@@ -21,6 +21,16 @@ ASSETS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _clear_market_feed_cache():
+    """CoinGecko TTL cache must be cold for every test — a cached feed from a prior
+    test would serve instead of the current test's respx mock (causing false fails)."""
+    from modules.market import reader
+    reader._FEED_CACHE.clear()
+    yield
+    reader._FEED_CACHE.clear()
+
+
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     from core.config import settings

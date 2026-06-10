@@ -28,7 +28,7 @@ vi.mock("@/lib/api", async () => {
 
 import HomePage from "../page";
 
-const USAGE = { success: true, data: { model: "claude-opus", used: 37727, cap: 200000, pct: 18.9, remaining: 162273, resetIn: null, weekly: null, series: [], today: 37727, avgPerDay: 1000, peak: { date: "2026-06-06", label: "T6", tokens: 5000 }, byModel: [], costUSD: 39145, byProject: null, asOf: "2026-06-06", stale: false, source: "stats-cache" } };
+const USAGE = { success: true, data: { model: "claude-opus", used: 37727, cap: 200000, pct: 18.9, remaining: 162273, resetIn: null, weekly: null, pct5h: null, resetWeek: null, ctxPct: null, ctxUsed: null, ctxMax: null, ctxModel: null, quotaSource: "stub", series: [], today: 37727, avgPerDay: 1000, peak: { date: "2026-06-06", label: "T6", tokens: 5000 }, byModel: [], costUSD: 39145, byProject: [], tokenSource: "stats-cache", asOf: "2026-06-06", stale: false, source: "stats-cache" } };
 
 const ACTIVITY = { success: true, data: { runs: [{ id: 51, routineId: "market-poll", routineName: "Market Poll", status: "ok", detail: "polled 5", startedAt: "2026-06-06T14:10:00Z", finishedAt: "2026-06-06T14:10:00Z", durationMs: 405 }], count: 1, runsToday: 1, okCount: 1, warnCount: 0, errorCount: 0, successRate: 100, avgDurationMs: 405, byRoutine: [] } };
 
@@ -143,6 +143,23 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     render(<HomePage />);
     // wait for the live pct to load (tile renders "…" first, then the gauge)
     await waitFor(() => expect(screen.getByTestId("home-claude-tile")).toHaveTextContent("18.9%"));
+  });
+
+  it("Claude tile shows BOTH 5h + 7d quota WITH reset countdowns when snapshot is live", async () => {
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    getClaudeUsage.mockResolvedValueOnce({
+      ...USAGE,
+      data: { ...USAGE.data, quotaSource: "snapshot", pct5h: 2, weekly: 6, resetIn: "2h 45m", resetWeek: "5d 20h" },
+    });
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-claude-quota")).toBeInTheDocument());
+    const q = screen.getByTestId("home-claude-quota");
+    expect(q).toHaveTextContent("5h"); expect(q).toHaveTextContent("2%");
+    expect(q).toHaveTextContent("2h 45m");   // 5h reset countdown
+    expect(q).toHaveTextContent("7d"); expect(q).toHaveTextContent("6%");
+    expect(q).toHaveTextContent("5d 20h");   // 7d reset countdown
   });
 
   it("FAIL-OPEN: Claude usage down → Claude tile errors, rest of Home renders", async () => {

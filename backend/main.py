@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from core.config import settings
 from core.registry import DiscoveryResult, mount_all
@@ -61,6 +62,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/", tags=["core"], include_in_schema=False)
+    def root() -> RedirectResponse:
+        """Friendly root entry — send browser visits to the built-in API docs."""
+        return RedirectResponse(url="/docs", status_code=307)
 
     @app.get("/health", tags=["core"])
     def health() -> dict:
