@@ -143,7 +143,9 @@ class TestReaderRealRepos:
     """
 
     def test_outboundos_health_and_lastdays(self):
-        """OutboundOS ~1d → 'act'. Assert bucket via lastDays formula."""
+        """OutboundOS = a recently-active repo. Assert bucket via the lastDays
+        formula (not a hardcoded name) — its commit age drifts with wall-clock, so
+        pin to the formula + a sanity band, like the ClaudeManager test."""
         s = read_project(REAL_REPOS["outboundos"])
         assert isinstance(s, ProjectStatus)
         assert s.lastDays is not None, "lastDays must not be None for a readable repo"
@@ -151,8 +153,10 @@ class TestReaderRealRepos:
         assert s.health == expected, (
             f"health mismatch: reported {s.health!r} but lastDays={s.lastDays} → {expected!r}"
         )
-        assert s.health == "act", (
-            f"OutboundOS (~1d ago) should be 'act', got {s.health!r} (lastDays={s.lastDays})"
+        # Sanity: a recently-active repo → act or slow, never stall/dead.
+        assert s.health in ("act", "slow"), (
+            f"OutboundOS should be recently-active (act/slow), got {s.health!r} "
+            f"(lastDays={s.lastDays})"
         )
 
     def test_claudemanager_near_30d_boundary(self):
@@ -640,11 +644,14 @@ class TestGetProjects:
             )
 
     @skip_api
-    def test_outboundos_act(self, api_client):
+    def test_outboundos_recently_active(self, api_client):
+        """OutboundOS is a recently-active repo → act or slow (its commit age drifts
+        with wall-clock; assert the band, not a hardcoded 'act')."""
         items = {p["id"]: p for p in api_client.get("/projects").json()["data"]["projects"]}
         assert "outboundos" in items, f"outboundos not in list: {list(items)}"
-        assert items["outboundos"]["health"] == "act", (
-            f"outboundos should be 'act', got {items['outboundos']['health']!r}"
+        assert items["outboundos"]["health"] in ("act", "slow"), (
+            f"outboundos should be recently-active (act/slow), "
+            f"got {items['outboundos']['health']!r}"
         )
 
     @skip_api

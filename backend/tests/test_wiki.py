@@ -1,0 +1,522 @@
+"""tests/test_wiki.py — Wiki module unit + API tests (Sprint W1a).
+
+Coverage (T1 + T2 + T3):
+  - T1 schema: defaults, Literal validation, title strip + max_length, partial update.
+  - T1 store: wiki table init idempotent, next_note_id MAX+1 monotonic, cache
+    upsert/get/delete, op_log append + recent_ops ordering.
+  - T1 registry: wiki module auto-discovered + mounted at /wiki (no core edit).
+  - T2 queue/CRUD: create→get→update→delete through the single-writer queue,
+    id-gen monotonic + concurrent-unique, op_log faithful order, content-hash
+    dirty-check no-op touch, fail-closed on md write error, API curl round-trip.
+  - T3 reader: recent_ops shape/order, reindex_note seam (unchanged/rebuilt/
+    missing_dropped).
+
+Uses the shared ``isolated_paths`` fixture (tmp DATA_DIR + DB). Because that
+fixture rebinds + closes the db connection, ``wiki_store.init_wiki_tables()`` must
+run AFTER it to register wiki tables on the fresh per-test connection — the
+``wiki_db`` fixture below does that.
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from modules.wiki import schema as wiki_schema
+from modules.wiki import store as wiki_store
+
+
+@pytest.fixture
+def wiki_db(isolated_paths):
+    """isolated_paths + wiki tables registered on the fresh connection."""
+    wiki_store.init_wiki_tables()
+    return isolated_paths
+
+
+# --------------------------------------------------------------------------- #
+# schema                                                                       #
+# --------------------------------------------------------------------------- #
+def test_note_create_input_defaults():
+    inp = wiki_schema.NoteCreateInput()
+    assert inp.content == ""
+    assert inp.title == ""
+    assert inp.status == "fleeting"
+    assert inp.noteType == "concept"
+    assert inp.tags == []
+    assert inp.author == "human"
+
+
+def test_note_create_input_strips_title():
+    inp = wiki_schema.NoteCreateInput(title="  Knowledge work accretes  ")
+    assert inp.title == "Knowledge work accretes"
+
+
+def test_note_create_input_title_max_length():
+    with pytest.raises(ValidationError):
+        wiki_schema.NoteCreateInput(title="x" * 201)
+
+
+def test_note_create_input_rejects_bad_status():
+    with pytest.raises(ValidationError):
+        wiki_schema.NoteCreateInput(status="archived")  # not in Literal
+
+
+def test_note_create_input_rejects_bad_note_type():
+    with pytest.raises(ValidationError):
+        wiki_schema.NoteCreateInput(noteType="diary")
+
+
+def test_note_update_input_all_optional():
+    inp = wiki_schema.NoteUpdateInput()
+    assert inp.title is None
+    assert inp.content is None
+    assert inp.status is None
+    assert inp.aliases is None
+
+
+def test_note_update_input_strips_title_when_present():
+    inp = wiki_schema.NoteUpdateInput(title="  refined  ")
+    assert inp.title == "refined"
+
+
+def test_note_update_input_rejects_bad_trust_tier():
+    with pytest.raises(ValidationError):
+        wiki_schema.NoteUpdateInput(trustTier="unknown")
+
+
+def test_note_response_model_roundtrip():
+    n = wiki_schema.Note(
+        id=47, title="t", created="2026-06-13T00:00:00Z",
+        updated="2026-06-13T00:00:00Z", contentHash="abc",
+    )
+    d = n.model_dump()
+    assert d["id"] == 47
+    assert d["status"] == "fleeting"
+    assert d["trustTier"] == "verified"
+    assert d["author"] == "human"
+    assert d["aliases"] == []
+
+
+# --------------------------------------------------------------------------- #
+# store — id generation                                                        #
+# --------------------------------------------------------------------------- #
+def test_init_wiki_tables_idempotent(wiki_db):
+    # Calling twice must not raise (CREATE TABLE IF NOT EXISTS).
+    wiki_store.init_wiki_tables()
+    wiki_store.init_wiki_tables()
+
+
+def test_resolver_seam_tables_exist(wiki_db):
+    # Addendum (c): the title→id + alias→id resolver SEAM must be stood up in W1a
+    # so W1b's ghost-resolver plugs in without a schema change. Verify the table +
+    # indexes exist (empty in W1a; W1b populates).
+    from store import db
+
+    conn = db.get_conn()
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    assert "wiki_aliases" in tables
+    indexes = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'"
+    ).fetchall()}
+    assert "idx_wiki_notes_title" in indexes      # title→id path
+    assert "idx_wiki_aliases_alias" in indexes    # alias→id path
+    # Empty in W1a (no resolver logic yet — that's W1b).
+    n = conn.execute("SELECT COUNT(*) AS c FROM wiki_aliases").fetchone()["c"]
+    assert n == 0
+
+
+def test_next_note_id_starts_at_one(wiki_db):
+    assert wiki_store.next_note_id() == 1
+
+
+def test_next_note_id_monotonic_after_inserts(wiki_db):
+    assert wiki_store.next_note_id() == 1
+    _insert_cache(1)
+    assert wiki_store.next_note_id() == 2
+    _insert_cache(2)
+    assert wiki_store.next_note_id() == 3
+
+
+def test_next_note_id_uses_max_not_count(wiki_db):
+    # id 5 present but not 1-4 → next must be 6 (MAX+1), not 2 (COUNT+1).
+    _insert_cache(5)
+    assert wiki_store.next_note_id() == 6
+
+
+# --------------------------------------------------------------------------- #
+# store — cache CRUD                                                           #
+# --------------------------------------------------------------------------- #
+def _insert_cache(note_id: int, *, title: str = "t", content_hash: str = "h"):
+    wiki_store.upsert_note_cache(
+        note_id=note_id, title=title, aliases_json="[]", status="fleeting",
+        note_type="concept", trust_tier="verified", author="human", tags_json="[]",
+        content_hash=content_hash, created="2026-06-13T00:00:00Z",
+        updated="2026-06-13T00:00:00Z",
+    )
+
+
+def test_upsert_then_get_cache(wiki_db):
+    _insert_cache(1, title="hello")
+    row = wiki_store.get_note_cache(1)
+    assert row is not None
+    assert row["id"] == 1
+    assert row["title"] == "hello"
+    assert row["status"] == "fleeting"
+
+
+def test_get_cache_missing_returns_none(wiki_db):
+    assert wiki_store.get_note_cache(999) is None
+
+
+def test_upsert_updates_existing_row(wiki_db):
+    _insert_cache(1, title="old", content_hash="h1")
+    wiki_store.upsert_note_cache(
+        note_id=1, title="new", aliases_json="[]", status="developing",
+        note_type="concept", trust_tier="verified", author="human", tags_json="[]",
+        content_hash="h2", created="2026-06-13T00:00:00Z",
+        updated="2026-06-13T01:00:00Z",
+    )
+    row = wiki_store.get_note_cache(1)
+    assert row["title"] == "new"
+    assert row["status"] == "developing"
+    assert row["content_hash"] == "h2"
+    # MAX(id) still 1 → no duplicate row created.
+    assert wiki_store.next_note_id() == 2
+
+
+def test_delete_cache_removes_row(wiki_db):
+    _insert_cache(1)
+    assert wiki_store.note_cache_exists(1)
+    assert wiki_store.delete_note_cache(1) is True
+    assert not wiki_store.note_cache_exists(1)
+
+
+def test_delete_missing_cache_returns_false(wiki_db):
+    assert wiki_store.delete_note_cache(404) is False
+
+
+# --------------------------------------------------------------------------- #
+# store — op_log (append-only, ordered)                                        #
+# --------------------------------------------------------------------------- #
+def test_append_op_and_recent_ops_ordered(wiki_db):
+    wiki_store.append_op(op_id="op1", kind="create", note_id=1, actor="human",
+                         ts="2026-06-13T00:00:00Z", commit_sha="sha1")
+    wiki_store.append_op(op_id="op2", kind="edit", note_id=1, actor="human",
+                         ts="2026-06-13T00:01:00Z", commit_sha="sha2")
+    wiki_store.append_op(op_id="op3", kind="delete", note_id=1, actor="human",
+                         ts="2026-06-13T00:02:00Z", commit_sha="sha3")
+    ops = wiki_store.recent_ops(limit=10)
+    # newest-first
+    assert [o["kind"] for o in ops] == ["delete", "edit", "create"]
+    # seq strictly increasing in insert order
+    seqs = [o["seq"] for o in ops]
+    assert seqs == sorted(seqs, reverse=True)
+    assert ops[-1]["op_id"] == "op1"
+    assert ops[0]["commit_sha"] == "sha3"
+
+
+def test_recent_ops_respects_limit(wiki_db):
+    for i in range(5):
+        wiki_store.append_op(op_id=f"op{i}", kind="create", note_id=i,
+                             actor="human", ts=f"2026-06-13T00:0{i}:00Z")
+    ops = wiki_store.recent_ops(limit=3)
+    assert len(ops) == 3
+
+
+def test_recent_ops_empty(wiki_db):
+    assert wiki_store.recent_ops() == []
+
+
+# --------------------------------------------------------------------------- #
+# store — path helpers                                                         #
+# --------------------------------------------------------------------------- #
+def test_note_rel_path():
+    assert wiki_store.note_rel_path(47) == "wiki/notes/47.md"
+
+
+# --------------------------------------------------------------------------- #
+# registry — module auto-discovered + mounted (no core edit)                  #
+# --------------------------------------------------------------------------- #
+def test_wiki_module_mounted(wiki_db):
+    from main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    # /health lists the wiki module among discovered modules.
+    health = client.get("/health").json()
+    assert "wiki" in health["data"]["modules"]
+    # GET /wiki is reachable (the T1 info endpoint).
+    r = client.get("/wiki")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["data"]["module"] == "wiki"
+
+
+# =========================================================================== #
+# T2 — changes-queue / single-writer + CRUD                                    #
+# =========================================================================== #
+from modules.wiki import service as wiki_service  # noqa: E402
+from modules.wiki.schema import NoteCreateInput, NoteUpdateInput  # noqa: E402
+
+
+# --- service: create / get round-trip through the queue --------------------- #
+def test_create_note_returns_note_with_id(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="raw dump", title="t1"))
+    assert note.id == 1
+    assert note.title == "t1"
+    assert note.content == "raw dump"
+    assert note.status == "fleeting"
+    assert note.trustTier == "verified"
+    assert note.created == note.updated
+    assert note.contentHash  # sha256 of body, non-empty
+
+
+def test_create_then_get_reflects(wiki_db):
+    created = wiki_service.create_note(NoteCreateInput(content="hello body"))
+    got = wiki_service.get_note(created.id)
+    assert got is not None
+    assert got.id == created.id
+    assert got.content == "hello body"
+    assert got.contentHash == created.contentHash
+
+
+def test_get_missing_returns_none(wiki_db):
+    assert wiki_service.get_note(999) is None
+
+
+def test_id_gen_monotonic_across_creates(wiki_db):
+    ids = [wiki_service.create_note(NoteCreateInput(content=f"n{i}")).id for i in range(5)]
+    assert ids == [1, 2, 3, 4, 5]
+
+
+# --- service: queue applies ops IN ORDER (op_log faithful replay) ----------- #
+def test_op_log_records_create_then_edit_in_order(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="v1"))
+    wiki_service.update_note(note.id, NoteUpdateInput(content="v2"))
+    ops = wiki_store.recent_ops(limit=10)
+    # newest-first → [edit, create]
+    assert [o["kind"] for o in ops] == ["edit", "create"]
+    assert all(o["note_id"] == note.id for o in ops)
+    # both carry a commit sha (audit trail op → git)
+    assert all(o["commit_sha"] for o in ops)
+
+
+def test_concurrent_creates_get_unique_ids(wiki_db):
+    # Many threads create at once; the single writer must still hand out unique,
+    # contiguous ids (no race in MAX+1 because the queue serializes).
+    import threading as _t
+
+    results: list[int] = []
+    rlock = _t.Lock()
+
+    def _mk():
+        n = wiki_service.create_note(NoteCreateInput(content="x"))
+        with rlock:
+            results.append(n.id)
+
+    threads = [_t.Thread(target=_mk) for _ in range(10)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert sorted(results) == list(range(1, 11))  # 10 unique contiguous ids
+    assert len(set(results)) == 10
+
+
+# --- service: update partial + content-hash dirty-check (A5) ---------------- #
+def test_update_partial_preserves_unset_fields(wiki_db):
+    note = wiki_service.create_note(
+        NoteCreateInput(content="body", title="orig", tags=["a"])
+    )
+    updated = wiki_service.update_note(note.id, NoteUpdateInput(status="developing"))
+    assert updated.status == "developing"
+    assert updated.title == "orig"        # unchanged
+    assert updated.content == "body"      # unchanged
+    assert updated.tags == ["a"]          # unchanged
+    assert updated.created == note.created  # created preserved
+
+
+def test_update_bumps_updated_on_real_edit(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="v1"))
+    updated = wiki_service.update_note(note.id, NoteUpdateInput(content="v2 changed"))
+    assert updated.content == "v2 changed"
+    assert updated.updated >= note.updated
+    assert updated.contentHash != note.contentHash
+
+
+def test_update_noop_touch_makes_no_new_op(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="same", title="t"))
+    ops_before = len(wiki_store.recent_ops(limit=100))
+    # Same body + same frontmatter → no-op touch: no new commit, no op_log row.
+    same = wiki_service.update_note(
+        note.id, NoteUpdateInput(content="same", title="t")
+    )
+    ops_after = len(wiki_store.recent_ops(limit=100))
+    assert ops_after == ops_before            # NO new op_log row
+    assert same.updated == note.updated       # updated NOT bumped
+    assert same.contentHash == note.contentHash
+
+
+def test_update_missing_raises_not_found(wiki_db):
+    with pytest.raises(wiki_service.NoteNotFound):
+        wiki_service.update_note(404, NoteUpdateInput(content="x"))
+
+
+# --- service: delete (A4) --------------------------------------------------- #
+def test_delete_removes_note_and_cache_keeps_oplog(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="bye"))
+    wiki_service.delete_note(note.id)
+    assert wiki_service.get_note(note.id) is None          # md file gone
+    assert wiki_store.get_note_cache(note.id) is None       # cache row hard-deleted
+    ops = wiki_store.recent_ops(limit=10)
+    # op_log RETAINS the delete record (+ the original create)
+    assert [o["kind"] for o in ops] == ["delete", "create"]
+
+
+def test_delete_missing_raises_not_found(wiki_db):
+    with pytest.raises(wiki_service.NoteNotFound):
+        wiki_service.delete_note(999)
+
+
+# --- service: fail-closed on md write error (A2) ---------------------------- #
+def test_create_fails_closed_on_md_write_error(wiki_db, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(wiki_store, "write_note_file", _boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        wiki_service.create_note(NoteCreateInput(content="x"))
+    # Nothing partially applied: no cache row, no op_log row for the failed op.
+    assert wiki_store.get_note_cache(1) is None
+    assert wiki_store.recent_ops(limit=10) == []
+
+
+# --- API: CRUD round-trip through the HTTP layer ---------------------------- #
+@pytest.fixture
+def api(wiki_db):
+    from main import create_app
+
+    return TestClient(create_app())
+
+
+def test_api_create_get_update_delete_roundtrip(api):
+    # CREATE
+    r = api.post("/wiki/notes", json={"content": "api body", "title": "api note"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    nid = data["id"]
+    assert data["title"] == "api note"
+    assert data["status"] == "fleeting"
+
+    # GET reflects
+    g = api.get(f"/wiki/notes/{nid}")
+    assert g.status_code == 200
+    assert g.json()["data"]["content"] == "api body"
+
+    # PUT edits + GET reflects the edit (write-form round-trip)
+    p = api.put(f"/wiki/notes/{nid}", json={"content": "edited body", "status": "evergreen"})
+    assert p.status_code == 200
+    assert p.json()["data"]["status"] == "evergreen"
+    g2 = api.get(f"/wiki/notes/{nid}")
+    assert g2.json()["data"]["content"] == "edited body"
+    assert g2.json()["data"]["status"] == "evergreen"
+
+    # DELETE + GET 404
+    d = api.delete(f"/wiki/notes/{nid}")
+    assert d.status_code == 200
+    assert d.json()["data"]["deleted"] == nid
+    assert api.get(f"/wiki/notes/{nid}").status_code == 404
+
+
+def test_api_get_missing_404(api):
+    assert api.get("/wiki/notes/12345").status_code == 404
+
+
+def test_api_update_missing_404(api):
+    assert api.put("/wiki/notes/12345", json={"content": "x"}).status_code == 404
+
+
+def test_api_delete_missing_404(api):
+    assert api.delete("/wiki/notes/12345").status_code == 404
+
+
+def test_api_create_rejects_bad_status_422(api):
+    r = api.post("/wiki/notes", json={"content": "x", "status": "archived"})
+    assert r.status_code == 422
+
+
+def test_api_create_title_too_long_422(api):
+    r = api.post("/wiki/notes", json={"content": "x", "title": "z" * 201})
+    assert r.status_code == 422
+
+
+def test_api_create_defaults_fleeting_empty_title(api):
+    # Raw capture: no title, defaults to fleeting.
+    r = api.post("/wiki/notes", json={"content": "just a dump"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["title"] == ""
+    assert data["status"] == "fleeting"
+
+
+# =========================================================================== #
+# T3 — op_log read seam + reindex seam (reader.py)                              #
+# =========================================================================== #
+from modules.wiki import reader as wiki_reader  # noqa: E402
+
+
+def test_recent_ops_shape_and_order(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="v1"))
+    wiki_service.update_note(note.id, NoteUpdateInput(content="v2"))
+    ops = wiki_reader.recent_ops(limit=10)
+    assert [o["kind"] for o in ops] == ["edit", "create"]  # newest-first
+    # camelCase keys for the API/feed; commitSha present
+    first = ops[0]
+    assert set(first) == {"seq", "op_id", "kind", "noteId", "actor", "ts", "commitSha", "detail"}
+    assert first["noteId"] == note.id
+    assert first["actor"] == "human"
+    assert first["commitSha"]
+
+
+def test_reader_recent_ops_empty(wiki_db):
+    assert wiki_reader.recent_ops() == []
+
+
+def test_reindex_unchanged_when_cache_matches(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="body", title="t"))
+    # Cache was written by the create — reindex should find it already consistent.
+    res = wiki_reader.reindex_note(note.id)
+    assert res == {"noteId": note.id, "action": "unchanged"}
+
+
+def test_reindex_rebuilds_dropped_cache_row(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="body", title="t"))
+    # Simulate a dropped/disposable cache row (md file remains the source of truth).
+    wiki_store.delete_note_cache(note.id)
+    assert wiki_store.get_note_cache(note.id) is None
+    res = wiki_reader.reindex_note(note.id)
+    assert res == {"noteId": note.id, "action": "rebuilt"}
+    row = wiki_store.get_note_cache(note.id)
+    assert row is not None
+    assert row["title"] == "t"
+    assert row["content_hash"] == note.contentHash
+
+
+def test_reindex_drops_stale_cache_when_md_missing(wiki_db):
+    note = wiki_service.create_note(NoteCreateInput(content="body"))
+    # Remove the md file out-of-band but leave the cache row → reindex must drop it.
+    wiki_store.delete_note_file(note.id, "out-of-band removal")
+    assert wiki_store.get_note_cache(note.id) is not None  # cache row still there
+    res = wiki_reader.reindex_note(note.id)
+    assert res == {"noteId": note.id, "action": "missing_dropped"}
+    assert wiki_store.get_note_cache(note.id) is None
+
+
+def test_reindex_missing_everywhere_is_unchanged(wiki_db):
+    # No md, no cache → nothing to do.
+    res = wiki_reader.reindex_note(999)
+    assert res == {"noteId": 999, "action": "unchanged"}
