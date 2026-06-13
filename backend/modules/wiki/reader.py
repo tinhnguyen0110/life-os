@@ -104,3 +104,95 @@ def reindex_note(note_id: int) -> dict[str, Any]:
     )
     logger.info("reindex: note %s cache rebuilt from md", note_id)
     return {"noteId": note_id, "action": "rebuilt"}
+
+
+# --------------------------------------------------------------------------- #
+# W1b — backlinks (B3)                                                          #
+# --------------------------------------------------------------------------- #
+_SNIPPET_PAD = 60  # chars of context on each side of a [[..]] mention
+
+
+def _title_of(note_id: int) -> str:
+    row = wiki_store.get_note_cache(note_id)
+    return row["title"] if row is not None else ""
+
+
+def _mention_snippet(source_id: int, target_id: int) -> str:
+    """A short body excerpt around where ``source`` links ``target`` — matching
+    EITHER link form: by id (``[[47]]``/``[[47|..]]``) OR by the target's title or
+    an alias (``[[Title]]``/``[[Title|..]]``), case-insensitive. Empty string if
+    not locatable. Read from the md body (source of truth); cheap at M1 sizes."""
+    import re as _re
+
+    body = wiki_store.read_note_file(source_id) or ""
+    # Strip frontmatter so the snippet is body text, not yaml.
+    if body.startswith("---"):
+        parts = body[len("---"):].split("\n---", 1)
+        if len(parts) == 2:
+            body = parts[1].lstrip("\n")
+
+    # Build the set of targets that resolve to this note: its id + title + aliases.
+    targets: list[str] = [str(int(target_id))]
+    row = wiki_store.get_note_cache(target_id)
+    if row is not None:
+        if row["title"]:
+            targets.append(row["title"])
+        try:
+            targets.extend(a for a in json.loads(row["aliases"]) if a)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    alt = "|".join(_re.escape(t) for t in targets)
+    m = _re.search(rf"\[\[\s*(?:{alt})\s*(?:\|[^\[\]]*)?\]\]", body, _re.IGNORECASE)
+    if not m:
+        return ""
+    start = max(0, m.start() - _SNIPPET_PAD)
+    end = min(len(body), m.end() + _SNIPPET_PAD)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(body) else ""
+    return f"{prefix}{body[start:end].strip()}{suffix}"
+
+
+def backlinks(note_id: int) -> dict[str, Any]:
+    """Backlinks for a note (B3) — matches the mock ``data-wiki.js`` shape:
+
+      ``{linked:[{id,title,snippet,anchor?}], unlinked:[{id,title,snippet}],
+         outbound:[{id,title,isResolved}|{ghost,isResolved:false}]}``
+
+    - **linked:** resolved inbound edges (other notes' ``[[id]]`` → this note),
+      deduped by source note, with a body snippet around the mention. ``anchor``
+      (``^block-id``) is W2 — absent in W1b.
+    - **unlinked:** plain-text mentions of this title/alias that AREN'T linked →
+      **`[]` in W1b** (needs FTS5; populated W1c — shape present, honest-mirror).
+    - **outbound:** this note's edges — resolved as ``{id,title,isResolved:true}``,
+      ghosts as ``{ghost:<title>, isResolved:false}``.
+    """
+    # linked — dedup by source note (one row per backlinking note).
+    seen_sources: set[int] = set()
+    linked: list[dict[str, Any]] = []
+    for row in wiki_store.links_to(note_id, resolved_only=True):
+        src = row["source_id"]
+        if src in seen_sources:
+            continue
+        seen_sources.add(src)
+        linked.append({
+            "id": src,
+            "title": _title_of(src),
+            "snippet": _mention_snippet(src, note_id),
+        })
+
+    # outbound — resolved + ghost edges of this note.
+    outbound: list[dict[str, Any]] = []
+    for row in wiki_store.links_from(note_id):
+        if row["is_resolved"] and row["target_id"] is not None:
+            outbound.append({
+                "id": row["target_id"],
+                "title": _title_of(row["target_id"]),
+                "isResolved": True,
+            })
+        else:
+            outbound.append({
+                "ghost": row["target_title"] or "",
+                "isResolved": False,
+            })
+
+    return {"linked": linked, "unlinked": [], "outbound": outbound}

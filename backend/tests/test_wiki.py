@@ -520,3 +520,446 @@ def test_reindex_missing_everywhere_is_unchanged(wiki_db):
     # No md, no cache → nothing to do.
     res = wiki_reader.reindex_note(999)
     assert res == {"noteId": 999, "action": "unchanged"}
+
+
+# =========================================================================== #
+# W1b-T1 — wikilink parser + resolver + edge persistence                       #
+# =========================================================================== #
+def _links_of(source_id: int) -> list[dict]:
+    return [dict(r) for r in wiki_store.links_from(source_id)]
+
+
+# --- B1: parse_wikilinks (4 forms + dedup + edge cases) --------------------- #
+def test_parse_id_link():
+    out = wiki_service.parse_wikilinks("see [[47]] here")
+    assert out == [{"target_id": 47, "target_title": None, "display": None}]
+
+
+def test_parse_id_link_with_display():
+    out = wiki_service.parse_wikilinks("see [[47|Knowledge work]] here")
+    assert out == [{"target_id": 47, "target_title": None, "display": "Knowledge work"}]
+
+
+def test_parse_title_link():
+    out = wiki_service.parse_wikilinks("see [[Atomicity principle]] here")
+    assert out == [{"target_id": None, "target_title": "Atomicity principle", "display": None}]
+
+
+def test_parse_title_link_with_display():
+    out = wiki_service.parse_wikilinks("[[Atomicity principle|atoms]]")
+    assert out == [{"target_id": None, "target_title": "Atomicity principle", "display": "atoms"}]
+
+
+def test_parse_multiple_and_dedup():
+    out = wiki_service.parse_wikilinks("[[47]] and [[88]] and [[47|again]]")
+    # 47 deduped to one (first occurrence's display=None wins); 88 separate.
+    assert len(out) == 2
+    ids = {o["target_id"] for o in out}
+    assert ids == {47, 88}
+
+
+def test_parse_empty_and_malformed_skipped():
+    assert wiki_service.parse_wikilinks("no links here") == []
+    assert wiki_service.parse_wikilinks("[[]] and [[ | x]]") == []
+    assert wiki_service.parse_wikilinks("") == []
+
+
+# --- B2: resolver (case-insensitive, collision→lowest id) ------------------- #
+def test_resolve_title_hit_and_miss(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Atomicity principle", content="x"))
+    assert wiki_store.resolve_title("Atomicity principle") == n.id
+    assert wiki_store.resolve_title("Nonexistent") is None
+
+
+def test_resolve_title_case_insensitive(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Knowledge Work", content="x"))
+    assert wiki_store.resolve_title("knowledge work") == n.id
+    assert wiki_store.resolve_title("KNOWLEDGE WORK") == n.id
+
+
+def test_resolve_title_collision_returns_lowest_id(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="Dup Title", content="x"))
+    b = wiki_service.create_note(NoteCreateInput(title="Dup Title", content="y"))
+    assert a.id < b.id
+    assert wiki_store.resolve_title("Dup Title") == a.id  # lowest id
+    assert wiki_store.resolve_title_count("Dup Title") == 2
+
+
+def test_alias_index_populated_on_create(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Has Title", content="x"))
+    # title indexed; empty-title note would not be.
+    assert wiki_store.resolve_title("Has Title") == n.id
+
+
+def test_empty_title_not_indexed(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(content="raw dump, no title"))
+    assert n.title == ""
+    assert wiki_store.resolve_title("") is None
+
+
+# --- B2: edge persistence + re-derive on write ------------------------------ #
+def test_edges_derived_on_create_id_link(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="target", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"link to [[{target.id}]]"))
+    links = _links_of(src.id)
+    assert len(links) == 1
+    assert links[0]["target_id"] == target.id
+    assert links[0]["is_resolved"] == 1
+
+
+def test_edges_title_link_resolves(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Concept X", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content="ref [[Concept X]]"))
+    links = _links_of(src.id)
+    assert len(links) == 1
+    assert links[0]["target_id"] == target.id
+    assert links[0]["is_resolved"] == 1
+
+
+def test_edges_ghost_when_target_absent(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(content="ref [[Nonexistent Note]]"))
+    links = _links_of(src.id)
+    assert len(links) == 1
+    assert links[0]["target_id"] is None
+    assert links[0]["target_title"] == "Nonexistent Note"
+    assert links[0]["is_resolved"] == 0
+
+
+def test_edges_default_type_relates(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="t", content="x"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"[[{target.id}]]"))
+    assert _links_of(src.id)[0]["type"] == "relates"
+
+
+def test_edges_rederived_on_edit(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", content="b"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"[[{a.id}]]"))
+    assert {l["target_id"] for l in _links_of(src.id)} == {a.id}
+    # Edit body to point at b instead → edges re-derived (old a-edge gone).
+    wiki_service.update_note(src.id, NoteUpdateInput(content=f"now [[{b.id}]]"))
+    assert {l["target_id"] for l in _links_of(src.id)} == {b.id}
+
+
+def test_edges_cleared_when_body_loses_links(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"[[{a.id}]]"))
+    assert len(_links_of(src.id)) == 1
+    wiki_service.update_note(src.id, NoteUpdateInput(content="no more links"))
+    assert _links_of(src.id) == []
+
+
+def test_self_link_no_crash(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="self", content="x"))
+    wiki_service.update_note(n.id, NoteUpdateInput(content=f"I link [[{n.id}]] myself"))
+    links = _links_of(n.id)
+    assert len(links) == 1
+    assert links[0]["target_id"] == n.id  # self-edge persisted, no crash
+
+
+def test_circular_link_no_crash(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="start"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", content=f"[[{a.id}]]"))
+    wiki_service.update_note(a.id, NoteUpdateInput(content=f"[[{b.id}]]"))
+    # a→b and b→a both persisted, no infinite loop.
+    assert {l["target_id"] for l in _links_of(a.id)} == {b.id}
+    assert {l["target_id"] for l in _links_of(b.id)} == {a.id}
+
+
+def test_delete_clears_own_edges_and_ghostifies_inbound(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Target Note", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"[[{target.id}]]"))
+    # src→target resolved
+    assert _links_of(src.id)[0]["is_resolved"] == 1
+    wiki_service.delete_note(target.id)
+    # target's own edges gone; src's inbound edge ghostified (keeps target title)
+    link = _links_of(src.id)[0]
+    assert link["target_id"] is None
+    assert link["is_resolved"] == 0
+    assert link["target_title"] == "Target Note"
+
+
+# =========================================================================== #
+# W1b-T2 — backlinks + ghost auto-resolve + rename-no-rewrite                   #
+# =========================================================================== #
+# --- B3: backlinks (linked + outbound + ghost) ------------------------------ #
+def test_backlinks_linked_mentions(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    src = wiki_service.create_note(
+        NoteCreateInput(title="Source", content=f"context before [[{target.id}]] context after")
+    )
+    bl = wiki_reader.backlinks(target.id)
+    assert len(bl["linked"]) == 1
+    assert bl["linked"][0]["id"] == src.id
+    assert bl["linked"][0]["title"] == "Source"
+    assert str(target.id) in bl["linked"][0]["snippet"] or "context" in bl["linked"][0]["snippet"]
+    assert bl["unlinked"] == []  # W1b: deferred to W1c
+
+
+def test_backlinks_snippet_finds_title_form_link(wiki_db):
+    # The source links by TITLE ([[Target]]), not by id — the snippet finder must
+    # still locate the mention (it resolves via the target's title, not just id).
+    target = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    wiki_service.create_note(
+        NoteCreateInput(content="some text [[Target]] more text")
+    )
+    bl = wiki_reader.backlinks(target.id)
+    assert len(bl["linked"]) == 1
+    assert "Target" in bl["linked"][0]["snippet"]
+
+
+def test_backlinks_linked_dedup_by_source(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    # one source links the target twice → ONE linked row (deduped by source).
+    src = wiki_service.create_note(
+        NoteCreateInput(content=f"[[{target.id}]] and again [[{target.id}|x]]")
+    )
+    bl = wiki_reader.backlinks(target.id)
+    assert len(bl["linked"]) == 1
+    assert bl["linked"][0]["id"] == src.id
+
+
+def test_backlinks_outbound_resolved_and_ghost(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Exists", content="t"))
+    src = wiki_service.create_note(
+        NoteCreateInput(content=f"[[{target.id}]] and [[Does Not Exist]]")
+    )
+    bl = wiki_reader.backlinks(src.id)
+    out = bl["outbound"]
+    resolved = [o for o in out if o.get("isResolved")]
+    ghosts = [o for o in out if not o.get("isResolved")]
+    assert len(resolved) == 1 and resolved[0]["id"] == target.id and resolved[0]["title"] == "Exists"
+    assert len(ghosts) == 1 and ghosts[0]["ghost"] == "Does Not Exist"
+
+
+def test_backlinks_empty_for_unlinked_note(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Lonely", content="no links"))
+    bl = wiki_reader.backlinks(n.id)
+    assert bl == {"linked": [], "unlinked": [], "outbound": []}
+
+
+# --- B4: ghost auto-resolve on create + on rename --------------------------- #
+def test_ghost_auto_resolves_on_target_create(wiki_db):
+    # src links a title that doesn't exist yet → ghost.
+    src = wiki_service.create_note(NoteCreateInput(content="ref [[Atomicity principle]]"))
+    assert _links_of(src.id)[0]["is_resolved"] == 0
+    # create the note with that title → the ghost flips to resolved.
+    target = wiki_service.create_note(NoteCreateInput(title="Atomicity principle", content="x"))
+    link = _links_of(src.id)[0]
+    assert link["is_resolved"] == 1
+    assert link["target_id"] == target.id
+    assert link["target_title"] is None
+
+
+def test_ghost_auto_resolves_case_insensitive(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(content="[[knowledge WORK]]"))
+    assert _links_of(src.id)[0]["is_resolved"] == 0
+    target = wiki_service.create_note(NoteCreateInput(title="Knowledge Work", content="x"))
+    assert _links_of(src.id)[0]["target_id"] == target.id
+
+
+def test_ghost_auto_resolves_on_rename(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(content="[[Final Title]]"))
+    other = wiki_service.create_note(NoteCreateInput(title="Old Title", content="x"))
+    assert _links_of(src.id)[0]["is_resolved"] == 0  # still ghost
+    # rename other → "Final Title" → ghost auto-resolves to it.
+    wiki_service.update_note(other.id, NoteUpdateInput(title="Final Title"))
+    link = _links_of(src.id)[0]
+    assert link["is_resolved"] == 1
+    assert link["target_id"] == other.id
+
+
+def test_ghost_auto_resolves_via_alias(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(content="[[the accretion model]]"))
+    assert _links_of(src.id)[0]["is_resolved"] == 0
+    target = wiki_service.create_note(NoteCreateInput(title="Knowledge work", content="x"))
+    # add the alias via update → ghost resolves on the alias match.
+    wiki_service.update_note(target.id, NoteUpdateInput(aliases=["the accretion model"]))
+    link = _links_of(src.id)[0]
+    assert link["is_resolved"] == 1
+    assert link["target_id"] == target.id
+
+
+# --- D1: rename-no-rewrite teeth (THE invariant) ---------------------------- #
+def test_rename_does_not_rewrite_inbound_links(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Original", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"link [[{target.id}]] here"))
+    before = _links_of(src.id)
+    assert before[0]["target_id"] == target.id and before[0]["is_resolved"] == 1
+    src_body_before = wiki_store.read_note_file(src.id)
+
+    # Rename target's title 3×. Inbound links point at the ID → must NOT change.
+    for new_title in ("Renamed Once", "Renamed Twice", "Final Name"):
+        wiki_service.update_note(target.id, NoteUpdateInput(title=new_title))
+
+    after = _links_of(src.id)
+    assert after[0]["target_id"] == target.id  # still points at the id
+    assert after[0]["is_resolved"] == 1        # still resolved
+    assert len(after) == len(before)           # 0 extra/rewritten link rows
+    # The SOURCE note's body+links were never touched by the rename (id-stable).
+    assert wiki_store.read_note_file(src.id) == src_body_before
+
+
+# --- API: backlinks endpoint ------------------------------------------------ #
+def test_api_backlinks_endpoint(api):
+    t = api.post("/wiki/notes", json={"title": "T", "content": "x"}).json()["data"]["id"]
+    s = api.post("/wiki/notes", json={"content": f"[[{t}]] and [[Ghosty]]"}).json()["data"]["id"]
+    r = api.get(f"/wiki/notes/{t}/backlinks")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert {"linked", "unlinked", "outbound"} == set(data)
+    assert data["linked"][0]["id"] == s
+
+    r2 = api.get(f"/wiki/notes/{s}/backlinks")
+    out = r2.json()["data"]["outbound"]
+    assert any(o.get("ghost") == "Ghosty" for o in out)
+
+
+def test_api_backlinks_404_missing(api):
+    assert api.get("/wiki/notes/9999/backlinks").status_code == 404
+
+
+# =========================================================================== #
+# W1b-T3 — D6 merge tombstone + D10 archive-never-orphans                      #
+# =========================================================================== #
+# --- B5: merge → source gone + redirect + inbound repointed ----------------- #
+def test_merge_deletes_source_writes_redirect(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="Dupe A", content="a"))
+    tgt = wiki_service.create_note(NoteCreateInput(title="Canonical", content="b"))
+    result = wiki_service.merge_notes(src.id, tgt.id)
+    assert result.id == tgt.id                          # returns the target
+    assert wiki_service.get_note(src.id) is None         # source md gone
+    assert wiki_store.get_note_cache(src.id) is None     # source cache gone
+    assert wiki_store.get_redirect(src.id) == tgt.id     # redirect tombstone written
+
+
+def test_merge_repoints_inbound_links(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="Old", content="o"))
+    tgt = wiki_service.create_note(NoteCreateInput(title="New", content="n"))
+    linker = wiki_service.create_note(NoteCreateInput(content=f"cites [[{src.id}]]"))
+    assert _links_of(linker.id)[0]["target_id"] == src.id
+    wiki_service.merge_notes(src.id, tgt.id)
+    # the inbound link now points at the target (citation survives, not ghosted)
+    link = _links_of(linker.id)[0]
+    assert link["target_id"] == tgt.id
+    assert link["is_resolved"] == 1
+
+
+def test_merge_records_op_log(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    tgt = wiki_service.create_note(NoteCreateInput(title="B", content="b"))
+    wiki_service.merge_notes(src.id, tgt.id)
+    ops = wiki_store.recent_ops(limit=5)
+    assert ops[0]["kind"] == "merge"
+    assert f"#{src.id}" in ops[0]["detail"] and f"#{tgt.id}" in ops[0]["detail"]
+
+
+# --- B5: GET on tombstone → target + warning (NOT 404) ---------------------- #
+def test_resolve_note_follows_redirect(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="Source", content="s"))
+    tgt = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    wiki_service.merge_notes(src.id, tgt.id)
+    note, warning = wiki_service.resolve_note(src.id)
+    assert note is not None and note.id == tgt.id          # returns target
+    assert warning is not None and str(tgt.id) in warning  # with a warning
+
+
+def test_resolve_note_chained_redirect(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", content="b"))
+    c = wiki_service.create_note(NoteCreateInput(title="C", content="c"))
+    wiki_service.merge_notes(a.id, b.id)   # a → b
+    wiki_service.merge_notes(b.id, c.id)   # b → c  (so a → b → c)
+    note, warning = wiki_service.resolve_note(a.id)
+    assert note is not None and note.id == c.id            # followed the chain to c
+    assert warning is not None
+
+
+def test_resolve_note_absent_returns_none(wiki_db):
+    note, warning = wiki_service.resolve_note(9999)
+    assert note is None and warning is None
+
+
+def test_follow_redirect_cycle_capped(wiki_db):
+    # Construct a redirect cycle directly in the store (shouldn't happen via merge,
+    # but the follower must not hang) — a→b, b→a.
+    wiki_store.add_redirect(1, 2, "2026-06-13T00:00:00Z")
+    wiki_store.add_redirect(2, 1, "2026-06-13T00:00:00Z")
+    final, redirected = wiki_store.follow_redirect(1, max_depth=10)
+    assert redirected is True
+    assert final in (1, 2)  # terminates (cycle guard), does not hang
+
+
+# --- B5: merge validation --------------------------------------------------- #
+def test_merge_same_id_raises(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="X", content="x"))
+    with pytest.raises(wiki_service.MergeError):
+        wiki_service.merge_notes(n.id, n.id)
+
+
+def test_merge_missing_source_raises(wiki_db):
+    tgt = wiki_service.create_note(NoteCreateInput(title="T", content="t"))
+    with pytest.raises(wiki_service.NoteNotFound):
+        wiki_service.merge_notes(999, tgt.id)
+
+
+def test_merge_missing_target_raises(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="S", content="s"))
+    with pytest.raises(wiki_service.NoteNotFound):
+        wiki_service.merge_notes(src.id, 999)
+
+
+# --- D10: archive (status/facet change) NEVER orphans concept edges --------- #
+def test_status_change_never_touches_links(wiki_db):
+    """D10 invariant: changing a note's status/facet must NOT delete or orphan its
+    concept edges. Tested via a status change (the only facet mutation in W1b) —
+    there is NO code path from status → wiki_links deletion."""
+    target = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"links [[{target.id}]]"))
+    inbound_before = wiki_store.links_to(target.id)
+    outbound_before = _links_of(src.id)
+    assert len(inbound_before) == 1 and len(outbound_before) == 1
+
+    # "Archive" the target by graduating its status (fleeting→evergreen). The body
+    # is unchanged, so its own edges are unchanged; inbound edges must survive too.
+    wiki_service.update_note(target.id, NoteUpdateInput(status="evergreen"))
+
+    inbound_after = wiki_store.links_to(target.id)
+    assert len(inbound_after) == 1                       # inbound edge survives
+    assert inbound_after[0]["source_id"] == src.id
+    assert inbound_after[0]["is_resolved"] == 1          # still resolved
+    assert len(_links_of(src.id)) == 1                   # source's edge intact
+
+
+def test_status_change_keeps_source_outbound_edges(wiki_db):
+    """A note whose OWN status changes keeps its outbound edges (body unchanged →
+    edges re-derived identically; status is orthogonal to the concept graph)."""
+    target = wiki_service.create_note(NoteCreateInput(title="T", content="t"))
+    src = wiki_service.create_note(NoteCreateInput(content=f"[[{target.id}]]"))
+    wiki_service.update_note(src.id, NoteUpdateInput(status="developing"))
+    links = _links_of(src.id)
+    assert len(links) == 1 and links[0]["target_id"] == target.id and links[0]["is_resolved"] == 1
+
+
+# --- API: merge endpoint ---------------------------------------------------- #
+def test_api_merge_and_redirect(api):
+    s = api.post("/wiki/notes", json={"title": "Src", "content": "s"}).json()["data"]["id"]
+    t = api.post("/wiki/notes", json={"title": "Tgt", "content": "t"}).json()["data"]["id"]
+    r = api.post("/wiki/notes/merge", json={"sourceId": s, "targetId": t})
+    assert r.status_code == 200
+    assert r.json()["data"]["id"] == t
+    # GET old id → target + warning, NOT 404
+    g = api.get(f"/wiki/notes/{s}")
+    assert g.status_code == 200
+    assert g.json()["data"]["id"] == t
+    assert "merged" in (g.json().get("warning") or "")
+
+
+def test_api_merge_same_id_422(api):
+    n = api.post("/wiki/notes", json={"title": "X", "content": "x"}).json()["data"]["id"]
+    assert api.post("/wiki/notes/merge", json={"sourceId": n, "targetId": n}).status_code == 422
+
+
+def test_api_merge_missing_404(api):
+    t = api.post("/wiki/notes", json={"title": "T", "content": "t"}).json()["data"]["id"]
+    assert api.post("/wiki/notes/merge", json={"sourceId": 9999, "targetId": t}).status_code == 404

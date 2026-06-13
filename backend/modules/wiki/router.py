@@ -20,8 +20,8 @@ from fastapi import APIRouter, HTTPException
 from core.base import BaseModule
 from core.responses import ok
 
-from . import service
-from .schema import NoteCreateInput, NoteUpdateInput
+from . import reader, service
+from .schema import MergeInput, NoteCreateInput, NoteUpdateInput
 
 logger = logging.getLogger("life-os.wiki.router")
 
@@ -42,13 +42,39 @@ def create_note(body: NoteCreateInput):
     return ok(data=note.model_dump())
 
 
+@router.post("/notes/merge")
+def merge_notes(body: MergeInput):
+    """Merge ``sourceId`` INTO ``targetId`` (B5/D6): source deleted, a redirect
+    tombstone written, inbound links repointed. Returns the target note. 422 if the
+    ids are equal; 404 if either note is absent."""
+    try:
+        note = service.merge_notes(body.sourceId, body.targetId)
+    except service.MergeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except service.NoteNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"wiki note {exc} not found")
+    return ok(data=note.model_dump(),
+              warning=f"merged #{body.sourceId} into #{body.targetId}")
+
+
 @router.get("/notes/{note_id}")
 def get_note(note_id: int):
-    """One note. 404 if absent/malformed."""
-    note = service.get_note(note_id)
+    """One note. Follows a redirect tombstone (a merged-away id returns the merge
+    target + a warning, NOT 404 — citations survive, B5). 404 only if the id never
+    existed (or was plain-deleted, not merged)."""
+    note, warning = service.resolve_note(note_id)
     if note is None:
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
-    return ok(data=note.model_dump())
+    return ok(data=note.model_dump(), warning=warning)
+
+
+@router.get("/notes/{note_id}/backlinks")
+def get_backlinks(note_id: int):
+    """Backlinks for a note: ``{linked, unlinked, outbound}`` (B3). 404 if the note
+    is absent. ``unlinked`` ships ``[]`` in W1b (FTS-backed, populated W1c)."""
+    if service.get_note(note_id) is None:
+        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+    return ok(data=reader.backlinks(note_id))
 
 
 @router.put("/notes/{note_id}")

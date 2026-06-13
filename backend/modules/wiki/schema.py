@@ -68,6 +68,15 @@ class NoteCreateInput(BaseModel):
         return v.strip()
 
 
+class MergeInput(BaseModel):
+    """``POST /wiki/notes/merge`` body (B5/D6). Merge ``sourceId`` INTO ``targetId``:
+    source is deleted, a redirect tombstone (source→target) is written, inbound
+    links repointed. Both required; equal ids → 422; either absent → 404."""
+
+    sourceId: int
+    targetId: int
+
+
 class NoteUpdateInput(BaseModel):
     """``PUT /wiki/notes/{id}`` body — partial update (all fields optional).
 
