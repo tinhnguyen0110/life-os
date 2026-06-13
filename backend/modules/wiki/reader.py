@@ -20,11 +20,16 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from . import store as wiki_store
 
 logger = logging.getLogger("life-os.wiki.reader")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def recent_ops(limit: int = 50) -> list[dict[str, Any]]:
@@ -95,12 +100,14 @@ def reindex_note(note_id: int) -> dict[str, Any]:
         return {"noteId": note_id, "action": "unchanged"}
 
     # Cache missing or stale → rebuild from the parsed file (source of truth wins).
+    cap = wiki_service._parse_capture_source(raw)  # preserve provenance on rebuild
     wiki_store.upsert_note_cache(
         note_id=note_id, title=note.title,
         aliases_json=json.dumps(note.aliases, ensure_ascii=False),
         status=note.status, note_type=note.noteType, trust_tier=note.trustTier,
         author=note.author, tags_json=json.dumps(note.tags, ensure_ascii=False),
         content_hash=note.contentHash, created=note.created, updated=note.updated,
+        capture_source=cap,
     )
     logger.info("reindex: note %s cache rebuilt from md", note_id)
     return {"noteId": note_id, "action": "rebuilt"}
@@ -195,4 +202,211 @@ def backlinks(note_id: int) -> dict[str, Any]:
                 "isResolved": False,
             })
 
-    return {"linked": linked, "unlinked": [], "outbound": outbound}
+    return {"linked": linked, "unlinked": unlinked_mentions(note_id, exclude=seen_sources),
+            "outbound": outbound}
+
+
+# --------------------------------------------------------------------------- #
+# W1c — FTS search (C1) + unlinked-mentions (C2)                                #
+# --------------------------------------------------------------------------- #
+def search(q: str, limit: int = 30) -> list[dict[str, Any]]:
+    """Full-text search → ``[{id, title, snippet, status}]`` ranked by FTS5 rank
+    (C1). Empty/bad query → ``[]`` (never raises — store sanitizes)."""
+    return [
+        {"id": r["id"], "title": r["title"], "snippet": r["snippet"], "status": r["status"]}
+        for r in wiki_store.fts_search(q, limit=limit)
+    ]
+
+
+def _snippet_of_body(note_id: int, length: int = 140) -> str:
+    """First ``length`` chars of a note's body (frontmatter stripped) — for inbox
+    rawContent + activity. Cheap at M1 vault sizes."""
+    body = wiki_store.read_note_file(note_id) or ""
+    if body.startswith("---"):
+        parts = body[len("---"):].split("\n---", 1)
+        if len(parts) == 2:
+            body = parts[1].lstrip("\n")
+    body = body.strip()
+    return body if len(body) <= length else body[:length].rstrip() + "…"
+
+
+def unlinked_mentions(note_id: int, *, exclude: set[int] | None = None,
+                      limit: int = 20) -> list[dict[str, Any]]:
+    """Notes whose body mentions this note's title/alias as plain TEXT but DON'T
+    link it (C2 — the W1b-deferred piece, now via FTS5). Excludes the note itself
+    + any already-linked source (``exclude`` = the resolved linked-mention set) +
+    notes that already link it via an edge. Capped at ``limit`` by rank.
+
+    Returns ``[{id, title, snippet}]``. Empty if the note has no title/aliases."""
+    row = wiki_store.get_note_cache(note_id)
+    if row is None:
+        return []
+    phrases = [row["title"]] if row["title"] else []
+    try:
+        phrases.extend(a for a in json.loads(row["aliases"]) if a)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if not phrases:
+        return []
+
+    excluded: set[int] = {int(note_id)}
+    if exclude:
+        excluded |= {int(e) for e in exclude}
+    # Also exclude any note that ALREADY links this one (resolved inbound edge) —
+    # a linked mention is not an UNlinked mention.
+    excluded |= {r["source_id"] for r in wiki_store.links_to(note_id, resolved_only=True)}
+
+    out: list[dict[str, Any]] = []
+    for r in wiki_store.fts_phrase_search(phrases, limit=limit + len(excluded) + 5):
+        sid = r["id"]
+        if sid in excluded:
+            continue
+        out.append({"id": sid, "title": _title_of(sid), "snippet": r["snippet"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# W1c — ego-graph (C3)                                                          #
+# --------------------------------------------------------------------------- #
+def ego_graph(note_id: int, depth: int = 2) -> dict[str, Any] | None:
+    """Ego-graph 1–2 hop around ``note_id`` (C3). BFS over RESOLVED edges (both
+    directions) to ``depth`` hops. Returns ``{center, nodes:[{id,title,status,
+    degree}], edges:[{source,target,type,isResolved}], clusters:[]}`` — or None if
+    the center note doesn't exist.
+
+    Ghost links are a flag on edges, NOT phantom nodes (the graph contains only
+    real notes; the FE renders ghost visuals). clusters = [] in W1c (deterministic
+    clustering deferred — NO fake AI; real cluster-detection is M4).
+    Performance: bounded to the neighborhood (depth-2 BFS + one edges-in-set
+    query), well under the 200-note <1s gate."""
+    if wiki_store.get_note_cache(note_id) is None:
+        return None
+    depth = 2 if depth >= 2 else 1
+
+    visited: set[int] = {int(note_id)}
+    frontier: set[int] = {int(note_id)}
+    for _ in range(depth):
+        nxt: set[int] = set()
+        for nid in frontier:
+            nxt |= wiki_store.resolved_neighbors(nid)
+        nxt -= visited
+        if not nxt:
+            break
+        visited |= nxt
+        frontier = nxt
+
+    nodes = []
+    for nid in sorted(visited):
+        row = wiki_store.get_note_cache(nid)
+        if row is None:
+            continue
+        nodes.append({
+            "id": nid, "title": row["title"], "status": row["status"],
+            "degree": wiki_store.degree(nid),
+        })
+    edges = [
+        {"source": e["source_id"], "target": e["target_id"],
+         "type": e["type"], "isResolved": bool(e["is_resolved"])}
+        for e in wiki_store.edges_among(visited)
+    ]
+    return {"center": int(note_id), "nodes": nodes, "edges": edges, "clusters": []}
+
+
+# --------------------------------------------------------------------------- #
+# W1c — overview stats + recent activity (C4)                                   #
+# --------------------------------------------------------------------------- #
+def overview(activity_limit: int = 20) -> tuple[dict[str, Any], str | None]:
+    """Vault overview (C4). Returns ``(data, warning)``:
+    ``{stats, inbox, orphans, recentActivity, proposalCount}``.
+
+    ``pctWithLink`` = notes-with-≥1-resolved-link / total × 100 → **None on an
+    empty vault** (totalNotes==0) with a warning, NEVER 0 / div-by-zero (risk-(e)).
+    ``proposalCount`` = 0 (AI proposals are M4)."""
+    total = wiki_store.count_notes()
+    by_status = wiki_store.count_by_status()
+    linked_ids = wiki_store.note_ids_with_resolved_link()
+    warning: str | None = None
+    if total == 0:
+        pct_with_link: float | None = None
+        warning = "empty vault — no notes yet"
+    else:
+        pct_with_link = round(len(linked_ids) / total * 100, 1)
+
+    # orphans = notes with degree 0 (no resolved edge), newest-untouched first.
+    orphans = []
+    for row in wiki_store.all_notes():
+        if row["id"] not in linked_ids:
+            orphans.append({
+                "id": row["id"], "title": row["title"], "status": row["status"],
+                "degree": 0, "lastTouched": row["updated"],
+            })
+
+    stats = {
+        "totalNotes": total,
+        "byStatus": {
+            "fleeting": by_status.get("fleeting", 0),
+            "developing": by_status.get("developing", 0),
+            "evergreen": by_status.get("evergreen", 0),
+        },
+        "totalLinks": wiki_store.count_resolved_links(),
+        "orphanCount": len(orphans),
+        "ghostLinkCount": wiki_store.count_ghost_links(),
+        "pctWithLink": pct_with_link,
+        "asOf": _now_iso(),
+    }
+    data = {
+        "stats": stats,
+        "inbox": inbox()["items"],
+        "orphans": orphans,
+        "recentActivity": _recent_activity(activity_limit),
+        "proposalCount": 0,  # AI proposals land at M4
+    }
+    return data, warning
+
+
+def _recent_activity(limit: int) -> list[dict[str, Any]]:
+    """op_log → ``[{ts, op, actor, noteId, noteTitle, detail}]`` newest-first. A
+    merged/deleted note's title may be gone → fall back to the op_log detail."""
+    out = []
+    for o in recent_ops(limit=limit):
+        nid = o["noteId"]
+        title = _title_of(nid) if nid is not None else ""
+        out.append({
+            "ts": o["ts"], "op": o["kind"], "actor": o["actor"],
+            "noteId": nid, "noteTitle": title, "detail": o["detail"],
+        })
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# W1c — inbox reader (C5)                                                       #
+# --------------------------------------------------------------------------- #
+def inbox() -> dict[str, Any]:
+    """Fleeting notes awaiting triage, oldest→newest (C5). ``aiSuggest: null``
+    (no embedded AI — M4). ``rawContent`` = a body snippet."""
+    items = []
+    for row in wiki_store.fleeting_notes():
+        items.append({
+            "id": row["id"],
+            "title": row["title"] or None,
+            "status": row["status"],
+            "rawContent": _snippet_of_body(row["id"]),
+            "captured": row["created"],
+            "captureSource": _capture_source(row),
+            "linkCount": wiki_store.outbound_link_count(row["id"]),
+            "aiSuggest": None,  # M4
+        })
+    return {"items": items}
+
+
+def _capture_source(row: Any) -> str:
+    """The note's capture source (C5). W1c-T3 adds a ``capture_source`` cache
+    column; until then default ``quick_add``. Reads defensively so this reader
+    works whether or not the column exists yet."""
+    try:
+        cs = row["capture_source"]
+        return cs or "quick_add"
+    except (IndexError, KeyError):
+        return "quick_add"

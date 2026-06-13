@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     # manual-override via PUT). Matches the mock's 200K.
     claude_usage_cap: int = 200_000
 
+    # --- Wiki (Sprint W1c, D9) ---------------------------------------------
+    # REFINE ≥1-link hard gate cold-start exception: while the vault has fewer
+    # than this many notes, a note can be refined without a link (the first notes
+    # have nothing to link to). Env-overridable via LIFEOS_WIKI_COLD_START_MIN_NOTES.
+    wiki_cold_start_min_notes: int = 5
+
     # --- OKX exchange (read-only API key, optional) -------------------------
     # Set via .env or env vars. Left empty → exchange module returns stub/empty.
     okx_api_key: str = Field(default="", description="OKX API key")

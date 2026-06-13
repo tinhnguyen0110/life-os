@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS wiki_notes (
     tags          TEXT    NOT NULL DEFAULT '[]',-- JSON array
     content_hash  TEXT    NOT NULL DEFAULT '',  -- sha256(body); derived cache
     created       TEXT    NOT NULL,             -- ISO-8601 UTC
-    updated       TEXT    NOT NULL              -- ISO-8601 UTC
+    updated       TEXT    NOT NULL,             -- ISO-8601 UTC
+    capture_source TEXT   NOT NULL DEFAULT 'quick_add'  -- C5 inbox (W1c)
 );
 -- title→id resolver path (W1b uses this for [[Title]]→id). title is mutable so
 -- this is a plain (non-unique) index — collisions are resolved by W1b's logic.
@@ -112,6 +113,15 @@ CREATE TABLE IF NOT EXISTS wiki_redirects (
     new_id   INTEGER NOT NULL,      -- where it redirects to
     created  TEXT    NOT NULL       -- ISO-8601 UTC
 );
+
+-- notes_fts: FTS5 full-text index (C1). A PLAIN fts5 table (NOT content='') —
+-- contentless can't produce snippet()/rank, which search + unlinked-mentions
+-- require (verified on disk). It stores its own copy of the indexed text, which
+-- is fine: like the rest of the SQLite side, it's a DISPOSABLE cache rebuildable
+-- from the md files (md = source of truth). rowid = note id; synced DELETE+INSERT
+-- in the writer's cache-update step; DELETE on delete/merge. (Architect flagged
+-- (A) plain-fts5 over (B) contentless+manual-snippet; (A) shipped.)
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, body, aliases, tags);
 """
 
 
@@ -121,8 +131,21 @@ def init_wiki_tables() -> sqlite3.Connection:
     conn = db.get_conn()
     with _lock:
         conn.executescript(WIKI_SCHEMA)
+        _migrate(conn)
         conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive idempotent migrations for an EXISTING wiki_notes table that
+    pre-dates a column (``CREATE TABLE IF NOT EXISTS`` won't add a column to a
+    table that already exists). Each ALTER is guarded by a column check."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(wiki_notes)").fetchall()}
+    if "capture_source" not in cols:  # W1c C5
+        conn.execute(
+            "ALTER TABLE wiki_notes ADD COLUMN capture_source TEXT NOT NULL "
+            "DEFAULT 'quick_add'"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -156,23 +179,27 @@ def next_note_id() -> int:
 def upsert_note_cache(
     *, note_id: int, title: str, aliases_json: str, status: str, note_type: str,
     trust_tier: str, author: str, tags_json: str, content_hash: str,
-    created: str, updated: str,
+    created: str, updated: str, capture_source: str = "quick_add",
 ) -> None:
     """Insert-or-replace the cache row for a note. Called by the single writer
-    AFTER the md file is committed (md is source of truth; this is the index)."""
+    AFTER the md file is committed (md is source of truth; this is the index).
+    ``capture_source`` is set on create and preserved across edits (an edit doesn't
+    change where the note was captured) — the writer passes the existing value on
+    update."""
     conn = db.get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO wiki_notes (id, title, aliases, status, note_type, "
-            "trust_tier, author, tags, content_hash, created, updated) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "trust_tier, author, tags, content_hash, created, updated, capture_source) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "title=excluded.title, aliases=excluded.aliases, status=excluded.status, "
             "note_type=excluded.note_type, trust_tier=excluded.trust_tier, "
             "author=excluded.author, tags=excluded.tags, "
-            "content_hash=excluded.content_hash, updated=excluded.updated",
+            "content_hash=excluded.content_hash, updated=excluded.updated, "
+            "capture_source=excluded.capture_source",
             (note_id, title, aliases_json, status, note_type, trust_tier, author,
-             tags_json, content_hash, created, updated),
+             tags_json, content_hash, created, updated, capture_source),
         )
         conn.commit()
 
@@ -486,6 +513,225 @@ def repoint_inbound_links(old_id: int, new_id: int) -> int:
         )
         conn.commit()
         return cur.rowcount
+
+
+# --------------------------------------------------------------------------- #
+# W1c — FTS5 full-text index (C1)                                               #
+# --------------------------------------------------------------------------- #
+def fts_upsert(note_id: int, *, title: str, body: str, aliases: list[str],
+               tags: list[str]) -> None:
+    """Sync a note's FTS row: DELETE the old rowid then INSERT fresh (C1). Called
+    in the writer's cache-update step. rowid = note id."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute("DELETE FROM notes_fts WHERE rowid = ?", (int(note_id),))
+        conn.execute(
+            "INSERT INTO notes_fts (rowid, title, body, aliases, tags) VALUES (?,?,?,?,?)",
+            (int(note_id), title or "", body or "", " ".join(aliases or []),
+             " ".join(tags or [])),
+        )
+        conn.commit()
+
+
+def fts_delete(note_id: int) -> None:
+    """Drop a note's FTS row (on delete/merge)."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute("DELETE FROM notes_fts WHERE rowid = ?", (int(note_id),))
+        conn.commit()
+
+
+def _sanitize_fts_query(q: str) -> str:
+    """Turn arbitrary user input into a safe FTS5 MATCH expression. FTS5 query
+    syntax throws on stray operators/quotes/parens — so we extract word tokens and
+    OR them as prefix terms. Empty result → caller returns []. NEVER raises."""
+    import re as _re
+    # Keep alphanumerics + unicode word chars; split on everything else.
+    tokens = _re.findall(r"\w+", q or "", flags=_re.UNICODE)
+    if not tokens:
+        return ""
+    # Quote each token (so it can't be an operator) + prefix-match for usability.
+    return " OR ".join(f'"{t}"*' for t in tokens)
+
+
+def fts_search(q: str, limit: int = 30) -> list[sqlite3.Row]:
+    """Full-text search → rows ``{id, title, status, snippet}`` ranked by FTS5
+    rank. Query is sanitized (bad input → [] , never a 500). Empty q → []."""
+    match = _sanitize_fts_query(q)
+    if not match:
+        return []
+    conn = db.get_conn()
+    sql = (
+        "SELECT f.rowid AS id, n.title AS title, n.status AS status, "
+        "snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet "
+        "FROM notes_fts f JOIN wiki_notes n ON n.id = f.rowid "
+        "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?"
+    )
+    with _lock:
+        try:
+            return conn.execute(sql, (match, int(limit))).fetchall()
+        except sqlite3.OperationalError as exc:  # malformed MATCH slipped through
+            logger.warning("fts_search fell back on bad query %r: %s", q, exc)
+            return []
+
+
+def fts_phrase_search(phrases: list[str], limit: int = 50) -> list[sqlite3.Row]:
+    """Match any of the given quoted PHRASES (title/aliases) → rows ``{id, snippet}``
+    (C2 unlinked-mentions). Each phrase is matched as a whole (``"a b c"``) so a
+    multi-word title isn't split. Returns rowid + a snippet; caller filters."""
+    cleaned = [p.strip().replace('"', " ") for p in phrases if p and p.strip()]
+    cleaned = [p for p in cleaned if p]
+    if not cleaned:
+        return []
+    match = " OR ".join(f'"{p}"' for p in cleaned)
+    conn = db.get_conn()
+    sql = (
+        "SELECT f.rowid AS id, "
+        "snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet "
+        "FROM notes_fts f WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?"
+    )
+    with _lock:
+        try:
+            return conn.execute(sql, (match, int(limit))).fetchall()
+        except sqlite3.OperationalError as exc:
+            logger.warning("fts_phrase_search fell back on %r: %s", phrases, exc)
+            return []
+
+
+# --------------------------------------------------------------------------- #
+# W1c — graph + overview aggregate queries (C3/C4/C5)                           #
+# --------------------------------------------------------------------------- #
+def all_notes(order_by: str = "id") -> list[sqlite3.Row]:
+    """All live note cache rows. ``order_by`` ∈ {id, created} (validated)."""
+    col = "created" if order_by == "created" else "id"
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT * FROM wiki_notes ORDER BY {col} ASC"  # noqa: S608 (col whitelisted)
+        ).fetchall()
+
+
+def count_notes() -> int:
+    conn = db.get_conn()
+    with _lock:
+        return int(conn.execute("SELECT COUNT(*) AS c FROM wiki_notes").fetchone()["c"])
+
+
+def count_by_status() -> dict[str, int]:
+    """``{status: count}`` over live notes."""
+    conn = db.get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS c FROM wiki_notes GROUP BY status"
+        ).fetchall()
+    return {r["status"]: int(r["c"]) for r in rows}
+
+
+def count_resolved_links() -> int:
+    conn = db.get_conn()
+    with _lock:
+        return int(conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links WHERE is_resolved = 1"
+        ).fetchone()["c"])
+
+
+def count_ghost_links() -> int:
+    conn = db.get_conn()
+    with _lock:
+        return int(conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links WHERE is_resolved = 0"
+        ).fetchone()["c"])
+
+
+def note_ids_with_resolved_link() -> set[int]:
+    """Ids of notes touching ≥1 RESOLVED edge (as source OR target). Used for
+    orphan detection + pctWithLink."""
+    conn = db.get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT source_id AS nid FROM wiki_links WHERE is_resolved = 1 "
+            "UNION SELECT target_id AS nid FROM wiki_links WHERE is_resolved = 1 "
+            "AND target_id IS NOT NULL"
+        ).fetchall()
+    return {int(r["nid"]) for r in rows if r["nid"] is not None}
+
+
+def degree(note_id: int) -> int:
+    """Total RESOLVED edges touching a note (in + out). Ghost edges don't count
+    (a ghost has no real other endpoint)."""
+    conn = db.get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links "
+            "WHERE is_resolved = 1 AND (source_id = ? OR target_id = ?)",
+            (int(note_id), int(note_id)),
+        ).fetchone()
+    return int(row["c"])
+
+
+def resolved_neighbors(note_id: int) -> set[int]:
+    """Ids directly connected to ``note_id`` by a resolved edge (either direction)."""
+    conn = db.get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT target_id AS nid FROM wiki_links "
+            "WHERE is_resolved = 1 AND source_id = ? AND target_id IS NOT NULL "
+            "UNION "
+            "SELECT source_id AS nid FROM wiki_links "
+            "WHERE is_resolved = 1 AND target_id = ?",
+            (int(note_id), int(note_id)),
+        ).fetchall()
+    return {int(r["nid"]) for r in rows}
+
+
+def edges_among(note_ids: set[int]) -> list[sqlite3.Row]:
+    """All resolved edges whose BOTH endpoints are in ``note_ids`` (the ego set).
+    Empty set → []."""
+    if not note_ids:
+        return []
+    conn = db.get_conn()
+    placeholders = ",".join("?" * len(note_ids))
+    ids = [int(i) for i in note_ids]
+    sql = (
+        f"SELECT source_id, target_id, type, is_resolved FROM wiki_links "
+        f"WHERE is_resolved = 1 AND source_id IN ({placeholders}) "
+        f"AND target_id IN ({placeholders})"
+    )
+    with _lock:
+        return conn.execute(sql, ids + ids).fetchall()
+
+
+def fleeting_notes() -> list[sqlite3.Row]:
+    """Notes with status='fleeting', oldest→newest (the inbox)."""
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT * FROM wiki_notes WHERE status = 'fleeting' ORDER BY created ASC, id ASC"
+        ).fetchall()
+
+
+def outbound_link_count(note_id: int) -> int:
+    """How many outbound link rows this note has (resolved + ghost)."""
+    conn = db.get_conn()
+    with _lock:
+        return int(conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links WHERE source_id = ?", (int(note_id),)
+        ).fetchone()["c"])
+
+
+def total_link_count(note_id: int) -> int:
+    """Total links touching a note = outbound (from body) + resolved inbound. Used
+    by the refine ≥1-link gate (C6)."""
+    conn = db.get_conn()
+    with _lock:
+        out = conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links WHERE source_id = ?", (int(note_id),)
+        ).fetchone()["c"]
+        inb = conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_links WHERE is_resolved = 1 AND target_id = ?",
+            (int(note_id),),
+        ).fetchone()["c"]
+    return int(out) + int(inb)
 
 
 # Register tables at import so a fresh process / first request has them ready.

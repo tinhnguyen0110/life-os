@@ -34,6 +34,37 @@ def wiki_info():
     return ok(data={"module": "wiki", "status": "ok"})
 
 
+@router.get("/search")
+def search(q: str = ""):
+    """Full-text search → ``[{id, title, snippet, status}]`` ranked by relevance
+    (C1). Empty/malformed ``q`` → empty list (never 500)."""
+    return ok(data=reader.search(q))
+
+
+@router.get("/overview")
+def overview():
+    """Vault overview (C4): ``{stats, inbox, orphans, recentActivity, proposalCount}``.
+    Empty vault → ``stats.pctWithLink: null`` + a warning (never 0/div-zero)."""
+    data, warning = reader.overview()
+    return ok(data=data, warning=warning)
+
+
+@router.get("/inbox")
+def inbox():
+    """Fleeting notes awaiting triage (C5), oldest→newest. ``aiSuggest: null`` (M4)."""
+    return ok(data=reader.inbox())
+
+
+@router.get("/graph")
+def graph(note: int, depth: int = 2):
+    """Ego-graph 1–2 hop around ``note`` (C3): ``{center, nodes, edges, clusters}``.
+    404 if the center note is absent. ``clusters: []`` in W1c (AI clustering = M4)."""
+    g = reader.ego_graph(note, depth)
+    if g is None:
+        raise HTTPException(status_code=404, detail=f"wiki note {note} not found")
+    return ok(data=g)
+
+
 @router.post("/notes")
 def create_note(body: NoteCreateInput):
     """Create a note (capture → fleeting). Server-set id + timestamps. Goes through
@@ -75,6 +106,20 @@ def get_backlinks(note_id: int):
     if service.get_note(note_id) is None:
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
     return ok(data=reader.backlinks(note_id))
+
+
+@router.post("/notes/{note_id}/refine")
+def refine_note(note_id: int, body: NoteUpdateInput):
+    """REFINE a note (C6/D9): update-path + the ≥1-link HARD GATE. 404 if absent;
+    422 if the note would have 0 links and the vault is past cold-start. On the
+    cold-start exception (vault < threshold) it succeeds with a warning."""
+    try:
+        note, warning = service.refine_note(note_id, body)
+    except service.NoteNotFound:
+        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+    except service.RefineGateError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return ok(data=note.model_dump(), warning=warning)
 
 
 @router.put("/notes/{note_id}")

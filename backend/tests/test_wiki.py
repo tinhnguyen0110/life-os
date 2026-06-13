@@ -963,3 +963,466 @@ def test_api_merge_same_id_422(api):
 def test_api_merge_missing_404(api):
     t = api.post("/wiki/notes", json={"title": "T", "content": "t"}).json()["data"]["id"]
     assert api.post("/wiki/notes/merge", json={"sourceId": 9999, "targetId": t}).status_code == 404
+
+
+# =========================================================================== #
+# W1c-T1 — FTS5 + search + unlinked-mentions                                    #
+# =========================================================================== #
+# --- C1: FTS index sync on write/delete ------------------------------------- #
+def test_fts_indexed_on_create(wiki_db):
+    wiki_service.create_note(
+        NoteCreateInput(title="Knowledge work", content="the quick brown fox accretes")
+    )
+    rows = wiki_store.fts_search("accretes")
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Knowledge work"
+
+
+def test_fts_reindexed_on_edit(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="T", content="original term alpha"))
+    assert len(wiki_store.fts_search("alpha")) == 1
+    wiki_service.update_note(n.id, NoteUpdateInput(content="replaced term beta"))
+    # old term no longer matches; new term does (FTS row re-synced).
+    assert wiki_store.fts_search("alpha") == []
+    assert len(wiki_store.fts_search("beta")) == 1
+
+
+def test_fts_row_removed_on_delete(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Gone", content="ephemeral content"))
+    assert len(wiki_store.fts_search("ephemeral")) == 1
+    wiki_service.delete_note(n.id)
+    assert wiki_store.fts_search("ephemeral") == []
+
+
+def test_fts_row_removed_on_merge(wiki_db):
+    src = wiki_service.create_note(NoteCreateInput(title="Src", content="uniqueword zeta"))
+    tgt = wiki_service.create_note(NoteCreateInput(title="Tgt", content="other"))
+    wiki_service.merge_notes(src.id, tgt.id)
+    assert wiki_store.fts_search("zeta") == []  # merged-away note's FTS row gone
+
+
+# --- C1: search rank + snippet + sanitization ------------------------------- #
+def test_search_returns_ranked_with_snippet(wiki_db):
+    wiki_service.create_note(NoteCreateInput(title="Alpha note", content="mango mango mango"))
+    wiki_service.create_note(NoteCreateInput(title="Beta note", content="mango once only"))
+    results = wiki_reader.search("mango")
+    assert len(results) == 2
+    # each has the contract shape + a snippet highlighting the term
+    for r in results:
+        assert set(r) == {"id", "title", "snippet", "status"}
+    assert any("<b>mango</b>" in r["snippet"] for r in results)
+
+
+def test_search_empty_query_returns_empty(wiki_db):
+    wiki_service.create_note(NoteCreateInput(title="X", content="content"))
+    assert wiki_reader.search("") == []
+    assert wiki_reader.search("   ") == []
+
+
+def test_search_bad_query_no_crash(wiki_db):
+    wiki_service.create_note(NoteCreateInput(title="X", content="hello world"))
+    # FTS5 syntax-breaking inputs must NOT raise — sanitized to safe tokens or [].
+    bad_queries = ['"', "AND OR NOT", "((", "*", "a:b", '" OR 1=1 --', "NEAR(x"]
+    for bad in bad_queries:
+        out = wiki_reader.search(bad)
+        assert isinstance(out, list)  # never raises
+
+
+def test_search_matches_title_and_body(wiki_db):
+    wiki_service.create_note(NoteCreateInput(title="Photosynthesis", content="plants"))
+    wiki_service.create_note(NoteCreateInput(title="Other", content="about photosynthesis too"))
+    # term in title (note 1) + in body (note 2) both match.
+    assert len(wiki_reader.search("photosynthesis")) == 2
+
+
+# --- C2: unlinked-mentions (excludes self + already-linked) ------------------ #
+def test_unlinked_mention_found(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Emergence", content="t"))
+    # another note mentions "Emergence" as plain text but does NOT link it.
+    mentioner = wiki_service.create_note(
+        NoteCreateInput(title="Essay", content="I discuss Emergence at length here")
+    )
+    um = wiki_reader.unlinked_mentions(target.id)
+    assert any(u["id"] == mentioner.id for u in um)
+
+
+def test_unlinked_excludes_self(wiki_db):
+    n = wiki_service.create_note(
+        NoteCreateInput(title="Recursion", content="Recursion mentions Recursion itself")
+    )
+    um = wiki_reader.unlinked_mentions(n.id)
+    assert all(u["id"] != n.id for u in um)  # never lists itself
+
+
+def test_unlinked_excludes_already_linked(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Linked Topic", content="t"))
+    # this note LINKS the target (so it's a LINKED mention, not unlinked).
+    linker = wiki_service.create_note(
+        NoteCreateInput(content=f"see [[{target.id}]] about Linked Topic")
+    )
+    um = wiki_reader.unlinked_mentions(target.id)
+    assert all(u["id"] != linker.id for u in um)  # already-linked excluded
+
+
+def test_backlinks_unlinked_now_populated(wiki_db):
+    target = wiki_service.create_note(NoteCreateInput(title="Populated Topic", content="t"))
+    wiki_service.create_note(
+        NoteCreateInput(title="Mentioner", content="a note about Populated Topic, unlinked")
+    )
+    bl = wiki_reader.backlinks(target.id)
+    assert len(bl["unlinked"]) >= 1
+    assert any("Populated Topic" in (u["snippet"] or "") or u["title"] == "Mentioner"
+               for u in bl["unlinked"])
+
+
+def test_unlinked_empty_for_titleless_note(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(content="raw dump no title"))
+    assert wiki_reader.unlinked_mentions(n.id) == []
+
+
+# --- API: search endpoint --------------------------------------------------- #
+def test_api_search_endpoint(api):
+    api.post("/wiki/notes", json={"title": "Searchable", "content": "findme keyword"})
+    r = api.get("/wiki/search", params={"q": "findme"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert len(data) == 1 and data[0]["title"] == "Searchable"
+
+
+def test_api_search_bad_query_200_not_500(api):
+    api.post("/wiki/notes", json={"title": "X", "content": "y"})
+    r = api.get("/wiki/search", params={"q": '" OR ((('})
+    assert r.status_code == 200  # sanitized, never 500
+    assert r.json()["data"] == [] or isinstance(r.json()["data"], list)
+
+
+def test_api_search_empty_query(api):
+    api.post("/wiki/notes", json={"title": "X", "content": "y"})
+    assert api.get("/wiki/search", params={"q": ""}).json()["data"] == []
+
+
+# =========================================================================== #
+# W1c-T2 — ego-graph + overview + inbox readers                                #
+# =========================================================================== #
+def _link(src_id: int, tgt_id: int):
+    """Helper: make src link tgt by id (through the queue)."""
+    existing = wiki_service.get_note(src_id)
+    body = (existing.content + f" [[{tgt_id}]]") if existing else f"[[{tgt_id}]]"
+    wiki_service.update_note(src_id, NoteUpdateInput(content=body))
+
+
+# --- C3: ego-graph BFS ------------------------------------------------------ #
+def test_ego_graph_center_absent_returns_none(wiki_db):
+    assert wiki_reader.ego_graph(999) is None
+
+
+def test_ego_graph_depth1(wiki_db):
+    center = wiki_service.create_note(NoteCreateInput(title="C", content="c"))
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", content="b"))
+    _link(center.id, a.id)   # center → a
+    _link(b.id, center.id)   # b → center
+    g = wiki_reader.ego_graph(center.id, depth=1)
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {center.id, a.id, b.id}   # 1-hop neighbors both directions
+    assert g["center"] == center.id
+    assert g["clusters"] == []
+
+
+def test_ego_graph_depth2_reaches_2hops(wiki_db):
+    c = wiki_service.create_note(NoteCreateInput(title="C", content="c"))
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    far = wiki_service.create_note(NoteCreateInput(title="Far", content="f"))
+    _link(c.id, a.id)     # c → a
+    _link(a.id, far.id)   # a → far  (far is 2 hops from c)
+    g1 = wiki_reader.ego_graph(c.id, depth=1)
+    assert far.id not in {n["id"] for n in g1["nodes"]}  # depth1 excludes far
+    g2 = wiki_reader.ego_graph(c.id, depth=2)
+    assert far.id in {n["id"] for n in g2["nodes"]}       # depth2 includes far
+
+
+def test_ego_graph_degree_counted(wiki_db):
+    c = wiki_service.create_note(NoteCreateInput(title="Hub", content="c"))
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", content="b"))
+    _link(c.id, a.id)
+    _link(c.id, b.id)
+    g = wiki_reader.ego_graph(c.id, depth=1)
+    hub = next(n for n in g["nodes"] if n["id"] == c.id)
+    assert hub["degree"] == 2   # two outbound resolved edges
+
+
+def test_ego_graph_ghost_not_a_node(wiki_db):
+    c = wiki_service.create_note(NoteCreateInput(title="C", content="ref [[Nonexistent]]"))
+    g = wiki_reader.ego_graph(c.id, depth=2)
+    # ghost target is NOT materialized as a node; only the real center node exists.
+    assert {n["id"] for n in g["nodes"]} == {c.id}
+    # and the ghost edge is NOT in edges (edges are resolved-only between real nodes)
+    assert g["edges"] == []
+
+
+def test_ego_graph_edges_have_type_and_resolved(wiki_db):
+    c = wiki_service.create_note(NoteCreateInput(title="C", content="c"))
+    a = wiki_service.create_note(NoteCreateInput(title="A", content="a"))
+    _link(c.id, a.id)
+    g = wiki_reader.ego_graph(c.id, depth=1)
+    assert len(g["edges"]) == 1
+    e = g["edges"][0]
+    assert e["source"] == c.id and e["target"] == a.id
+    assert e["type"] == "relates" and e["isResolved"] is True
+
+
+def test_ego_graph_200_notes_under_1s(wiki_db):
+    import time
+    # Build a star: 1 hub + 200 spokes each linking the hub.
+    hub = wiki_service.create_note(NoteCreateInput(title="Hub", content="h"))
+    for i in range(200):
+        s = wiki_service.create_note(NoteCreateInput(title=f"S{i}", content=f"node {i}"))
+        _link(s.id, hub.id)
+    t0 = time.perf_counter()
+    g = wiki_reader.ego_graph(hub.id, depth=2)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 1.0, f"200-note ego-graph took {elapsed:.3f}s (gate <1s)"
+    assert len(g["nodes"]) == 201  # hub + 200 spokes
+
+
+# --- C4: overview stats ----------------------------------------------------- #
+def test_overview_empty_vault_pct_none_with_warning(wiki_db):
+    data, warning = wiki_reader.overview()
+    assert data["stats"]["totalNotes"] == 0
+    assert data["stats"]["pctWithLink"] is None   # NOT 0, NOT div-by-zero
+    assert warning is not None and "empty" in warning.lower()
+    assert data["proposalCount"] == 0
+
+
+def test_overview_stats_counts(wiki_db):
+    a = wiki_service.create_note(NoteCreateInput(title="A", status="evergreen", content="a"))
+    b = wiki_service.create_note(NoteCreateInput(title="B", status="developing", content="b"))
+    wiki_service.create_note(NoteCreateInput(title="C", content="lonely"))  # fleeting, orphan
+    _link(a.id, b.id)  # a↔b linked
+    data, warning = wiki_reader.overview()
+    s = data["stats"]
+    assert s["totalNotes"] == 3
+    assert s["byStatus"]["evergreen"] == 1
+    assert s["byStatus"]["developing"] == 1
+    assert s["byStatus"]["fleeting"] == 1
+    assert s["totalLinks"] == 1          # one resolved edge a→b
+    assert s["orphanCount"] == 1         # C has no links
+    assert s["pctWithLink"] == round(2 / 3 * 100, 1)  # a,b linked / 3
+    assert warning is None
+
+
+def test_overview_orphans_and_activity(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Orphan", content="alone"))
+    data, _ = wiki_reader.overview()
+    assert any(o["id"] == n.id for o in data["orphans"])
+    # recentActivity reflects the op_log (the create op)
+    assert any(act["op"] == "create" and act["noteId"] == n.id
+               for act in data["recentActivity"])
+
+
+def test_overview_ghost_link_count(wiki_db):
+    wiki_service.create_note(NoteCreateInput(title="C", content="ref [[Ghosttown]]"))
+    data, _ = wiki_reader.overview()
+    assert data["stats"]["ghostLinkCount"] == 1
+
+
+# --- C5: inbox -------------------------------------------------------------- #
+def test_inbox_fleeting_only(wiki_db):
+    f = wiki_service.create_note(NoteCreateInput(title="Fleeting one", content="raw"))
+    ev = wiki_service.create_note(NoteCreateInput(title="Evergreen one", content="x"))
+    wiki_service.update_note(ev.id, NoteUpdateInput(status="evergreen"))
+    items = wiki_reader.inbox()["items"]
+    ids = {i["id"] for i in items}
+    assert f.id in ids
+    assert ev.id not in ids  # not fleeting → not in inbox
+
+
+def test_inbox_item_shape(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(title="Cap", content="some raw content"))
+    item = wiki_reader.inbox()["items"][0]
+    assert item["id"] == n.id
+    assert item["status"] == "fleeting"
+    assert item["aiSuggest"] is None
+    assert "some raw content" in item["rawContent"]
+    assert item["captureSource"]  # default present
+    assert item["linkCount"] == 0
+
+
+# --- API: graph / overview / inbox ------------------------------------------ #
+def test_api_overview_endpoint(api):
+    api.post("/wiki/notes", json={"title": "A", "content": "a"})
+    r = api.get("/wiki/overview")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert set(data) == {"stats", "inbox", "orphans", "recentActivity", "proposalCount"}
+    assert data["stats"]["totalNotes"] == 1
+
+
+def test_api_overview_empty_vault_warning(api):
+    r = api.get("/wiki/overview")
+    assert r.status_code == 200
+    assert r.json()["data"]["stats"]["pctWithLink"] is None
+    assert r.json().get("warning")
+
+
+def test_api_graph_endpoint(api):
+    c = api.post("/wiki/notes", json={"title": "C", "content": "c"}).json()["data"]["id"]
+    a = api.post("/wiki/notes", json={"title": "A", "content": f"[[{c}]]"}).json()["data"]["id"]
+    r = api.get("/wiki/graph", params={"note": c, "depth": 2})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["center"] == c
+    assert {n["id"] for n in data["nodes"]} == {c, a}
+
+
+def test_api_graph_404_missing(api):
+    assert api.get("/wiki/graph", params={"note": 9999}).status_code == 404
+
+
+def test_api_inbox_endpoint(api):
+    api.post("/wiki/notes", json={"title": "Fleet", "content": "raw"})
+    r = api.get("/wiki/inbox")
+    assert r.status_code == 200
+    items = r.json()["data"]["items"]
+    assert len(items) == 1 and items[0]["status"] == "fleeting"
+
+
+# =========================================================================== #
+# W1c-T3 — refine ≥1-link gate + captureSource + config                        #
+# =========================================================================== #
+from core.config import settings as _settings  # noqa: E402
+
+
+# --- C6: refine gate — 3 DIVERGENT cases (verify-with-distinguishing-case) --- #
+def test_refine_with_link_ok_and_flips_status(wiki_db, monkeypatch):
+    # Set a LOW threshold so the vault is NOT in cold-start (the gate is live).
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    target = wiki_service.create_note(NoteCreateInput(title="Target", content="t"))
+    note = wiki_service.create_note(NoteCreateInput(content="draft"))
+    # refine with a link → allowed, status flips, NO warning.
+    refined, warning = wiki_service.refine_note(
+        note.id, NoteUpdateInput(content=f"refined [[{target.id}]]", status="developing")
+    )
+    assert refined.status == "developing"
+    assert warning is None
+
+
+def test_refine_zero_link_non_coldstart_422(wiki_db, monkeypatch):
+    # vault has 2 notes, threshold 1 → NOT cold-start → 0-link refine is BLOCKED.
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    wiki_service.create_note(NoteCreateInput(title="Other", content="x"))
+    note = wiki_service.create_note(NoteCreateInput(content="draft, no links"))
+    with pytest.raises(wiki_service.RefineGateError):
+        wiki_service.refine_note(note.id, NoteUpdateInput(content="still no links", status="developing"))
+
+
+def test_refine_zero_link_coldstart_ok_with_warning(wiki_db, monkeypatch):
+    # vault below threshold → cold-start → 0-link refine ALLOWED + warning.
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 5)
+    note = wiki_service.create_note(NoteCreateInput(content="first note ever"))
+    refined, warning = wiki_service.refine_note(
+        note.id, NoteUpdateInput(content="refined but no link yet", status="developing")
+    )
+    assert refined.status == "developing"
+    assert warning is not None and "cold-start" in warning.lower()
+
+
+def test_refine_gate_counts_inbound_link(wiki_db, monkeypatch):
+    # A note with an INBOUND link (someone links it) but no outbound → linkCount≥1.
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    target = wiki_service.create_note(NoteCreateInput(title="Popular", content="t"))
+    wiki_service.create_note(NoteCreateInput(content=f"[[{target.id}]]"))  # inbound to target
+    # refine the TARGET with a no-link body → still ok (inbound counts).
+    refined, warning = wiki_service.refine_note(
+        target.id, NoteUpdateInput(content="refined, no outbound", status="evergreen")
+    )
+    assert refined.status == "evergreen"
+    assert warning is None
+
+
+def test_refine_missing_note_raises(wiki_db):
+    with pytest.raises(wiki_service.NoteNotFound):
+        wiki_service.refine_note(999, NoteUpdateInput(content="x"))
+
+
+def test_refine_records_refine_op_kind(wiki_db, monkeypatch):
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    target = wiki_service.create_note(NoteCreateInput(title="T", content="t"))
+    note = wiki_service.create_note(NoteCreateInput(content="d"))
+    wiki_service.refine_note(note.id, NoteUpdateInput(content=f"[[{target.id}]]", status="developing"))
+    ops = wiki_store.recent_ops(limit=5)
+    assert ops[0]["kind"] == "refine"
+
+
+# --- C5: captureSource ------------------------------------------------------ #
+def test_capture_source_stored_and_in_inbox(wiki_db):
+    wiki_service.create_note(NoteCreateInput(content="from the bar", captureSource="command_bar"))
+    item = wiki_reader.inbox()["items"][0]
+    assert item["captureSource"] == "command_bar"
+
+
+def test_capture_source_defaults_quick_add(wiki_db):
+    wiki_service.create_note(NoteCreateInput(content="no source given"))
+    item = wiki_reader.inbox()["items"][0]
+    assert item["captureSource"] == "quick_add"
+
+
+def test_capture_source_preserved_across_edit(wiki_db):
+    n = wiki_service.create_note(NoteCreateInput(content="x", captureSource="mcp_agent"))
+    wiki_service.update_note(n.id, NoteUpdateInput(content="edited"))
+    row = wiki_store.get_note_cache(n.id)
+    assert row["capture_source"] == "mcp_agent"  # edit preserves provenance
+
+
+# --- config threshold toggle (without seeding N notes) ---------------------- #
+def test_config_threshold_toggle_waives_at_4(wiki_db, monkeypatch):
+    # threshold 5, vault will have <5 → cold-start waives the gate (no seeding needed).
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 5)
+    note = wiki_service.create_note(NoteCreateInput(content="solo note"))
+    _, warning = wiki_service.refine_note(note.id, NoteUpdateInput(status="developing"))
+    assert warning is not None  # waived (cold-start)
+
+
+def test_config_threshold_toggle_gates_at_low_threshold(wiki_db, monkeypatch):
+    # threshold 1, vault has 1 → NOT cold-start → gate is LIVE (without seeding 5).
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    note = wiki_service.create_note(NoteCreateInput(content="solo note"))
+    with pytest.raises(wiki_service.RefineGateError):
+        wiki_service.refine_note(note.id, NoteUpdateInput(status="developing"))
+
+
+# --- API: refine endpoint (the 3 cases) ------------------------------------- #
+def test_api_refine_with_link_200(api, monkeypatch):
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    t = api.post("/wiki/notes", json={"title": "T", "content": "t"}).json()["data"]["id"]
+    n = api.post("/wiki/notes", json={"content": "draft"}).json()["data"]["id"]
+    r = api.post(f"/wiki/notes/{n}/refine", json={"content": f"[[{t}]]", "status": "developing"})
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "developing"
+
+
+def test_api_refine_zero_link_non_coldstart_422(api, monkeypatch):
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 1)
+    api.post("/wiki/notes", json={"title": "Other", "content": "x"})
+    n = api.post("/wiki/notes", json={"content": "draft"}).json()["data"]["id"]
+    r = api.post(f"/wiki/notes/{n}/refine", json={"content": "no link", "status": "developing"})
+    assert r.status_code == 422
+
+
+def test_api_refine_coldstart_200_with_warning(api, monkeypatch):
+    monkeypatch.setattr(_settings, "wiki_cold_start_min_notes", 5)
+    n = api.post("/wiki/notes", json={"content": "first"}).json()["data"]["id"]
+    r = api.post(f"/wiki/notes/{n}/refine", json={"content": "no link yet", "status": "developing"})
+    assert r.status_code == 200
+    assert "cold-start" in (r.json().get("warning") or "").lower()
+
+
+def test_api_refine_missing_404(api):
+    assert api.post("/wiki/notes/9999/refine", json={"content": "x"}).status_code == 404
+
+
+def test_api_create_with_capture_source(api):
+    api.post("/wiki/notes", json={"content": "x", "captureSource": "daily_note"})
+    item = api.get("/wiki/inbox").json()["data"]["items"][0]
+    assert item["captureSource"] == "daily_note"

@@ -44,7 +44,7 @@ from .schema import Note, NoteCreateInput, NoteUpdateInput
 
 logger = logging.getLogger("life-os.wiki.service")
 
-OpKind = Literal["create", "update", "delete", "merge"]
+OpKind = Literal["create", "update", "delete", "merge", "refine"]
 
 
 class NoteNotFound(Exception):
@@ -53,6 +53,10 @@ class NoteNotFound(Exception):
 
 class MergeError(Exception):
     """Raised when a merge is invalid (same id) → router 422."""
+
+
+class RefineGateError(Exception):
+    """Raised when REFINE is blocked by the ≥1-link hard gate (D9) → router 422."""
 
 
 # --------------------------------------------------------------------------- #
@@ -74,6 +78,7 @@ class Op:
     op_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ts: str = ""
     result: Note | None = None
+    warning: str | None = None  # set by refine on the cold-start exception (C6)
     error: BaseException | None = None
     done: threading.Event = field(default_factory=threading.Event)
 
@@ -135,9 +140,10 @@ def _body_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def _render(note: Note) -> str:
+def _render(note: Note, capture_source: str = "quick_add") -> str:
     """Note → ``---\\n<frontmatter>\\n---\\n<body>``. contentHash is NOT written
-    (it's derived cache, not authored — A1)."""
+    (it's derived cache, not authored — A1). ``captureSource`` IS authored (it's
+    provenance, set once at capture)."""
     fm = {
         "id": note.id,
         "title": note.title,
@@ -147,11 +153,32 @@ def _render(note: Note) -> str:
         "trustTier": note.trustTier,
         "author": note.author,
         "tags": note.tags,
+        "captureSource": capture_source,
         "created": note.created,
         "updated": note.updated,
     }
     block = yaml.safe_dump(fm, sort_keys=True, allow_unicode=True).strip()
     return f"---\n{block}\n---\n{note.content}"
+
+
+def _parse_capture_source(content: str) -> str:
+    """Recover ``captureSource`` from a note md document's frontmatter (default
+    quick_add if absent / malformed). Kept separate so the frozen Note response
+    model doesn't need a new field — captureSource lives in frontmatter + cache,
+    surfaced only by the inbox reader."""
+    text = content.lstrip("﻿")
+    if not text.startswith("---"):
+        return "quick_add"
+    parts = text[len("---"):].split("\n---", 1)
+    if len(parts) < 2:
+        return "quick_add"
+    try:
+        fm = yaml.safe_load(parts[0])
+    except yaml.YAMLError:
+        return "quick_add"
+    if isinstance(fm, dict) and fm.get("captureSource"):
+        return str(fm["captureSource"])
+    return "quick_add"
 
 
 def _parse(content: str, note_id: int) -> Note | None:
@@ -189,7 +216,7 @@ def _parse(content: str, note_id: int) -> Note | None:
         return None
 
 
-def _commit_note(note: Note, message: str) -> str:
+def _commit_note(note: Note, message: str, capture_source: str = "quick_add") -> str:
     """Write the note md file (1 git commit) + upsert the cache row + refresh the
     resolver index + re-derive this note's outbound edges. Returns sha.
 
@@ -197,13 +224,15 @@ def _commit_note(note: Note, message: str) -> str:
     resolver-index refresh (wiki_aliases) → edge re-derivation (wiki_links). The
     cache/index/edges are the disposable index; md is authoritative. Edges are
     re-derived from the body on EVERY write so they always match the body (B2).
+    ``capture_source`` is provenance (set at create, preserved on edit by the caller).
     """
-    sha = wiki_store.write_note_file(note.id, _render(note), message)
+    sha = wiki_store.write_note_file(note.id, _render(note, capture_source), message)
     wiki_store.upsert_note_cache(
         note_id=note.id, title=note.title, aliases_json=_json(note.aliases),
         status=note.status, note_type=note.noteType, trust_tier=note.trustTier,
         author=note.author, tags_json=_json(note.tags),
         content_hash=note.contentHash, created=note.created, updated=note.updated,
+        capture_source=capture_source,
     )
     # B2 — refresh the title/alias→id resolver index for THIS note, then re-derive
     # its outbound edges from the (new) body against the (now-current) index.
@@ -212,6 +241,9 @@ def _commit_note(note: Note, message: str) -> str:
     # B4 — auto-resolve ghosts: any pre-existing ghost edge whose target_title now
     # matches this note's title/alias → flip to resolved pointing at this id.
     _resolve_ghosts_for(note)
+    # C1 — sync the FTS index for this note (disposable full-text cache).
+    wiki_store.fts_upsert(note.id, title=note.title, body=note.content,
+                          aliases=note.aliases, tags=note.tags)
     return sha
 
 
@@ -316,6 +348,8 @@ def _apply(op: Op) -> Note | None:
         return None
     if op.kind == "merge":
         return _apply_merge(op)
+    if op.kind == "refine":
+        return _apply_refine(op)
     raise ValueError(f"unknown op kind {op.kind!r}")  # pragma: no cover
 
 
@@ -329,7 +363,8 @@ def _apply_create(op: Op) -> Note:
         tags=inp.tags, content=inp.content, created=now, updated=now,
         contentHash=_body_hash(inp.content),
     )
-    sha = _commit_note(note, f"create wiki note {note_id}")
+    sha = _commit_note(note, f"create wiki note {note_id}",
+                       capture_source=inp.captureSource)
     wiki_store.append_op(op_id=op.op_id, kind="create", note_id=note_id,
                          actor=op.actor, ts=now, commit_sha=sha)
     return note
@@ -369,10 +404,62 @@ def _apply_update(op: Op) -> Note:
         tags=new_tags, content=new_content, created=existing.created, updated=now,
         contentHash=new_hash,
     )
-    sha = _commit_note(note, f"edit wiki note {note_id}")
-    wiki_store.append_op(op_id=op.op_id, kind="edit", note_id=note_id,
+    # captureSource is provenance — preserve it across edits (read from the md the
+    # note was last written with). A refine/edit never changes where it was captured.
+    cap = _parse_capture_source(wiki_store.read_note_file(note_id) or "")
+    op_kind = op.payload.get("op_kind", "edit")  # refine reuses this path (C6)
+    sha = _commit_note(note, f"{op_kind} wiki note {note_id}", capture_source=cap)
+    wiki_store.append_op(op_id=op.op_id, kind=op_kind, note_id=note_id,
                          actor=op.actor, ts=now, commit_sha=sha)
     return note
+
+
+def _would_be_link_count(note_id: int, new_body: str) -> int:
+    """Compute the link count the note WOULD have after a refine edit, WITHOUT
+    writing (C6 gate). = outbound links parsed from the new body (resolved or
+    ghost, both count as authored links) + existing resolved inbound edges."""
+    outbound = len(parse_wikilinks(new_body))
+    inbound = len(wiki_store.links_to(note_id, resolved_only=True))
+    return outbound + inbound
+
+
+def _apply_refine(op: Op) -> Note:
+    """REFINE (C6/D9): the update-path + the ≥1-link HARD GATE, checked BEFORE the
+    write so a blocked refine doesn't mutate the note.
+
+      - linkCount(after edit) ≥ 1 → apply normally (status flip etc.), op_log `refine`.
+      - linkCount == 0 AND vault in cold-start (totalNotes < threshold) → ALLOW +
+        a warning (the first notes have nothing to link to).
+      - linkCount == 0 AND vault NOT cold-start → RefineGateError (router 422).
+    """
+    from core.config import settings
+
+    note_id = op.note_id
+    assert note_id is not None
+    existing = _read_note(note_id)
+    if existing is None:
+        raise NoteNotFound(str(note_id))
+    inp: NoteUpdateInput = op.payload["input"]
+    new_body = inp.content if inp.content is not None else existing.content
+
+    link_count = _would_be_link_count(note_id, new_body)
+    if link_count == 0:
+        total = wiki_store.count_notes()
+        threshold = settings.wiki_cold_start_min_notes
+        if total >= threshold:
+            raise RefineGateError(
+                f"refine requires ≥1 link (vault has {total} notes; "
+                f"cold-start exception only below {threshold})"
+            )
+        # Cold-start: allow, but warn.
+        op.warning = (
+            f"cold-start: refined without a link (vault has {total} note(s), "
+            f"under the {threshold}-note threshold)"
+        )
+
+    # Delegate to the update mechanics with the `refine` op kind.
+    op.payload["op_kind"] = "refine"
+    return _apply_update(op)
 
 
 def _apply_delete(op: Op) -> None:
@@ -390,6 +477,7 @@ def _apply_delete(op: Op) -> None:
     # (ghost) — they keep the deleted note's title so a re-created note with that
     # title auto-resolves them (B4). NOT a dangling target_id.
     wiki_store.ghostify_inbound(note_id, existing.title)
+    wiki_store.fts_delete(note_id)  # C1: drop the FTS row for the deleted note
     wiki_store.append_op(op_id=op.op_id, kind="delete", note_id=note_id,
                          actor=op.actor, ts=_now_iso(), commit_sha=sha)
 
@@ -420,6 +508,7 @@ def _apply_merge(op: Op) -> Note:
     wiki_store.delete_note_cache(src_id)
     wiki_store.clear_aliases(src_id)
     wiki_store.clear_links_from(src_id)
+    wiki_store.fts_delete(src_id)  # C1: drop the merged-away note's FTS row
     # Tombstone + repoint inbound: links to source now resolve to target (citations
     # survive). NOT ghostified (unlike a plain delete) — they follow the redirect.
     wiki_store.add_redirect(src_id, tgt_id, now)
@@ -499,3 +588,14 @@ def merge_notes(source_id: int, target_id: int, actor: str = "human") -> Note:
     note = enqueue(op)
     assert note is not None
     return note
+
+
+def refine_note(note_id: int, inp: NoteUpdateInput,
+                actor: str = "human") -> tuple[Note, str | None]:
+    """REFINE a note through the queue (C6/D9) — the ≥1-link hard gate path.
+    Returns ``(note, warning)``: warning is set on the cold-start exception.
+    Raises NoteNotFound (absent → 404) / RefineGateError (0-link non-cold-start → 422)."""
+    op = Op(kind="refine", note_id=note_id, payload={"input": inp}, actor=actor)
+    note = enqueue(op)
+    assert note is not None
+    return note, op.warning

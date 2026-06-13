@@ -61,6 +61,10 @@ class NoteCreateInput(BaseModel):
     noteType: NoteType = "concept"
     tags: list[str] = Field(default_factory=list)
     author: str = "human"
+    # Where this capture came from (mock inbox field). command_bar | quick_add |
+    # mcp_agent | daily_note. Free-form str (not Literal) so a new source doesn't
+    # break the boundary; defaults quick_add.
+    captureSource: str = "quick_add"
 
     @field_validator("title")
     @classmethod
