@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 
 # --- Enums (Literal-locked at the boundary) -------------------------------- #
 Status = Literal["fleeting", "developing", "evergreen"]
-NoteType = Literal["concept", "literature"]
+NoteType = Literal["concept", "literature", "moc"]  # moc = Map-of-Content (W5, D-W5.2)
 TrustTier = Literal["verified", "candidate"]
 
 

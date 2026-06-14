@@ -70,6 +70,21 @@ def graph(note: int, depth: int = 2):
     return ok(data=g)
 
 
+@router.get("/clusters")
+def clusters():
+    """MOC candidates (W5a, D-W5.1): graph-detected clusters of ≥3 linked notes
+    above the density threshold, ranked by advisory importance (size×density).
+    Each: ``{members:[{id,title}], size, density, importance, suggestedTitle}``.
+    No clusters yet → ``{clusters: []}`` (honest empty state)."""
+    return ok(data={"clusters": reader.detect_clusters()})
+
+
+@router.get("/mocs")
+def mocs():
+    """List MOC-type notes (W5a, D-W5.2), newest first. Empty → ``{items: []}``."""
+    return ok(data=reader.mocs())
+
+
 @router.post("/notes")
 def create_note(body: NoteCreateInput):
     """Create a note (capture → fleeting). Server-set id + timestamps. Goes through

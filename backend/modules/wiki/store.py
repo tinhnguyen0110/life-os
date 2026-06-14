@@ -702,6 +702,19 @@ def edges_among(note_ids: set[int]) -> list[sqlite3.Row]:
         return conn.execute(sql, ids + ids).fetchall()
 
 
+def all_resolved_edges() -> list[sqlite3.Row]:
+    """Every RESOLVED edge in the whole graph as ``{source_id, target_id}`` (W5a
+    cluster detection — connected-components over the full edge set). Self-edges
+    (source==target) are excluded — they add no connectivity between notes. A note
+    with no resolved edge simply doesn't appear (isolated → not in any cluster)."""
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT source_id, target_id FROM wiki_links "
+            "WHERE is_resolved = 1 AND target_id IS NOT NULL AND source_id != target_id"
+        ).fetchall()
+
+
 def fleeting_notes() -> list[sqlite3.Row]:
     """Notes with status='fleeting', oldest→newest (the inbox)."""
     conn = db.get_conn()

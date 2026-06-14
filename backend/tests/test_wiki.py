@@ -1126,7 +1126,10 @@ def test_ego_graph_depth1(wiki_db):
     ids = {n["id"] for n in g["nodes"]}
     assert ids == {center.id, a.id, b.id}   # 1-hop neighbors both directions
     assert g["center"] == center.id
-    assert g["clusters"] == []
+    # W5a: clusters is now POPULATED (was [] in W1c). C-A + B-C = 2 edges among 3
+    # nodes (density 0.667 ≥ threshold) → one detected cluster over these members.
+    assert len(g["clusters"]) == 1
+    assert {m["id"] for m in g["clusters"][0]["members"]} == {center.id, a.id, b.id}
 
 
 def test_ego_graph_depth2_reaches_2hops(wiki_db):

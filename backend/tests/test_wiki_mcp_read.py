@@ -184,5 +184,14 @@ def test_server_builds_with_all_tools():
     assert server is not None
     assert set(read_server.TOOLS.keys()) == {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_graph",
-        "wiki_get_note", "wiki_backlinks", "wiki_recent_ops",
+        "wiki_get_note", "wiki_backlinks", "wiki_recent_ops", "wiki_clusters",
     }
+
+
+def test_wiki_clusters_parity(wiki_db):
+    """W5a: the wiki_clusters MCP tool returns the same data as reader.detect_clusters."""
+    # seed a ≥3-note dense cluster
+    a = wsvc.create_note(NoteCreateInput(title="Cluster A", content="x")).id
+    b = wsvc.create_note(NoteCreateInput(title="Cluster B", content=f"[[{a}]]")).id
+    wsvc.create_note(NoteCreateInput(title="Cluster C", content=f"[[{a}]] [[{b}]]"))
+    assert read_server.wiki_clusters()["clusters"] == reader.detect_clusters()

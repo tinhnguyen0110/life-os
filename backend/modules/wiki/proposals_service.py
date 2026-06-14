@@ -168,6 +168,11 @@ def _apply(proposal: dict[str, Any]) -> int | None:
             # so the vault records "this came from agent X", not a generic human.
             create_payload = dict(payload)
             create_payload.setdefault("author", actor)
+            # D-W5.2: a `moc` proposal creates a first-class moc-type note (so MOCs
+            # are listable/filterable + the graph can style them). An explicit
+            # payload noteType still wins (defensive — but moc is the intent here).
+            if kind == "moc":
+                create_payload.setdefault("noteType", "moc")
             note = service.create_note(NoteCreateInput(**create_payload), actor=actor)
             return note.id
 

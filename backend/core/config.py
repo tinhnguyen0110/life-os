@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     # have nothing to link to). Env-overridable via LIFEOS_WIKI_COLD_START_MIN_NOTES.
     wiki_cold_start_min_notes: int = 5
 
+    # --- Wiki cluster detection (Sprint W5a, D-W5.1) -----------------------
+    # A "cluster" (MOC candidate) = a connected group of resolved-edge-linked notes
+    # of at least this size whose internal link-density is at least this threshold.
+    # Graph community detection, NO vector (Phase-2). Env: LIFEOS_WIKI_CLUSTER_*.
+    wiki_cluster_min_size: int = 3            # ≥3 notes to be worth an MOC (D-W5.1)
+    wiki_cluster_min_density: float = 0.30    # internal-edge density floor (0..1)
+
     # --- OKX exchange (read-only API key, optional) -------------------------
     # Set via .env or env vars. Left empty → exchange module returns stub/empty.
     okx_api_key: str = Field(default="", description="OKX API key")

@@ -120,6 +120,15 @@ def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     return {"ops": reader.recent_ops(limit=int(limit))}
 
 
+def wiki_clusters() -> dict[str, Any]:
+    """MOC candidates (W5a): graph-detected clusters of linked notes, ranked by
+    advisory importance. Each {members:[{id,title}], size, density, importance,
+    suggestedTitle}. The agent reads these → reads members (wiki_get_note) → drafts
+    an MOC + spots contradictions → propose_moc (write server). NO clusters → []."""
+    _audit("wiki_clusters", {})
+    return {"clusters": reader.detect_clusters()}
+
+
 # Registry of (name → logic fn) — the single source of truth for what tools exist.
 # Tests iterate this for parity + audit; FastMCP registration iterates it below.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -130,6 +139,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_get_note": wiki_get_note,
     "wiki_backlinks": wiki_backlinks,
     "wiki_recent_ops": wiki_recent_ops,
+    "wiki_clusters": wiki_clusters,
 }
 
 
@@ -153,6 +163,7 @@ def build_server() -> Any:
     mcp.add_tool(wiki_get_note, description=wiki_get_note.__doc__)
     mcp.add_tool(wiki_backlinks, description=wiki_backlinks.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
+    mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
     return mcp
 
 
