@@ -2,7 +2,8 @@
    Nav config — D3 (plan_sprint_0.md): 6 groups, 14 screens S1–S14.
    SPEC §1 grouping: Tổng quan / Dự án / Tài chính / Hằng ngày / Hệ thống(Tự động) / Cấu hình.
    DEVIATION from mock NAV (ARCH §11): mock "AI Brain" item DROPPED — no embedded AI.
-   Badges are STATIC placeholders this sprint (wired to real counts later).
+   Badges: nav.ts values are the FAIL-SOFT FALLBACK; Sidebar.tsx wires the live
+   values (routines/projects/market/claude-usage) — F2-M4.
    `route` = Next.js App Router path; "/" = S1 Home (app/page.tsx).
    ============================================================ */
 import type { IconKey } from "./icons";
@@ -58,10 +59,8 @@ export const NAV: NavGroup[] = [
   {
     sec: "Tri thức",
     items: [
-      // W1 Vault Overview · W3 Inbox/Refine · W4 Graph — all live. Proposals (P1)
-      // lands at M4 (no embedded AI now) — NOT linked yet (no dead links, per
-      // milestone-audit-grep-all-stubs). Inbox badge wired live with the shell
-      // badge task (sidebar-badges-static-placeholder); static placeholder for now.
+      // W1 Vault · W3 Inbox · W4 Graph · P1 Proposals · W5 MOC · A1c Sync —
+      // all live + linked (each resolves to a real screen). No inbox badge.
       { route: "/wiki", label: "Wiki Home", icon: "i-home", screen: "W1" },
       { route: "/wiki/inbox", label: "Wiki Inbox", icon: "i-note", screen: "W3" },
       { route: "/wiki/graph", label: "Graph", icon: "i-graph", screen: "W4" },
