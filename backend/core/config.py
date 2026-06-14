@@ -168,6 +168,10 @@ class Settings(BaseSettings):
     def journal_dir(self) -> Path:
         return self.data_dir / "journal"
 
+    @property
+    def decision_journal_dir(self) -> Path:
+        return self.data_dir / "decision_journal"
+
 
 # Module-level singleton — import this everywhere.
 settings = Settings()
