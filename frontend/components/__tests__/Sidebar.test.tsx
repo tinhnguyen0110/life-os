@@ -38,7 +38,7 @@ describe("Sidebar", () => {
     getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 5, total: 5, runsToday: 0, lastRunAt: null } });
     getProjects.mockResolvedValue({ success: true, data: { projects: [], summary: { total: 7 } } });
     getMarket.mockResolvedValue({ success: true, data: { quotes: [], triggers: [], macro: [], alertHistory: [] } });
-    getClaudeUsage.mockResolvedValue({ success: true, data: { pct: 18.9 } });
+    getClaudeUsage.mockResolvedValue({ success: true, data: { pct5h: 18.9, pct: 1873 } });
   });
   afterEach(() => {
     cleanup();
@@ -118,8 +118,10 @@ describe("Sidebar", () => {
     render(<Sidebar onToggleCollapse={() => {}} />);
     // projects → summary.total=7 (was static "4")
     await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("7"));
-    // claude-usage → round(pct)=19% (was static "71%")
+    // claude-usage → round(pct5h)=19% (was static "71%"). MUST use pct5h (18.9), NOT
+    // the overflowing pct (1873) — matches the S9 screen + Home tile (honest-mirror).
     expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("19%");
+    expect(screen.getByTestId("nav-badge-/claude-usage")).not.toHaveTextContent("1873");
     // automation → activeCount=5
     expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5");
   });
