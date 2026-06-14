@@ -480,13 +480,27 @@ def detect_clusters() -> list[dict[str, Any]]:
     min_size = settings.wiki_cluster_min_size
     min_density = settings.wiki_cluster_min_density
 
+    components = _connected_components(adj)
+    # F1-P1 (perf): bucket each edge into its component in ONE pass (O(E)) instead of
+    # rescanning the whole edge set per component (the old O(C·E)=O(n²)). Both endpoints
+    # of a resolved edge are in the same component (connectivity), so a node→component
+    # map + one edge pass gives identical internal-edge counts. Behavior-preserving.
+    comp_of: dict[int, int] = {}
+    for ci, comp in enumerate(components):
+        for nid in comp:
+            comp_of[nid] = ci
+    internal_count: dict[int, int] = {}
+    for (a, _b) in undirected:
+        cid = comp_of.get(a)
+        if cid is not None:
+            internal_count[cid] = internal_count.get(cid, 0) + 1
+
     clusters: list[dict[str, Any]] = []
-    for comp in _connected_components(adj):
+    for ci, comp in enumerate(components):
         n = len(comp)
         if n < min_size:
             continue
-        # internal undirected edges among this component's members
-        internal = sum(1 for (a, b) in undirected if a in comp and b in comp)
+        internal = internal_count.get(ci, 0)
         max_possible = n * (n - 1) / 2
         density = (internal / max_possible) if max_possible else 0.0
         if density < min_density:
