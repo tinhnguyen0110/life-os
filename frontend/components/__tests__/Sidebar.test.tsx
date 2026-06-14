@@ -57,18 +57,19 @@ describe("Sidebar", () => {
     expect(NAV).toHaveLength(7);
   });
 
-  it("renders a link for every nav route (18 nav items: 14 foundation + Wiki Home/Inbox/Graph/Proposals)", () => {
+  it("renders a link for every nav route (19 nav items: 14 foundation + Wiki Home/Inbox/Graph/Proposals/MOC)", () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     for (const route of ALL_ROUTES) {
       expect(container.querySelector(`a[href="${route}"]`)).toBeTruthy();
     }
     // 14 foundation items (13 original + OKX Exchange) + Wiki group: /wiki (W1),
-    // /wiki/inbox (W3), /wiki/graph (W4), /wiki/proposals (P1).
-    expect(ALL_ROUTES).toHaveLength(18);
+    // /wiki/inbox (W3), /wiki/graph (W4), /wiki/proposals (P1), /wiki/moc (W5).
+    expect(ALL_ROUTES).toHaveLength(19);
     expect(container.querySelector('a[href="/wiki"]')).toBeTruthy();
     expect(container.querySelector('a[href="/wiki/graph"]')).toBeTruthy();
     expect(container.querySelector('a[href="/wiki/proposals"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/wiki/moc"]')).toBeTruthy();
   });
 
   it("marks the active route with `on` and aria-current", () => {

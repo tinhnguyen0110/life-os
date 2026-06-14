@@ -24,6 +24,8 @@ import {
   acceptWikiProposal,
   rejectWikiProposal,
   batchAcceptWikiProposals,
+  getWikiClusters,
+  getWikiMocs,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type {
@@ -36,6 +38,8 @@ import type {
   WikiProposal,
   WikiProposalStatus,
   WikiBatchAcceptResult,
+  WikiCluster,
+  WikiMoc,
 } from "@/lib/types";
 
 export type WikiStatusState = "loading" | "error" | "ready";
@@ -371,4 +375,82 @@ export function useWikiProposals(initial: ProposalFilter = "pending"): UseWikiPr
   );
 
   return { proposals, counts, filter, setFilter, status, errMsg, reload, accept, reject, batchAccept };
+}
+
+/* ------------------------------------------------------------------ */
+/* W5 — MOC screen: clusters (candidates) + MOC notes (read-only)     */
+/* ------------------------------------------------------------------ */
+export interface UseWikiMoc {
+  clusters: WikiCluster[];
+  mocs: WikiMoc[];
+  status: WikiStatusState;
+  errMsg: string;
+  /** true = the clusters endpoint errored OR didn't respond in time (hung). Lets the
+   *  UI say "tạm thời không tải được" instead of the honest "no clusters" empty. */
+  clustersUnavailable: boolean;
+  mocsUnavailable: boolean;
+  reload: () => void;
+}
+
+/** Reject if `p` doesn't settle within `ms`. Guards the screen against a HUNG
+ *  endpoint (server never responds → fetch never settles → Promise.allSettled would
+ *  pin the screen on "loading" forever). With a timeout the hung call degrades to a
+ *  rejection → fail-soft to empty + an "unavailable" flag. (Seen live W5b: the W5a
+ *  /wiki/clusters endpoint hung; the MOC list must still render.) */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`request timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
+const MOC_FETCH_TIMEOUT_MS = 8000;
+
+/** Loads /wiki/clusters + /wiki/mocs in parallel. FAIL-SOFT per call: if one
+ *  endpoint errors OR HANGS (per-call timeout), the other still renders — a clusters
+ *  failure shouldn't blank the MOC list and vice-versa. Only a TOTAL failure (both
+ *  reject) → error state. */
+export function useWikiMoc(): UseWikiMoc {
+  const [clusters, setClusters] = useState<WikiCluster[]>([]);
+  const [mocs, setMocs] = useState<WikiMoc[]>([]);
+  const [status, setStatus] = useState<WikiStatusState>("loading");
+  const [errMsg, setErrMsg] = useState("");
+  const [clustersUnavailable, setClustersUnavailable] = useState(false);
+  const [mocsUnavailable, setMocsUnavailable] = useState(false);
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      const [cRes, mRes] = await Promise.allSettled([
+        withTimeout(getWikiClusters(), MOC_FETCH_TIMEOUT_MS),
+        withTimeout(getWikiMocs(), MOC_FETCH_TIMEOUT_MS),
+      ]);
+      if (!alive) return;
+      const cOk = cRes.status === "fulfilled";
+      const mOk = mRes.status === "fulfilled";
+      if (!cOk && !mOk) {
+        // total failure → error state (surface the clusters error/timeout message).
+        setErrMsg(errMessage((cRes as PromiseRejectedResult).reason));
+        setStatus("error");
+        return;
+      }
+      setClusters(cOk ? (cRes.value?.data?.clusters ?? []) : []);
+      setMocs(mOk ? (mRes.value?.data?.items ?? []) : []);
+      setClustersUnavailable(!cOk);
+      setMocsUnavailable(!mOk);
+      setStatus("ready");
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nonce]);
+
+  return { clusters, mocs, status, errMsg, clustersUnavailable, mocsUnavailable, reload };
 }

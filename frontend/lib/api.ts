@@ -43,6 +43,8 @@ import type {
   WikiDecideInput,
   WikiBatchAcceptInput,
   WikiBatchAcceptResult,
+  WikiClusterList,
+  WikiMocList,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -472,6 +474,19 @@ export function batchAcceptWikiProposals(
   body: WikiBatchAcceptInput,
 ): Promise<ApiResponse<WikiBatchAcceptResult>> {
   return apiPost<WikiBatchAcceptResult>("/wiki/proposals/accept-batch", body);
+}
+
+/* ---- W5 MOC / clusters (W5a substrate) ---- */
+
+/** W5 — detected clusters (MOC candidates), ranked by advisory importance. Empty
+ *  when no group meets the size/density threshold (honest — no fabricated clusters). */
+export function getWikiClusters(): Promise<ApiResponse<WikiClusterList>> {
+  return apiGet<WikiClusterList>("/wiki/clusters");
+}
+
+/** W5 — existing MOC notes (noteType="moc"), newest-first. Empty when none ratified. */
+export function getWikiMocs(): Promise<ApiResponse<WikiMocList>> {
+  return apiGet<WikiMocList>("/wiki/mocs");
 }
 
 export const apiBase = BASE;

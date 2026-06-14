@@ -65,6 +65,7 @@ export const NAV: NavGroup[] = [
       { route: "/wiki/inbox", label: "Wiki Inbox", icon: "i-note", screen: "W3" },
       { route: "/wiki/graph", label: "Graph", icon: "i-graph", screen: "W4" },
       { route: "/wiki/proposals", label: "Proposals", icon: "i-pin", screen: "P1" },
+      { route: "/wiki/moc", label: "MOC", icon: "i-moc", screen: "W5" },
     ],
   },
   {
@@ -105,6 +106,7 @@ export const CRUMB: Record<string, string> = {
   "/wiki/inbox": "Inbox / Refine",
   "/wiki/graph": "Graph Explorer",
   "/wiki/proposals": "Proposal Queue",
+  "/wiki/moc": "MOC · Synthesize",
 };
 
 /** All 14 screen routes (detail routes resolve under their parent nav item). */

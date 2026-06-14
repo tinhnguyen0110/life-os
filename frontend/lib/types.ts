@@ -1032,3 +1032,46 @@ export interface WikiBatchAcceptResult {
   accepted: number;
   failed: number;
 }
+
+/* ---- W5 SYNTHESIZE / MOC (W5a) — MIRRORS backend reader.clusters / reader.mocs.
+   Substrate only: clusters are detected by CODE (graph community detection,
+   deterministic, NO vector/AI); MOC drafting + throughline + contradiction are the
+   EXTERNAL Claude Code (MCP) job (ARCH §11, D-W5.4) — this screen lists the substrate
+   + hints "ask Claude Code to draft", it does NOT fabricate an AI workspace. ---- */
+
+/** One cluster member (id + title). title null = untitled note. */
+export interface WikiClusterMember {
+  id: number;
+  title: string | null;
+}
+
+/** One detected cluster = MOC candidate (GET /wiki/clusters → data.clusters[]).
+ *  `importance` = size×density is ADVISORY (D-W5.3) — ranks candidates, never gates.
+ *  `suggestedTitle` is a deterministic hint, NOT an AI-generated title. */
+export interface WikiCluster {
+  members: WikiClusterMember[];
+  size: number;
+  density: number;
+  importance: number;
+  suggestedTitle: string | null;
+}
+
+/** GET /wiki/clusters payload. Empty = no cluster meets the size/density threshold. */
+export interface WikiClusterList {
+  clusters: WikiCluster[];
+}
+
+/** One MOC note (GET /wiki/mocs → data.items[]) — a noteType="moc" note. */
+export interface WikiMoc {
+  id: number;
+  title: string | null;
+  status: WikiStatus;
+  created: string;
+  updated: string;
+  outboundLinks: number;
+}
+
+/** GET /wiki/mocs payload. Empty = no MOC notes yet (none ratified). */
+export interface WikiMocList {
+  items: WikiMoc[];
+}
