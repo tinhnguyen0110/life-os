@@ -163,6 +163,14 @@ def mocs():
     return ok(data=reader.mocs())
 
 
+@router.get("/tree")
+def tree():
+    """W-Explorer virtual folder-tree built from notes' ``folder`` fields. Nested
+    ``{name, path, folders:[...], notes:[{id, title}]}`` rooted at "". Folders are
+    virtual (files stay flat at <id>.md — D1). Empty vault → honest empty root."""
+    return ok(data=reader.folder_tree())
+
+
 @router.post("/notes")
 def create_note(body: NoteCreateInput):
     """Create a note (capture → fleeting). Server-set id + timestamps. Goes through

@@ -154,6 +154,7 @@ def _render(note: Note, capture_source: str = "quick_add") -> str:
         "author": note.author,
         "tags": note.tags,
         "captureSource": capture_source,
+        "folder": note.folder,
         "created": note.created,
         "updated": note.updated,
     }
@@ -208,6 +209,9 @@ def _parse(content: str, note_id: int) -> Note | None:
             author=fm.get("author", "human"),
             tags=fm.get("tags") or [],
             content=body,
+            # W-Explorer: absent folder (a pre-folder note) → "" (root) — the
+            # migration-safe default; an existing note renders identically.
+            folder=fm.get("folder") or "",
             created=fm["created"],
             updated=fm["updated"],
             contentHash=_body_hash(body),
@@ -232,7 +236,7 @@ def _commit_note(note: Note, message: str, capture_source: str = "quick_add") ->
         status=note.status, note_type=note.noteType, trust_tier=note.trustTier,
         author=note.author, tags_json=_json(note.tags),
         content_hash=note.contentHash, created=note.created, updated=note.updated,
-        capture_source=capture_source,
+        capture_source=capture_source, folder=note.folder,
     )
     # B2 — refresh the title/alias→id resolver index for THIS note, then re-derive
     # its outbound edges from the (new) body against the (now-current) index.
@@ -360,7 +364,7 @@ def _apply_create(op: Op) -> Note:
     note = Note(
         id=note_id, title=inp.title, aliases=[], status=inp.status,
         noteType=inp.noteType, trustTier="verified", author=inp.author,
-        tags=inp.tags, content=inp.content, created=now, updated=now,
+        tags=inp.tags, content=inp.content, folder=inp.folder, created=now, updated=now,
         contentHash=_body_hash(inp.content),
     )
     sha = _commit_note(note, f"create wiki note {note_id}",
@@ -384,12 +388,14 @@ def _apply_update(op: Op) -> Note:
     new_trust = inp.trustTier if inp.trustTier is not None else existing.trustTier
     new_aliases = inp.aliases if inp.aliases is not None else existing.aliases
     new_tags = inp.tags if inp.tags is not None else existing.tags
+    new_folder = inp.folder if inp.folder is not None else existing.folder
 
     new_hash = _body_hash(new_content)
     fm_unchanged = (
         new_title == existing.title and new_status == existing.status
         and new_note_type == existing.noteType and new_trust == existing.trustTier
         and new_aliases == existing.aliases and new_tags == existing.tags
+        and new_folder == existing.folder  # W-Explorer: a move IS a change (not a no-op touch)
     )
     # A5 — content-hash dirty check: body identical AND frontmatter unchanged →
     # no-op touch: no new commit, no updated bump, no op_log row.
@@ -401,8 +407,8 @@ def _apply_update(op: Op) -> Note:
     note = Note(
         id=note_id, title=new_title, aliases=new_aliases, status=new_status,
         noteType=new_note_type, trustTier=new_trust, author=existing.author,
-        tags=new_tags, content=new_content, created=existing.created, updated=now,
-        contentHash=new_hash,
+        tags=new_tags, content=new_content, folder=new_folder,
+        created=existing.created, updated=now, contentHash=new_hash,
     )
     # captureSource is provenance — preserve it across edits (read from the md the
     # note was last written with). A refine/edit never changes where it was captured.

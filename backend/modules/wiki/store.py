@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS wiki_notes (
     content_hash  TEXT    NOT NULL DEFAULT '',  -- sha256(body); derived cache
     created       TEXT    NOT NULL,             -- ISO-8601 UTC
     updated       TEXT    NOT NULL,             -- ISO-8601 UTC
-    capture_source TEXT   NOT NULL DEFAULT 'quick_add'  -- C5 inbox (W1c)
+    capture_source TEXT   NOT NULL DEFAULT 'quick_add', -- C5 inbox (W1c)
+    folder        TEXT    NOT NULL DEFAULT ''   -- W-Explorer virtual path; ''=root
 );
 -- title→id resolver path (W1b uses this for [[Title]]→id). title is mutable so
 -- this is a plain (non-unique) index — collisions are resolved by W1b's logic.
@@ -147,6 +148,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE wiki_notes ADD COLUMN capture_source TEXT NOT NULL "
             "DEFAULT 'quick_add'"
         )
+    if "folder" not in cols:  # W-Explorer — existing notes migrate to ''=root
+        conn.execute(
+            "ALTER TABLE wiki_notes ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -181,26 +186,28 @@ def upsert_note_cache(
     *, note_id: int, title: str, aliases_json: str, status: str, note_type: str,
     trust_tier: str, author: str, tags_json: str, content_hash: str,
     created: str, updated: str, capture_source: str = "quick_add",
+    folder: str = "",
 ) -> None:
     """Insert-or-replace the cache row for a note. Called by the single writer
     AFTER the md file is committed (md is source of truth; this is the index).
     ``capture_source`` is set on create and preserved across edits (an edit doesn't
     change where the note was captured) — the writer passes the existing value on
-    update."""
+    update. ``folder`` is the W-Explorer virtual path (''=root); a move updates it."""
     conn = db.get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO wiki_notes (id, title, aliases, status, note_type, "
-            "trust_tier, author, tags, content_hash, created, updated, capture_source) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "trust_tier, author, tags, content_hash, created, updated, capture_source, "
+            "folder) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "title=excluded.title, aliases=excluded.aliases, status=excluded.status, "
             "note_type=excluded.note_type, trust_tier=excluded.trust_tier, "
             "author=excluded.author, tags=excluded.tags, "
             "content_hash=excluded.content_hash, updated=excluded.updated, "
-            "capture_source=excluded.capture_source",
+            "capture_source=excluded.capture_source, folder=excluded.folder",
             (note_id, title, aliases_json, status, note_type, trust_tier, author,
-             tags_json, content_hash, created, updated, capture_source),
+             tags_json, content_hash, created, updated, capture_source, folder),
         )
         conn.commit()
 

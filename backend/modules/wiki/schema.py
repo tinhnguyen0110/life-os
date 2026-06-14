@@ -15,9 +15,21 @@ suggestion fields are LATER sprints (W1b/W1c/W2) and intentionally absent here.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_folder(v: str) -> str:
+    """Normalize a virtual folder path (W-Explorer): strip, drop leading/trailing
+    "/", collapse "//"→"/", strip whitespace around each segment. "" = root. So
+    "  /Projects//life-os/ " → "Projects/life-os". A path that normalizes to empty
+    (e.g. "/" or "   ") → "" (root). Deterministic + idempotent."""
+    if not v:
+        return ""
+    segments = [s.strip() for s in re.split(r"/+", v.strip()) if s.strip()]
+    return "/".join(segments)
 
 # --- Enums (Literal-locked at the boundary) -------------------------------- #
 Status = Literal["fleeting", "developing", "evergreen"]
@@ -42,6 +54,10 @@ class Note(BaseModel):
     author: str = "human"  # human | agent:<name>
     tags: list[str] = Field(default_factory=list)
     content: str = ""  # markdown body
+    # W-Explorer: a VIRTUAL folder path (e.g. "Projects/life-os"); "" = root. NOT a
+    # physical folder — the file stays flat at <id>.md (D1). A "move" only changes this
+    # field. The explorer builds a virtual tree from all notes' folder values.
+    folder: str = ""
     created: str
     updated: str
     contentHash: str
@@ -65,11 +81,17 @@ class NoteCreateInput(BaseModel):
     # mcp_agent | daily_note. Free-form str (not Literal) so a new source doesn't
     # break the boundary; defaults quick_add.
     captureSource: str = "quick_add"
+    folder: str = Field(default="", max_length=500)  # W-Explorer virtual path; ""=root
 
     @field_validator("title")
     @classmethod
     def _strip_title(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("folder")
+    @classmethod
+    def _norm_folder(cls, v: str) -> str:
+        return normalize_folder(v)
 
 
 class MergeInput(BaseModel):
@@ -131,8 +153,16 @@ class NoteUpdateInput(BaseModel):
     trustTier: TrustTier | None = None
     aliases: list[str] | None = None
     tags: list[str] | None = None
+    # W-Explorer: setting folder = a MOVE (metadata-only; no .md rewrite, id/links
+    # survive). None = unchanged; "" = move to root.
+    folder: str | None = Field(default=None, max_length=500)
 
     @field_validator("title")
     @classmethod
     def _strip_title(cls, v: str | None) -> str | None:
         return v.strip() if v is not None else None
+
+    @field_validator("folder")
+    @classmethod
+    def _norm_folder(cls, v: str | None) -> str | None:
+        return normalize_folder(v) if v is not None else None
