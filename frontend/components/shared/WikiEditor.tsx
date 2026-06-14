@@ -3,14 +3,15 @@
    WikiEditor — minimal markdown editor for a wiki note body (W2 edit mode + W3
    refine). Per FE recon + north-star: a plain controlled <textarea>, NO heavy
    editor lib (CodeMirror/Lexical). A "Xem trước" toggle renders the live body via
-   WikiLinkRenderer so `[[id|title]]` links + **bold** preview correctly.
+   WikiMarkdown (react-markdown + remark-gfm) so full markdown (headings/lists/code/
+   tables/quotes) + `[[id|title]]` wikilinks preview correctly — WEXP-FE polish.
 
    Wikilink autocomplete (`[[` → title→id search) is a LATER enhancement — at M1
    the user types `[[47|title]]` directly; the textarea + preview is enough to
    write and verify links. Keeping it a textarea means zero new deps.
    ============================================================ */
 import { useState } from "react";
-import { WikiLinkRenderer } from "./WikiLinkRenderer";
+import { WikiMarkdown } from "./WikiMarkdown";
 
 interface WikiEditorProps {
   value: string;
@@ -42,12 +43,12 @@ export function WikiEditor({ value, onChange, placeholder, disabled, testId }: W
           Xem trước
         </button>
         <span className="hint" style={{ marginLeft: "auto" }}>
-          Link: <code>[[47|title]]</code> · <b>**đậm**</b>
+          Markdown + <code>[[47|title]]</code> link
         </span>
       </div>
       {preview ? (
         <div className="wedit-preview" data-testid="wedit-preview-body">
-          <WikiLinkRenderer content={value} />
+          <WikiMarkdown content={value} testId="wedit-md" />
         </div>
       ) : (
         <textarea

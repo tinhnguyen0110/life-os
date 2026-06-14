@@ -45,6 +45,7 @@ import type {
   WikiBatchAcceptResult,
   WikiClusterList,
   WikiMocList,
+  WikiTree,
   WikiCitationVerifyInput,
   WikiCitationVerifyResult,
   WikiConflictList,
@@ -495,6 +496,12 @@ export function getWikiClusters(): Promise<ApiResponse<WikiClusterList>> {
 /** W5 — existing MOC notes (noteType="moc"), newest-first. Empty when none ratified. */
 export function getWikiMocs(): Promise<ApiResponse<WikiMocList>> {
   return apiGet<WikiMocList>("/wiki/mocs");
+}
+
+/** WEXP — virtual folder tree (groups of notes by their `folder` field) for the
+ *  explorer pane. Empty vault → groups: []. (WEXP-BE freezes the shape.) */
+export function getWikiTree(): Promise<ApiResponse<WikiTree>> {
+  return apiGet<WikiTree>("/wiki/tree");
 }
 
 /* ---- A1b citation verify + A1a sync conflicts (W7) ---- */

@@ -70,7 +70,9 @@ describe("W2 Note view/edit", () => {
     // "MOCs are workstations" ALSO appears in backlinks/outbound panels).
     const body = within(screen.getByTestId("wiki-body"));
     expect(body.getByText("MOCs are workstations")).toHaveAttribute("href", "/wiki/88");
-    expect(body.getByText("bồi đắp").tagName).toBe("B");
+    // WEXP: body now renders via WikiMarkdown (react-markdown) — **bold** → <strong>
+    // (semantic standard) instead of the old hand-rolled <b>. Wikilinks still preserved.
+    expect(body.getByText("bồi đắp").tagName).toBe("STRONG");
     // ghost link in body is NOT a link
     const bodyGhost = body.getByText("Atomicity principle");
     expect(bodyGhost.tagName).toBe("SPAN");

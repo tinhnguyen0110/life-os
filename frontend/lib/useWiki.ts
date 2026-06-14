@@ -28,6 +28,7 @@ import {
   getWikiMocs,
   getWikiConflicts,
   resolveWikiConflict,
+  getWikiTree,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type {
@@ -43,6 +44,7 @@ import type {
   WikiCluster,
   WikiMoc,
   WikiConflict,
+  WikiTreeNode,
 } from "@/lib/types";
 
 export type WikiStatusState = "loading" | "error" | "ready";
@@ -509,4 +511,57 @@ export function useWikiConflicts(): UseWikiConflicts {
   );
 
   return { conflicts, status, errMsg, reload, resolve };
+}
+
+/* ------------------------------------------------------------------ */
+/* WEXP — wiki folder tree (explorer pane) + move-note                */
+/* ------------------------------------------------------------------ */
+export interface UseWikiTree {
+  /** the root tree node (null until loaded / on error). */
+  tree: WikiTreeNode | null;
+  status: WikiStatusState;
+  errMsg: string;
+  reload: () => void;
+  /** move a note to a folder (PUT {folder}) → refetch the tree. THROWS on failure
+   *  (fail-closed — the tree is NOT optimistically mutated). folder "" = vault root. */
+  move: (id: number, folder: string) => Promise<void>;
+}
+
+export function useWikiTree(): UseWikiTree {
+  const [tree, setTree] = useState<WikiTreeNode | null>(null);
+  const [status, setStatus] = useState<WikiStatusState>("loading");
+  const [errMsg, setErrMsg] = useState("");
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      try {
+        const res = await getWikiTree();
+        if (!alive) return;
+        setTree(res?.data ?? null);
+        setStatus("ready");
+      } catch (e) {
+        if (!alive) return;
+        setErrMsg(errMessage(e));
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nonce]);
+
+  const move = useCallback(
+    async (id: number, folder: string) => {
+      await updateWikiNote(id, { folder }); // throws → caller surfaces (fail-closed)
+      reload();
+    },
+    [reload],
+  );
+
+  return { tree, status, errMsg, reload, move };
 }

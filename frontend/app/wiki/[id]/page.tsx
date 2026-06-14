@@ -18,7 +18,7 @@
 import { useEffect, useState } from "react";
 import { useWikiNote } from "@/lib/useWiki";
 import {
-  WikiLinkRenderer,
+  WikiMarkdown,
   WikiEditor,
   BacklinksPanel,
   StatusPill,
@@ -231,7 +231,7 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
                     tạo {note.created} · sửa {note.updated}
                   </span>
                 </div>
-                <WikiLinkRenderer content={note.content} />
+                <WikiMarkdown content={note.content} />
                 {note.trustTier === "candidate" && <CandidateWarning testId="wiki-candidate-warn" />}
               </>
             )}

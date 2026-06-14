@@ -792,6 +792,9 @@ export interface WikiNoteUpdateInput {
   trustTier?: WikiTrustTier;
   aliases?: string[];
   tags?: string[];
+  /** WEXP: virtual folder path ("/"-delimited). Move = set this (no .md rewrite).
+   *  Optional; the WEXP-BE PUT accepts it once that lands. */
+  folder?: string;
 }
 
 /** One inbound linked mention (GET /wiki/notes/{id}/backlinks → linked[]). The
@@ -1154,6 +1157,28 @@ export interface WikiConflictResolveInput {
   noteId: number;
   content: string;
 }
+
+/* ---- Wiki Explorer tree (WEXP) — GET /wiki/tree. MIRRORS the frozen WEXP-BE shape:
+   a RECURSIVE nested node {name, path, folders[], notes[]} built from notes' virtual
+   `folder` field (NOT physical folders — flat 47.md preserved). Root node has name/
+   path "". The backend pre-nests the tree (the FE renders it directly, no flattening). */
+
+export interface WikiTreeNote {
+  id: number;
+  title: string | null;
+}
+
+/** A recursive folder node. `path` = "/"-delimited virtual path ("" = vault root);
+ *  `folders` = subfolders (same shape); `notes` = notes directly in this folder. */
+export interface WikiTreeNode {
+  name: string;
+  path: string;
+  folders: WikiTreeNode[];
+  notes: WikiTreeNote[];
+}
+
+/** GET /wiki/tree payload = the root WikiTreeNode (data IS the node). */
+export type WikiTree = WikiTreeNode;
 
 /* ---- Decision Journal + Calibration (W7-A2 / F1-H1) — MIRRORS backend
    modules/decision_journal/schema.py. A GENERAL decision (not a trade): decision +

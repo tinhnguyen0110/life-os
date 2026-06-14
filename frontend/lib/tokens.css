@@ -593,3 +593,62 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 /* pulsing trust-boundary dot (mock used .dot.acc.pulse) */
 .dot.pulse { animation:wpulse 1.8s ease-in-out infinite; }
 @keyframes wpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+
+/* ============================================================
+   WEXP — wiki 2-pane explorer (LEFT) + markdown render polish
+   ============================================================ */
+/* 2-pane: explorer LEFT | content. Flip side = swap the grid columns / order. */
+.wiki-2pane { display:grid; grid-template-columns:264px 1fr; gap:0; align-items:start; position:relative; }
+.wiki-2pane.wex-collapsed { grid-template-columns:0 1fr; }
+.wiki-pane-left { border-right:1px solid var(--line); min-height:calc(100vh - 150px); background:var(--bg-1); position:sticky; top:0; max-height:calc(100vh - 60px); overflow-y:auto; }
+.wiki-pane-left[hidden] { display:none; }
+.wiki-pane-content { min-width:0; padding-left:18px; }
+.wiki-2pane.wex-collapsed .wiki-pane-content { padding-left:0; }
+.wiki-pane-toggle { position:absolute; left:248px; top:6px; z-index:5; width:24px; height:24px; border-radius:6px; border:1px solid var(--line-2); background:var(--bg-2); color:var(--tx-1); display:grid; place-items:center; cursor:pointer; transition:left .15s; }
+.wiki-2pane.wex-collapsed .wiki-pane-toggle { left:0; transform:rotate(180deg); }
+.wiki-pane-toggle svg { width:14px; height:14px; }
+
+/* explorer tree */
+.wex { display:flex; flex-direction:column; padding:8px 6px; font-size:12.5px; }
+.wex-head { display:flex; align-items:center; gap:8px; padding:4px 6px 8px; }
+.wex-refresh { margin-left:auto; background:none; border:0; color:var(--tx-2); cursor:pointer; display:grid; place-items:center; }
+.wex-refresh svg { width:13px; height:13px; }
+.wex-tree { display:flex; flex-direction:column; gap:1px; }
+.wex-folder-head { display:flex; align-items:center; gap:6px; width:100%; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; border-radius:6px; text-align:left; font-size:12.5px; }
+.wex-folder-head:hover { background:var(--bg-2); }
+.wex-caret { display:inline-block; transition:transform .12s; font-size:10px; color:var(--tx-2); }
+.wex-caret.open { transform:rotate(90deg); }
+.wex-folder-name { font-weight:600; color:var(--tx-0); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wex-count { margin-left:auto; font-family:var(--mono); font-size:10px; }
+.wex-file { display:flex; align-items:center; gap:2px; border-radius:6px; }
+.wex-file.on { background:color-mix(in oklch,var(--accent) 14%,transparent); }
+.wex-file:hover { background:var(--bg-2); }
+.wex-file-open { flex:1; min-width:0; display:flex; align-items:center; gap:7px; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; text-align:left; }
+.wex-file.on .wex-file-open { color:var(--accent); }
+.wex-file-open svg { width:13px; height:13px; flex-shrink:0; color:var(--tx-2); }
+.wex-file-lbl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12.5px; }
+.wex-file-move { background:none; border:0; color:var(--tx-2); cursor:pointer; padding:3px 6px; opacity:0; font-size:12px; }
+.wex-file:hover .wex-file-move { opacity:1; }
+.wex-file-move:hover { color:var(--accent); }
+.wex-root-notes { margin-top:2px; }
+
+/* move-to-folder modal */
+.wex-move { position:fixed; inset:0; background:color-mix(in oklch,var(--bg-0) 70%,transparent); display:grid; place-items:center; z-index:50; }
+.wex-move-box { background:var(--bg-1); border:1px solid var(--line-2); border-radius:12px; padding:16px 18px; width:340px; box-shadow:0 8px 30px -8px #000; }
+.wex-move-input { width:100%; background:var(--bg-0); border:1px solid var(--line-2); border-radius:7px; padding:8px 10px; color:var(--tx-0); font-family:var(--mono); font-size:12px; outline:none; }
+
+/* markdown render (react-markdown + remark-gfm) — readable Obsidian-feel */
+.wmd { font-size:13.5px; line-height:1.65; color:var(--tx-0); }
+.wmd p { margin:0 0 10px; }
+.wmd .wmd-h { margin:16px 0 8px; line-height:1.3; }
+.wmd h2.wmd-h { font-size:18px; } .wmd h3.wmd-h { font-size:15px; } .wmd h4.wmd-h { font-size:13.5px; color:var(--tx-1); }
+.wmd ul, .wmd ol { margin:0 0 10px; padding-left:22px; }
+.wmd li { margin:3px 0; }
+.wmd code { font-family:var(--mono); font-size:12px; background:var(--bg-2); padding:1px 5px; border-radius:4px; }
+.wmd pre { background:var(--bg-0); border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow-x:auto; margin:0 0 12px; }
+.wmd pre code { background:none; padding:0; font-size:12px; line-height:1.5; }
+.wmd table { border-collapse:collapse; margin:0 0 12px; font-size:12.5px; }
+.wmd th, .wmd td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+.wmd th { background:var(--bg-2); font-weight:600; }
+.wmd .wmd-quote { border-left:3px solid var(--accent); margin:0 0 12px; padding:4px 14px; color:var(--tx-1); background:color-mix(in oklch,var(--accent) 4%,transparent); border-radius:0 8px 8px 0; }
+.wmd a.wlink { color:var(--accent); }
