@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "life-os backend — single-user personal command center (FastAPI + module/registry, md+git store, SQLite time-series, APScheduler)"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.110",
+    # Cap <0.137: FastAPI 0.137 wraps included sub-routers in an _IncludedRouter
+    # object that has no `.path`, breaking code/tests that iterate app.routes
+    # (e.g. tests/test_registry.py::test_happy_module_is_mounted). Pin until that
+    # iteration is made wrapper-aware.
+    "fastapi>=0.110,<0.137",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
@@ -22,6 +26,18 @@ dev = [
     "ruff>=0.4",
     "respx>=0.21",
 ]
+
+# Flat-layout: real importable packages are core/modules/store (+ top-level
+# main.py). data/ and tests/ are NOT distribution packages, so disable
+# setuptools auto-discovery (which errors on the multi-top-level flat layout)
+# and declare the package set explicitly.
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "modules*", "store*"]
+exclude = ["tests*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
