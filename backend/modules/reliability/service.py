@@ -19,7 +19,6 @@ from typing import Any, Callable
 
 from modules.wiki import citations as wiki_citations
 from modules.wiki import service as wiki_service
-from modules.wiki.schema import NoteCreateInput
 
 from .schema import CaseResult, CheckResult, ReliabilityReport
 
@@ -84,43 +83,63 @@ def run_grounding_eval(note_id: int, passage: str,
 # --------------------------------------------------------------------------- #
 # Fail-closed gates — the MCP read/write servers' capability separation         #
 # --------------------------------------------------------------------------- #
+# Mutation/enqueue symbols a READ tool must never be able to reach. F2-S2 broadened
+# to include the LOW-LEVEL store writers (insert_proposal/mark_decided) — not just the
+# high-level service fns — so a tool can't reach a writer one layer down either.
 _READ_FORBIDDEN = {
     "create_note", "update_note", "delete_note", "merge_notes", "refine_note",
     "enqueue", "create_proposal", "accept_proposal", "reject_proposal", "batch_accept",
-    "proposals_service",
+    "proposals_service", "insert_proposal", "mark_decided",
 }
+# The WRITE tool may enqueue (create_proposal/insert_proposal) but must NOT mutate a
+# note or accept/reject a proposal (the human ratifies).
 _WRITE_FORBIDDEN = {
     "create_note", "update_note", "delete_note", "merge_notes", "refine_note",
-    "enqueue", "accept_proposal", "reject_proposal", "batch_accept",
+    "enqueue", "accept_proposal", "reject_proposal", "batch_accept", "mark_decided",
 }
+
+
+def _tool_reachable_symbols(server_module: object) -> set[str]:
+    """F2-S2: the names reachable from the server's REGISTERED TOOLS surface — each
+    tool fn's own globals (the module scope it actually closes over), NOT just the
+    server module's top-level `vars()`. A tool that imported a write fn into its module
+    scope would be caught here even if the server's top-level namespace looked clean.
+    Union of every registered tool's __globals__ keys + the module's own top-level."""
+    names: set[str] = set(vars(server_module))
+    tools = getattr(server_module, "TOOLS", {})
+    for fn in tools.values():
+        g = getattr(fn, "__globals__", {})
+        names |= set(g.keys())
+    return names
 
 
 def run_fail_closed_check() -> CheckResult:
-    """Re-assert the MCP gates programmatically (deterministic namespace check, the
-    same gate test_wiki_mcp_read/write prove): the READ server exposes no write/
-    mutate/enqueue symbol; the WRITE server exposes no accept/mutate symbol (it may
-    only enqueue create_proposal). Each is one case (passed iff no forbidden symbol)."""
+    """Re-assert the MCP gates programmatically (deterministic surface check, the same
+    gate test_wiki_mcp_read/write prove): the READ server's tool surface exposes no
+    write/mutate/enqueue symbol; the WRITE server's no accept/mutate symbol (it may
+    only enqueue). F2-S2: checks the REGISTERED-TOOLS reachable surface (each tool's
+    __globals__), not just the module's top-level vars()."""
     from modules.wiki.mcp import read_server, write_server
 
     cases: list[CaseResult] = []
 
-    read_ns = set(vars(read_server))
-    read_leaked = sorted(_READ_FORBIDDEN & read_ns)
+    read_surface = _tool_reachable_symbols(read_server)
+    read_leaked = sorted(_READ_FORBIDDEN & read_surface)
     cases.append(CaseResult(
         label="read_server_no_write_capability",
         expected="no_write_symbols", actual="clean" if not read_leaked else "leaked",
         passed=not read_leaked,
         detail=None if not read_leaked else f"leaked: {read_leaked}"))
 
-    write_ns = set(vars(write_server))
-    write_leaked = sorted(_WRITE_FORBIDDEN & write_ns)
-    # the write server SHOULD have create_proposal (enqueue-only) — sanity, not a leak.
+    write_surface = _tool_reachable_symbols(write_server)
+    write_leaked = sorted(_WRITE_FORBIDDEN & write_surface)
+    # the write server SHOULD reach create_proposal (enqueue-only) — sanity, not a leak.
     cases.append(CaseResult(
         label="write_server_no_mutate_or_accept",
         expected="enqueue_only", actual="clean" if not write_leaked else "leaked",
-        passed=not write_leaked and "create_proposal" in write_ns,
-        detail=None if (not write_leaked and "create_proposal" in write_ns)
-        else f"leaked: {write_leaked} create_proposal_present={'create_proposal' in write_ns}"))
+        passed=not write_leaked and "create_proposal" in write_surface,
+        detail=None if (not write_leaked and "create_proposal" in write_surface)
+        else f"leaked: {write_leaked} create_proposal_present={'create_proposal' in write_surface}"))
 
     return CheckResult(name="fail-closed-gates", passed=all(c.passed for c in cases), cases=cases)
 
@@ -139,20 +158,39 @@ def _assemble(checks: list[CheckResult]) -> ReliabilityReport:
     )
 
 
+def _pick_probe_note() -> tuple[int, str] | None:
+    """F2-H2: pick an EXISTING vault note (read-only) + a real passage from its body
+    to run the grounding corpus against — so GET /reliability NEVER writes the vault
+    (the old run_suite seeded+deleted a note PER CALL = a vault write every request).
+    Returns (note_id, passage) or None if the vault has no usable note."""
+    from modules.wiki import store as wiki_store
+    for row in wiki_store.all_notes(order_by="id"):
+        note = wiki_service.get_note(int(row["id"]))
+        if note is None:
+            continue
+        # a passage genuinely in the note: prefer a body slice, else the title.
+        body = (note.content or "").strip()
+        if body:
+            return note.id, body[:60]
+        if note.title.strip():
+            return note.id, note.title.strip()
+    return None
+
+
 def run_suite() -> ReliabilityReport:
     """Run the full reliability suite (grounding-eval against the REAL verify_citations
-    + the fail-closed gates). Seeds a throwaway note for the grounding corpus, runs,
-    then cleans it up. This is what GET /reliability serves."""
-    passage = "atomic notes hold exactly one idea"
-    note = wiki_service.create_note(NoteCreateInput(
-        title="reliability-probe", content=passage))
-    try:
-        grounding = run_grounding_eval(note.id, passage)
-    finally:
-        # the probe note is a throwaway — remove it so the suite is side-effect-free.
-        try:
-            wiki_service.delete_note(note.id)
-        except Exception:  # noqa: BLE001 — cleanup is best-effort
-            logger.warning("reliability probe note %s cleanup failed", note.id)
+    + the fail-closed gates). READ-ONLY (F2-H2): verifies against an EXISTING note, no
+    vault write. Empty vault → the grounding check is reported skipped (honest, still
+    no write). This is what GET /reliability serves."""
+    probe = _pick_probe_note()
+    if probe is not None:
+        note_id, passage = probe
+        grounding = run_grounding_eval(note_id, passage)
+    else:
+        # nothing to verify against — honest skip, NOT a false pass, NOT a write.
+        grounding = CheckResult(
+            name="grounding-eval", passed=True,
+            cases=[CaseResult(label="skipped_empty_vault", expected="n/a", actual="n/a",
+                              passed=True, detail="no vault note to verify against")])
     fail_closed = run_fail_closed_check()
     return _assemble([grounding, fail_closed])

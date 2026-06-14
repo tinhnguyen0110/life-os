@@ -139,6 +139,13 @@ def get_entry(entry_id: str) -> DecisionEntry | None:
     return _parse(content)
 
 
+def entry_file_exists(entry_id: str) -> bool:
+    """True iff the md file is present (regardless of parseability). F2-M5: lets the
+    router distinguish a MALFORMED entry (file present, get_entry None → 422) from a
+    truly ABSENT one (no file → 404)."""
+    return md_store.read(_rel(entry_id)) is not None
+
+
 def create_entry(body: DecisionInput) -> DecisionEntry:
     """Create a decision (server id + timestamps). One git commit. Fail-CLOSED."""
     now = _now_iso()

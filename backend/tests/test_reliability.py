@@ -102,14 +102,71 @@ def test_fail_closed_gates_pass(wiki_db):
         "read_server_no_write_capability", "write_server_no_mutate_or_accept"}
 
 
+def test_S2_forbidden_set_includes_low_level_store_writers():
+    # F2-S2: the forbidden sets must include the low-level proposal-store mutators,
+    # not just the high-level service fns (a tool reaching insert_proposal/mark_decided
+    # is just as much a write capability).
+    assert {"insert_proposal", "mark_decided"} <= rel._READ_FORBIDDEN
+    assert "mark_decided" in rel._WRITE_FORBIDDEN
+
+
+def test_S2_distinguishing_a_leaked_symbol_is_caught(wiki_db):
+    # F2-S2 TEETH (verify-with-the-distinguishing-case): if a forbidden symbol WERE
+    # reachable from a server's tool surface, the gate MUST catch it. We build a fake
+    # "server" whose tool closes over `insert_proposal` and assert _tool_reachable_symbols
+    # surfaces it (so run_fail_closed_check would report leaked). A gate that can't
+    # catch a planted leak is worthless.
+    def _leaky_tool():  # a tool that (pretends to) reach a write fn
+        return None
+    _leaky_tool.__globals__["insert_proposal"] = lambda *a, **k: None  # plant the leak
+
+    class _FakeServer:
+        TOOLS = {"leaky": _leaky_tool}
+
+    surface = rel._tool_reachable_symbols(_FakeServer)
+    assert "insert_proposal" in surface  # the planted forbidden symbol IS surfaced
+    assert "insert_proposal" in (rel._READ_FORBIDDEN & surface)  # → would be flagged leaked
+    # cleanup the planted global so it can't leak into other tests
+    _leaky_tool.__globals__.pop("insert_proposal", None)
+
+
 # --------------------------------------------------------------------------- #
 # suite assembler                                                               #
 # --------------------------------------------------------------------------- #
 def test_run_suite_passes_on_real_system(wiki_db):
+    # seed a real note so grounding runs the full corpus (not the empty-vault skip).
+    _seed()
     report = rel.run_suite()
     assert report.passed is True
     assert {chk.name for chk in report.checks} == {"grounding-eval", "fail-closed-gates"}
     assert report.summary["failed"] == 0 and report.summary["total"] > 0
+
+
+def test_H2_run_suite_is_read_only(wiki_db, monkeypatch):
+    # F2-H2: GET /reliability (run_suite) must NOT write the vault. Stronger than a
+    # count check (which a create+delete nets to zero): SPY on md_store.write_file +
+    # delete_file and assert NEITHER is called during the suite. (team-lead's gate:
+    # "GET /reliability twice → 0 new git commits".)
+    _seed()
+    from store import md_store
+    writes: list = []
+    monkeypatch.setattr(md_store, "write_file",
+                        lambda *a, **k: writes.append(("write", a)))
+    monkeypatch.setattr(md_store, "delete_file",
+                        lambda *a, **k: writes.append(("delete", a)))
+    rel.run_suite()
+    rel.run_suite()  # twice
+    assert writes == [], f"run_suite wrote the vault: {writes}"
+
+
+def test_H2_empty_vault_skips_grounding_no_write(wiki_db):
+    # empty vault → grounding honestly skipped (not a false pass, not a write).
+    before = wiki_store.count_notes()
+    report = rel.run_suite()
+    assert wiki_store.count_notes() == before == 0
+    grounding = next(c for c in report.checks if c.name == "grounding-eval")
+    assert grounding.passed is True
+    assert grounding.cases[0].label == "skipped_empty_vault"
 
 
 # --------------------------------------------------------------------------- #

@@ -118,11 +118,19 @@ def resolve_conflict(conflict_id: int, body: ConflictResolveInput):
     """Human resolves a conflict: write the chosen note ``content`` THROUGH the
     single-writer queue (reuses update_note — all mutation in one auditable place),
     then mark the conflict resolved. 404 if the conflict is absent/already resolved
-    or the target note is gone."""
+    or the target note is gone.
+
+    F2-M3: VALIDITY CHECKED BEFORE THE WRITE — gate the note-mutation on the conflict
+    being open, so resolving an absent/already-resolved conflict never mutates the
+    vault (the old order wrote the note first, then 404'd — a stray write)."""
+    if not sync_store.conflict_is_open(conflict_id):
+        raise HTTPException(status_code=404,
+                            detail=f"conflict {conflict_id} not found or already resolved")
     try:
         service.update_note(body.noteId, NoteUpdateInput(content=body.content))
     except service.NoteNotFound:
         raise HTTPException(status_code=404, detail=f"wiki note {body.noteId} not found")
+    # mark resolved (guarded UPDATE — still atomic-safe if a race slipped through).
     if not sync_store.resolve_conflict(conflict_id, _now_iso()):
         raise HTTPException(status_code=404,
                             detail=f"conflict {conflict_id} not found or already resolved")

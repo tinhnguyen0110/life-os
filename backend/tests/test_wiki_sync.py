@@ -227,3 +227,15 @@ def test_api_resolve_missing_conflict_404(client):
     nid = wsvc.create_note(NoteCreateInput(title="N", content="x")).id
     r = client.post("/wiki/sync/conflicts/99999/resolve", json={"noteId": nid, "content": "y"})
     assert r.status_code == 404
+
+
+def test_F2_M3_resolve_invalid_conflict_does_not_write_note(client):
+    # F2-M3: resolving an ABSENT conflict must 404 WITHOUT mutating the note (the old
+    # order wrote the note first, then 404'd — a stray write). Gate the write on the
+    # conflict being open.
+    nid = wsvc.create_note(NoteCreateInput(title="N", content="original body")).id
+    r = client.post("/wiki/sync/conflicts/99999/resolve",
+                    json={"noteId": nid, "content": "SHOULD NOT BE WRITTEN"})
+    assert r.status_code == 404
+    # the note is UNCHANGED — the stray write didn't happen.
+    assert wsvc.get_note(nid).content == "original body"

@@ -165,6 +165,19 @@ def list_conflicts(status: str = "open") -> list[dict[str, Any]]:
     return out
 
 
+def conflict_is_open(conflict_id: int) -> bool:
+    """True iff a conflict with this id exists AND is still open (F2-M3: the resolve
+    endpoint gates the note-write on this so it never mutates the vault for an absent/
+    already-resolved conflict)."""
+    conn = db.get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT 1 FROM wiki_sync_conflicts WHERE id=? AND status='open'",
+            (int(conflict_id),),
+        ).fetchone()
+    return row is not None
+
+
 def resolve_conflict(conflict_id: int, resolved: str) -> bool:
     """Mark a conflict resolved (only if currently open). Returns True if flipped."""
     conn = db.get_conn()

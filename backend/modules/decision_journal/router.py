@@ -33,9 +33,14 @@ def list_decisions(domain: str | None = None, status: str | None = None):
 
 @router.get("/{entry_id}")
 def get_decision(entry_id: str):
-    """One decision. 404 if absent/malformed."""
+    """One decision. 404 if absent; 422 if the entry FILE exists but is malformed
+    (F2-M5: a corrupt entry is a different failure than a missing id — surface it as
+    unprocessable, not not-found, so the corruption is visible)."""
     entry = service.get_entry(entry_id)
     if entry is None:
+        if service.entry_file_exists(entry_id):
+            raise HTTPException(status_code=422,
+                                detail=f"decision {entry_id!r} is malformed (corrupt entry file)")
         raise HTTPException(status_code=404, detail=f"decision {entry_id!r} not found")
     return ok(data=entry.model_dump())
 

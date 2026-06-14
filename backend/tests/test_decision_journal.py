@@ -208,6 +208,19 @@ def test_api_get_missing_404(client):
     assert client.get("/decision-journal/nope").status_code == 404
 
 
+def test_F2_M5_malformed_entry_is_422_not_404(client):
+    # F2-M5: a corrupt entry FILE (present but unparseable) → 422 (unprocessable),
+    # distinct from a missing id → 404. The corruption must be visible, not masked
+    # as not-found.
+    from store import md_store
+    md_store.write_file("decision_journal/corrupt-abc.md",
+                        "---\nnot: valid: decision: {{{\n---\nbody", "seed corrupt")
+    r = client.get("/decision-journal/corrupt-abc")
+    assert r.status_code == 422
+    # a truly absent id is still 404 (the distinguishing case)
+    assert client.get("/decision-journal/never-existed").status_code == 404
+
+
 def test_api_natural_resolve_put_is_200_not_422(client):
     # W7-A2-fix REGRESSION GUARD: the natural resolve — PUT with ONLY {status,outcome}
     # — must be 200, NOT 422 (the bug: PUT required decision/confidence/domain).
