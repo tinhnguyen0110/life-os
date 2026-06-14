@@ -81,6 +81,41 @@ class MergeInput(BaseModel):
     targetId: int
 
 
+class DeviceRegisterInput(BaseModel):
+    """``POST /wiki/sync/devices`` body (M3 A1a) — register/refresh a sync device."""
+
+    deviceId: str = Field(min_length=1, max_length=100)
+    name: str = Field(default="", max_length=200)
+
+
+class ConflictResolveInput(BaseModel):
+    """``POST /wiki/sync/conflicts/{id}/resolve`` body — the human picks the winning
+    content for a conflicted block; it's written THROUGH the single-writer queue
+    (reuses update_note). ``content`` is the chosen block text."""
+
+    noteId: int
+    content: str = Field(default="", max_length=100_000)
+
+
+class Citation(BaseModel):
+    """One citation an external agent attached to a claim (W6 A1b). ``noteId`` +
+    ``span`` are optional so an UNGROUNDED claim (no citation) is still expressible
+    (→ status ungrounded). ``span`` = the literal passage the agent says supports
+    the claim (substring-matched against the note; no ^block-id anchors — never built)."""
+
+    claim: str = Field(default="", max_length=4000)
+    noteId: int | None = None
+    span: str | None = Field(default=None, max_length=4000)
+
+
+class CitationVerifyInput(BaseModel):
+    """``POST /wiki/citations/verify`` body — a batch of citations to post-verify.
+    Empty ``claims`` is valid (→ empty results). The agent calls this BEFORE
+    presenting its answer; the response flags fabricated/ungrounded citations."""
+
+    claims: list[Citation] = Field(default_factory=list)
+
+
 class NoteUpdateInput(BaseModel):
     """``PUT /wiki/notes/{id}`` body — partial update (all fields optional).
 

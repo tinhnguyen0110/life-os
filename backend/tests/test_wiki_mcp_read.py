@@ -185,6 +185,7 @@ def test_server_builds_with_all_tools():
     assert set(read_server.TOOLS.keys()) == {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_graph",
         "wiki_get_note", "wiki_backlinks", "wiki_recent_ops", "wiki_clusters",
+        "wiki_verify_citations",
     }
 
 

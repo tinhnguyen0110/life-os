@@ -58,13 +58,34 @@ MCP config (`~/.claude.json` `mcpServers`, or project `.mcp.json`):
 (In the container the cwd is `/app`; `mcp` is installed via `pyproject.toml`.)
 
 Then in Claude Code:
-- the 7 `wiki_*` read tools — the agent reads your vault, cites notes by integer ID
-  ("note 47"), never writes directly.
+- the 9 `wiki_*` read tools — the agent reads your vault, cites notes by integer ID
+  ("note 47"), never writes directly. (search / overview / inbox / graph / get_note /
+  backlinks / recent_ops / clusters / **verify_citations**.)
 - the 6 `propose_*` write tools (`propose_note` / `propose_edit` / `propose_link` /
   `propose_unlink` / `propose_merge` / `propose_moc`) — each ENQUEUES a PENDING
   proposal into the review queue (`GET /wiki/proposals`); **nothing lands in the
   vault until you ACCEPT it in the P1 queue screen.** Every propose requires a
   `rationale` (the agent must explain WHY). The agent proposes; you dispose.
+
+## Citation contract (W6 A1b — the anti-fabrication gate)
+
+When the agent answers a wiki query, it cites sources as `{claim, noteId, span}`.
+**Before presenting that answer, the agent is expected to call `wiki_verify_citations`**
+(or `POST /wiki/citations/verify`) with its citations. The service deterministically
+checks each one and returns a per-claim status — a fabricated citation cannot pass:
+
+| status | meaning |
+|---|---|
+| `verified` | the note exists AND the cited `span` literally occurs in its title+body |
+| `rejected` | `note_not_found` (no such note) OR `span_not_in_note` (the span is NOT in the note — fabricated/hallucinated) |
+| `ungrounded` | the claim has no `noteId` (asserted with no citation) |
+| `weakly_grounded` | cites a real note but gives no `span` (names a source without quoting it) |
+
+A `verified` result for a citation that pointed at a *merged-away* note id includes
+`resolvedNoteId` (the live target — the citation survived the merge). Span match is
+whitespace-normalized + case-sensitive substring. The agent should drop/flag any
+claim that isn't `verified` before showing it to the user — that is what makes
+"grounded in your notes" a code guarantee, not a prompt hope.
 
 ## Run / smoke-test manually
 

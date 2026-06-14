@@ -37,6 +37,9 @@ from typing import Any, Callable
 from modules.wiki import reader
 from modules.wiki import proposals_store
 from modules.wiki.service import get_note as _get_note
+# verify_citations is a PURE read-verify fn (reads notes, follows redirects, NEVER
+# mutates) — importing the bare fn keeps the read server write-incapable.
+from modules.wiki.citations import verify_citations as _verify_citations
 
 # One correlation id per server process (groups this agent session's calls, D-W4b.3).
 SESSION_ID = uuid.uuid4().hex
@@ -129,6 +132,16 @@ def wiki_clusters() -> dict[str, Any]:
     return {"clusters": reader.detect_clusters()}
 
 
+def wiki_verify_citations(claims: list[dict[str, Any]]) -> dict[str, Any]:
+    """Post-verify citations (W6 A1b, the anti-fabrication gate). The agent passes
+    its ``[{claim, noteId, span}]`` BEFORE presenting an answer → per-claim status
+    verified | rejected | ungrounded | weakly_grounded + a summary. A cited span
+    that does NOT occur in the note → rejected (span_not_in_note) — a fabricated
+    citation cannot pass. Read-only (reads notes, follows D6 redirects, no mutation)."""
+    _audit("wiki_verify_citations", {"claimCount": len(claims or [])})
+    return _verify_citations(claims or [])
+
+
 # Registry of (name → logic fn) — the single source of truth for what tools exist.
 # Tests iterate this for parity + audit; FastMCP registration iterates it below.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -140,6 +153,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_backlinks": wiki_backlinks,
     "wiki_recent_ops": wiki_recent_ops,
     "wiki_clusters": wiki_clusters,
+    "wiki_verify_citations": wiki_verify_citations,
 }
 
 
@@ -164,6 +178,7 @@ def build_server() -> Any:
     mcp.add_tool(wiki_backlinks, description=wiki_backlinks.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
+    mcp.add_tool(wiki_verify_citations, description=wiki_verify_citations.__doc__)
     return mcp
 
 

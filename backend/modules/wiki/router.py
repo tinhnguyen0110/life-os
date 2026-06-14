@@ -20,13 +20,22 @@ from fastapi import APIRouter, HTTPException
 from core.base import BaseModule
 from core.responses import ok
 
-from . import proposals_service, reader, service
+from datetime import datetime, timezone
+
+from . import citations, proposals_service, reader, service, sync_store
 from .proposals_schema import (
     BatchAcceptInput,
     DecideInput,
     ProposalCreateInput,
 )
-from .schema import MergeInput, NoteCreateInput, NoteUpdateInput
+from .schema import (
+    CitationVerifyInput,
+    ConflictResolveInput,
+    DeviceRegisterInput,
+    MergeInput,
+    NoteCreateInput,
+    NoteUpdateInput,
+)
 
 logger = logging.getLogger("life-os.wiki.router")
 
@@ -68,6 +77,67 @@ def graph(note: int, depth: int = 2):
     if g is None:
         raise HTTPException(status_code=404, detail=f"wiki note {note} not found")
     return ok(data=g)
+
+
+# --------------------------------------------------------------------------- #
+# W6 A1a — M3 multi-device sync (option B): device registry + conflict surfacing #
+# Merge mechanism is in sync.py (pure) + sync_store.py. These endpoints expose   #
+# the registry + the detected-conflict queue + a human-resolve path (writes      #
+# through the single-writer). DEFERRED (option B): id-prefix migration, FE UI,    #
+# real transport — see end_sprint §Assumptions.                                  #
+# --------------------------------------------------------------------------- #
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/sync/devices")
+def register_device(body: DeviceRegisterInput):
+    """Register/refresh a sync device (M3 A1a). The identity an op-stream is tagged
+    with. Returns the device list."""
+    sync_store.register_device(body.deviceId, body.name, _now_iso())
+    return ok(data={"devices": sync_store.list_devices()})
+
+
+@router.get("/sync/devices")
+def list_devices():
+    """Registered sync devices, most-recently-seen first."""
+    return ok(data={"devices": sync_store.list_devices()})
+
+
+@router.get("/sync/conflicts")
+def sync_conflicts(status: str = "open"):
+    """Detected true conflicts awaiting resolution (M3 A1a, the surfacing endpoint).
+    Each: ``{id, noteId, blockIndex, versions:[{device, content, ts}], status,
+    detected, resolved}`` — EVERY version kept so the LWW loser is recoverable (0
+    data loss). No conflicts → ``{conflicts: []}`` (honest)."""
+    return ok(data={"conflicts": sync_store.list_conflicts(status)})
+
+
+@router.post("/sync/conflicts/{conflict_id}/resolve")
+def resolve_conflict(conflict_id: int, body: ConflictResolveInput):
+    """Human resolves a conflict: write the chosen note ``content`` THROUGH the
+    single-writer queue (reuses update_note — all mutation in one auditable place),
+    then mark the conflict resolved. 404 if the conflict is absent/already resolved
+    or the target note is gone."""
+    try:
+        service.update_note(body.noteId, NoteUpdateInput(content=body.content))
+    except service.NoteNotFound:
+        raise HTTPException(status_code=404, detail=f"wiki note {body.noteId} not found")
+    if not sync_store.resolve_conflict(conflict_id, _now_iso()):
+        raise HTTPException(status_code=404,
+                            detail=f"conflict {conflict_id} not found or already resolved")
+    return ok(data={"resolved": conflict_id})
+
+
+@router.post("/citations/verify")
+def verify_citations(body: CitationVerifyInput):
+    """Post-verify citations (W6 A1b, spec L120-121 — the anti-fabrication gate).
+    Body ``{claims:[{claim, noteId?, span?}]}`` → per-claim status
+    verified | rejected | ungrounded | weakly_grounded + a summary. Read-only: it
+    only reads notes (follows D6 redirects), never mutates. Empty claims → empty
+    results (never 500). The external agent calls this BEFORE presenting its answer."""
+    claims = [c.model_dump() for c in body.claims]
+    return ok(data=citations.verify_citations(claims))
 
 
 @router.get("/clusters")
