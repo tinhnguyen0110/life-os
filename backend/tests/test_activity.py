@@ -401,16 +401,88 @@ def test_get_run_unknown_returns_none(isolated_paths):
     assert activity_service.get_run(999999) is None
 
 
+# --------------------------------------------------------------------------- #
+# Fail-open error paths — the read path must NEVER raise: a broken DB read, an   #
+# unparseable timestamp, or a missing automation catalog all degrade silently.  #
+# These exercise the except-branches the happy-path tests skip.                 #
+# --------------------------------------------------------------------------- #
+
+def test_get_feed_empty_when_db_read_raises(isolated_paths, monkeypatch):
+    """get_feed swallows a db.all_runs failure → an empty (but valid) feed, not a
+    crash. The whole module contract is 'read path fail-open'."""
+    def boom(*a, **k):
+        raise RuntimeError("db gone")
+    monkeypatch.setattr(activity_service.db, "all_runs", boom)
+
+    feed = activity_service.get_feed()
+    assert isinstance(feed, ActivityFeed)
+    assert feed.count == 0 and feed.runs == []
+    assert feed.successRate is None and feed.runsToday == 0
+
+
+def test_get_run_returns_none_when_db_read_raises(isolated_paths, monkeypatch):
+    """get_run swallows a db.run_by_id failure → None (router renders 404), no crash."""
+    def boom(_id):
+        raise RuntimeError("db gone")
+    monkeypatch.setattr(activity_service.db, "run_by_id", boom)
+    assert activity_service.get_run(123) is None
+
+
+def test_duration_ms_none_on_unparseable_timestamp():
+    """_duration_ms returns None (not a crash) when a timestamp can't be parsed —
+    a malformed row degrades to 'no duration', it does not poison the feed."""
+    assert activity_service._duration_ms("not-a-date", "2026-01-01T00:00:00+00:00") is None
+    assert activity_service._duration_ms("2026-01-01T00:00:00+00:00", "garbage") is None
+    # distinguishing case: two VALID timestamps DO produce a real ms duration.
+    assert activity_service._duration_ms(
+        "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:02+00:00") == 2000
+
+
+def test_duration_ms_drops_negative_clock_skew():
+    """finished < started (clock skew / bad row) → None, never a negative duration."""
+    assert activity_service._duration_ms(
+        "2026-01-01T00:00:05+00:00", "2026-01-01T00:00:00+00:00") is None
+
+
+def test_routine_name_falls_back_to_id_when_catalog_unavailable(monkeypatch):
+    """_routine_name returns the raw id (forward-compat) when the automation catalog
+    lookup raises — an automation import problem must never break the feed."""
+    import modules.automation.service as auto_service
+    # Force the catalog access to raise (simulates an import/attr problem at runtime).
+    class Boom:
+        def get(self, _k):
+            raise RuntimeError("catalog exploded")
+    monkeypatch.setattr(auto_service, "_CATALOG_BY_ID", Boom())
+    assert activity_service._routine_name("some-routine-id") == "some-routine-id"
+
+
+def test_routine_name_resolves_known_catalog_entry():
+    """Distinguishing case: a KNOWN routine id resolves to its catalog display name
+    (proves the fallback above is a real fallback, not an always-return-id stub)."""
+    assert activity_service._routine_name("idle-hunter") == "Idle Hunter"
+
+
 # =========================================================================== #
 # SECTION B — API (skip-guarded: server at :8686 WITH activity module loaded)   #
 # =========================================================================== #
 
-requests = pytest.importorskip("requests", reason="requests not installed")
+# NOTE: `requests` is imported LAZILY (not via a module-level importorskip).
+# A module-scope `pytest.importorskip("requests")` raises Skipped at import time,
+# which skips the ENTIRE module — including Section A's service unit tests that do
+# not need `requests` at all. That made all ~24 service tests silently vanish and
+# left modules/activity/service.py at ~19% coverage. Import inside the fixture so a
+# missing `requests` only skips Section B (the live-server API tests).
+try:
+    import requests  # noqa: E402
+except ImportError:  # pragma: no cover — env without requests
+    requests = None
 
 BASE = "http://localhost:8686"
 
 
 def _server_up() -> bool:
+    if requests is None:
+        return False
     try:
         return requests.get(f"{BASE}/health", timeout=2).status_code == 200
     except Exception:
@@ -420,6 +492,8 @@ def _server_up() -> bool:
 @pytest.fixture(scope="module")
 def server():
     """Skip API section if server not up OR pre-T1 (activity module not registered)."""
+    if requests is None:
+        pytest.skip("requests not installed — live-server API tests skipped")
     if not _server_up():
         pytest.skip("BE server not running at :8686 — API tests skipped")
     try:
