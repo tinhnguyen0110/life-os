@@ -143,6 +143,31 @@ describe("P1 Proposal Queue", () => {
     expect(screen.queryByTestId("prop-reject")).toBeNull();
   });
 
+  it("W4d: auto-accepted proposal (decidedBy agent:auto) shows the distinct ◇ agent:auto badge", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 30, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 7, payload: { title: "auto note" } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    const badge = screen.getByTestId("prop-auto-badge");
+    expect(badge).toHaveTextContent("agent:auto");
+    // applied-note link still present; human-decided "bởi" label is NOT shown for an auto-write
+    expect(screen.getByTestId("prop-applied-link")).toHaveAttribute("href", "/wiki/7");
+    expect(screen.queryByText(/bởi human/i)).toBeNull();
+  });
+
+  it("W4d: human-accepted proposal shows 'bởi human', NOT the auto badge", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 31, status: "accepted", decidedBy: "human", appliedNoteId: 8 })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    expect(screen.queryByTestId("prop-auto-badge")).toBeNull();
+    expect(screen.getByText(/bởi human/i)).toBeInTheDocument();
+  });
+
   it("filter switch (pending→rejected) re-queries with the new status", async () => {
     getWikiProposals.mockResolvedValueOnce(ok(PENDING)).mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 2, accepted: 4, rejected: 1 } }));
     render(<WikiProposalsPage />);

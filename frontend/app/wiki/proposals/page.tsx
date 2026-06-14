@@ -86,6 +86,8 @@ function ProposalCard({
   const km = kindMeta(p.kind);
   const [err, setErr] = useState("");
   const isPending = p.status === "pending";
+  // W4d: auto-applied write (autonomy ON) → decidedBy "agent:auto".
+  const isAuto = p.decidedBy === "agent:auto";
 
   const doAccept = async () => {
     setErr("");
@@ -152,7 +154,13 @@ function ProposalCard({
           <span className={`wstatus ${p.status === "accepted" ? "evergreen" : "fleeting"}`} data-testid="prop-decided-status">
             {p.status === "accepted" ? "✓ accepted" : "✕ rejected"}
           </span>
-          {p.decidedBy && <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}>bởi {p.decidedBy}</span>}
+          {/* W4d: an AUTO-write (decidedBy "agent:auto") gets a distinct amber badge so a
+              human auditing the accepted filter can tell autonomous writes from their own. */}
+          {isAuto ? (
+            <span className="wtrust cand" data-testid="prop-auto-badge" title="ghi tự động bởi agent (autonomous ON)">◇ agent:auto</span>
+          ) : (
+            p.decidedBy && <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}>bởi {p.decidedBy}</span>
+          )}
           <span className="sp" style={{ flex: 1 }} />
           {p.appliedNoteId != null && (
             <Link className="link" href={`/wiki/${p.appliedNoteId}`} data-testid="prop-applied-link">→ note #{p.appliedNoteId}</Link>

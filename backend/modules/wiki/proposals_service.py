@@ -60,9 +60,27 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # Create (record intent only — no vault write)                                 #
 # --------------------------------------------------------------------------- #
+def _actor_is_agent(actor: str | None) -> bool:
+    """True for an AGENT-originated proposal (D-W4d.2): actor starts with "agent"
+    or "mcp:". A human-created proposal (actor="human" via REST/P1) returns False —
+    the autonomy toggle NEVER auto-applies the human's own deliberate drafts."""
+    a = (actor or "").lower()
+    return a.startswith("agent") or a.startswith("mcp:")
+
+
 def create_proposal(inp: ProposalCreateInput) -> dict[str, Any]:
-    """Enqueue one pending proposal. Records INTENT only — nothing is applied to
-    the vault until a human accepts. Returns the stored proposal dict."""
+    """Enqueue one pending proposal. Records INTENT only.
+
+    Normally (the north-star) nothing applies until a human accepts in P1. BUT W4d
+    (USER-ORDERED, reverses D8): if the ``wikiAgentAutonomous`` setting is ON AND the
+    proposal is agent-originated (D-W4d.2), this immediately auto-accepts it via the
+    SAME ``accept_proposal`` chokepoint (decidedBy="agent:auto") — the write lands
+    directly, still fully audited + visible in P1's accepted history.
+
+    The auto-accept is FAIL-SOFT (D-W4d.3): if the apply raises (e.g. bad target),
+    the proposal stays PENDING (fail-closed on the write) and this returns the
+    pending proposal WITH a warning — the propose call never hard-errors.
+    """
     now = _now_iso()
     pid = pstore.insert_proposal(
         kind=inp.kind, target_id=inp.targetId, payload=inp.payload,
@@ -72,9 +90,37 @@ def create_proposal(inp: ProposalCreateInput) -> dict[str, Any]:
     _audit("propose", {"proposalId": pid, "kind": inp.kind, "targetId": inp.targetId},
            actor=inp.actor, correlation_id=inp.correlationId, ts=now)
     logger.info("wiki proposal %s created (kind=%s actor=%s)", pid, inp.kind, inp.actor)
+
+    # W4d auto-apply chokepoint — read the runtime setting per-call (a live PATCH
+    # takes effect on the next propose, no restart). Only agent-originated proposals
+    # auto-apply, and only when the toggle is ON.
+    if _actor_is_agent(inp.actor) and _autonomous_enabled():
+        try:
+            accepted = accept_proposal(pid, decided_by="agent:auto")
+            logger.info("wiki proposal %s AUTO-APPLIED (wikiAgentAutonomous ON)", pid)
+            return accepted
+        except Exception as exc:  # noqa: BLE001 — fail-soft: write didn't land, row stays pending
+            logger.warning("wiki proposal %s auto-apply failed (stays pending): %s", pid, exc)
+            pending = pstore.get_proposal(pid)
+            assert pending is not None
+            pending["warning"] = f"auto-apply failed, proposal pending: {exc}"
+            return pending
+
     result = pstore.get_proposal(pid)
     assert result is not None  # just inserted
     return result
+
+
+def _autonomous_enabled() -> bool:
+    """Read the runtime ``wikiAgentAutonomous`` setting (D-W4d, user-mutable, NOT a
+    static env). Fail-soft: if settings read fails, treat as OFF (the SAFE default —
+    never auto-apply on an unreadable config)."""
+    try:
+        from modules.settings.service import get_config
+        return bool(get_config().wikiAgentAutonomous)
+    except Exception:  # noqa: BLE001 — unreadable config → safe default OFF
+        logger.exception("wikiAgentAutonomous read failed — defaulting OFF (safe)")
+        return False
 
 
 def _audit(tool: str, params: dict[str, Any], *, actor: str,

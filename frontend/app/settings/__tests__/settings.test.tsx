@@ -161,3 +161,47 @@ describe("S12 Settings — honest integration status (NO fake toggles)", () => {
     await waitFor(() => expect(screen.getByTestId("tweaks-panel")).toBeInTheDocument());
   });
 });
+
+describe("S12 Settings — W4d agent autonomy toggle", () => {
+  it("OFF by default (missing field → safe-default OFF) → shows the safe/proposals-only copy, no ON warning", async () => {
+    getSettings.mockResolvedValueOnce(ENV(CONFIG())); // no wikiAgentAutonomous → undefined → OFF
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("settings-autonomy")).toBeInTheDocument());
+    expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("autonomy-warn-off")).toBeInTheDocument();
+    expect(screen.queryByTestId("autonomy-warn-on")).toBeNull();
+  });
+
+  it("ON → shows the DANGER warning that it reverses 'AI proposes, human ratifies'", async () => {
+    getSettings.mockResolvedValueOnce(ENV(CONFIG({ wikiAgentAutonomous: true })));
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("settings-autonomy")).toBeInTheDocument());
+    expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toHaveAttribute("aria-checked", "true");
+    const warn = screen.getByTestId("autonomy-warn-on");
+    expect(warn).toBeInTheDocument();
+    expect(warn).toHaveTextContent(/agent:auto/i);
+    expect(screen.queryByTestId("autonomy-warn-off")).toBeNull();
+  });
+
+  it("flip OFF→ON → PATCH wikiAgentAutonomous:true (save-on-flip, fail-closed refetch)", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValue(ENV(CONFIG({ wikiAgentAutonomous: false })));
+    patchSettings.mockResolvedValueOnce(ENV(CONFIG({ wikiAgentAutonomous: true })));
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("cfg-wikiAgentAutonomous-toggle"));
+    await waitFor(() => expect(patchSettings).toHaveBeenCalledWith({ wikiAgentAutonomous: true }));
+    await waitFor(() => expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toHaveAttribute("aria-checked", "true"));
+  });
+
+  it("TEETH: autonomy PATCH fails → error surfaced, fail-closed (toggle does not flip)", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValue(ENV(CONFIG({ wikiAgentAutonomous: false })));
+    patchSettings.mockRejectedValueOnce(new ApiError(500, "boom"));
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("cfg-wikiAgentAutonomous-toggle"));
+    await waitFor(() => expect(within(screen.getByTestId("settings-autonomy")).getByText(/lưu thất bại|boom/i)).toBeInTheDocument());
+    expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toHaveAttribute("aria-checked", "false");
+  });
+});

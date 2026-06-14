@@ -349,6 +349,12 @@ export interface AppConfig {
   timezone: string;
   /** owner display name (stored-only; may be empty), ≤80 chars. */
   displayName: string;
+  /** W4d (USER-ORDERED, reverses D8 proposals-only): ON = agent writes land in the
+   *  wiki vault DIRECTLY (auto-accepted at the create_proposal chokepoint, decidedBy
+   *  "agent:auto", still fully audited); OFF (default) = proposals-only, human ratifies
+   *  in P1. Optional in the TS type because the backend field lands in W4d-BE (parallel) —
+   *  the FE treats a missing value as `false` (safe default) so it's robust pre-BE. */
+  wikiAgentAutonomous?: boolean;
 }
 
 /** Partial update — only provided keys change. extra=forbid (unknown key → 422). */

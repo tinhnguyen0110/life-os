@@ -413,3 +413,88 @@ def test_api_list_defaults_to_pending_and_all_filter(client):
     # status=accepted → just the accepted one
     accepted = client.get("/wiki/proposals?status=accepted").json()["data"]["proposals"]
     assert len(accepted) == 1 and accepted[0]["id"] == acc_id
+
+
+# --------------------------------------------------------------------------- #
+# W4d — agent autonomy toggle (USER-ORDERED, reverses D8). Chokepoint in        #
+# create_proposal: ON + agent-actor → auto-accept (decidedBy=agent:auto);       #
+# OFF (default) → pending. Tests live here (test-where-the-reader-greps).        #
+# --------------------------------------------------------------------------- #
+from modules.settings import service as cfg  # noqa: E402
+from modules.settings.schema import AppConfigPatch  # noqa: E402
+
+
+def _set_autonomous(on: bool) -> None:
+    cfg.set_config(AppConfigPatch(wikiAgentAutonomous=on))
+
+
+def test_autonomy_off_default_proposal_stays_pending(wiki_db):
+    # default OFF (fresh config) — an agent propose stays pending, vault unchanged.
+    before = wiki_store.count_notes()
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "x"}, actor="mcp:writer",
+    ))
+    assert p["status"] == "pending"
+    assert wiki_store.count_notes() == before
+
+
+def test_autonomy_on_agent_proposal_auto_applies(wiki_db):
+    _set_autonomous(True)
+    before = wiki_store.count_notes()
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "auto note", "content": "body"},
+        actor="mcp:writer",
+    ))
+    # auto-applied in the one call: accepted, decidedBy agent:auto, note landed.
+    assert p["status"] == "accepted" and p["decidedBy"] == "agent:auto"
+    assert p["appliedNoteId"] is not None
+    assert wiki_store.count_notes() == before + 1
+    assert wsvc.get_note(p["appliedNoteId"]).title == "auto note"
+
+
+def test_autonomy_on_human_proposal_does_not_auto_apply(wiki_db):
+    # D-W4d.2: a human-created proposal NEVER auto-applies even when the toggle is ON.
+    _set_autonomous(True)
+    before = wiki_store.count_notes()
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "human draft"}, actor="human",
+    ))
+    assert p["status"] == "pending"
+    assert wiki_store.count_notes() == before
+
+
+def test_autonomy_on_bad_target_fails_soft_stays_pending(wiki_db):
+    # D-W4d.3: auto-apply of a bad edit fails-closed → proposal stays pending + warning.
+    _set_autonomous(True)
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_edit", targetId=4242, payload={"title": "x"}, actor="agent:claude",
+    ))
+    assert p["status"] == "pending"
+    assert "auto-apply failed" in (p.get("warning") or "")
+    # it's still retriable in the queue
+    assert psvc.get_proposal(p["id"])["status"] == "pending"
+
+
+def test_autonomy_live_flip(wiki_db):
+    # ON → lands; flip OFF → next propose is pending again (read per-call, no restart).
+    _set_autonomous(True)
+    on = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "on"}, actor="mcp:writer"))
+    assert on["status"] == "accepted"
+    _set_autonomous(False)
+    off = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "off"}, actor="mcp:writer"))
+    assert off["status"] == "pending"
+
+
+def test_autonomy_auto_apply_audits_both_rows(wiki_db):
+    # an auto-applied write has BOTH the propose audit row AND the accept row
+    # (accept's actor = the decidedBy = agent:auto).
+    _set_autonomous(True)
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "audited auto"}, actor="agent:claude",
+        correlationId="auto-sess",
+    ))
+    tools = [(r["tool"], r["actor"]) for r in pstore.recent_audit(correlation_id="auto-sess", limit=50)]
+    assert ("propose", "agent:claude") in tools  # the create audit
+    assert ("accept", "agent:auto") in tools      # the auto-accept audit

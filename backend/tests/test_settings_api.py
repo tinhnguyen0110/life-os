@@ -40,8 +40,10 @@ def test_get_settings_defaults(app_client):
     assert body["success"] is True
     d = body["data"]
     assert set(d) == {"automationEnabled", "briefHour", "idleThresholdDays",
-                      "patternCheckEnabled", "errorChannel", "timezone", "displayName"}
+                      "patternCheckEnabled", "errorChannel", "timezone", "displayName",
+                      "wikiAgentAutonomous"}  # W4d toggle exposed in GET /settings
     assert d["briefHour"] == 8 and d["idleThresholdDays"] == 7 and d["automationEnabled"] is True
+    assert d["wikiAgentAutonomous"] is False  # W4d safe default OFF
 
 
 def test_patch_settings_round_trip(app_client):

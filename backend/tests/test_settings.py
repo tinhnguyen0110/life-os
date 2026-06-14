@@ -29,6 +29,15 @@ def test_defaults_match_current_behavior(isolated_paths):
     assert c.errorChannel == "inapp"
     assert c.timezone == "Asia/Ho_Chi_Minh"  # dispatch default
     assert c.displayName == ""                # dispatch default (stored-only, may be empty)
+    assert c.wikiAgentAutonomous is False     # W4d: SAFE default OFF (proposals-only north-star)
+
+
+def test_wiki_agent_autonomous_patch_round_trips(isolated_paths):
+    """W4d toggle persists OFF→ON→OFF via md_store (a fresh read reflects it)."""
+    cfg.set_config(AppConfigPatch(wikiAgentAutonomous=True))
+    assert cfg.get_config().wikiAgentAutonomous is True
+    cfg.set_config(AppConfigPatch(wikiAgentAutonomous=False))
+    assert cfg.get_config().wikiAgentAutonomous is False
 
 
 def test_absent_config_is_defaults(isolated_paths):

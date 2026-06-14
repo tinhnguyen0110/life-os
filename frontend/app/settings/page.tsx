@@ -67,6 +67,7 @@ export default function SettingsPage() {
         {/* LEFT column: automation config + account */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <AutomationPanel config={config} save={save} />
+          <AutonomyPanel config={config} save={save} />
           <AccountPanel config={config} save={save} router={router} />
         </div>
         {/* RIGHT column: integrations (honest status) + API status + appearance */}
@@ -165,6 +166,55 @@ function AutomationPanel({ config, save }: { config: AppConfig; save: SaveFn }) 
         <NumberConfigRow label="Giờ chạy brief" desc="Morning brief mỗi ngày lúc (giờ UTC 0–23)" name="briefHour" value={config.briefHour} min={0} max={23} suffix="giờ" save={save} />
         <NumberConfigRow label="Ngưỡng idle hunter" desc="Cảnh báo dự án đứng quá N ngày (≥1)" name="idleThresholdDays" value={config.idleThresholdDays} min={1} suffix="ngày" save={save} />
         <ToggleRow label="Pattern check" desc="Routine build-to-90 (phát hiện dự án 90% rồi bỏ)" name="patternCheckEnabled" value={config.patternCheckEnabled} save={save} />
+      </div>
+    </div>
+  );
+}
+
+/** W4d — Agent autonomy toggle. DANGER affordance: this reverses the north-star
+ *  ("AI proposes, human ratifies"). Default OFF. Prominent warning copy + the live
+ *  value drives the warning banner state. Save-on-flip, fail-closed (await→refetch). */
+function AutonomyPanel({ config, save }: { config: AppConfig; save: SaveFn }) {
+  const on = config.wikiAgentAutonomous === true; // missing/undefined → OFF (safe default, robust pre-BE)
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function onFlip(next: boolean) {
+    setBusy(true); setErr(null);
+    const res = await save({ wikiAgentAutonomous: next } as AppConfigPatch);
+    setBusy(false);
+    if (!res.ok) setErr(res.fieldErrors?.wikiAgentAutonomous ?? res.formError ?? "lưu thất bại");
+  }
+
+  return (
+    <div>
+      <div className="kicker" style={{ marginBottom: 10 }}>Agent tự động · Wiki</div>
+      <div className="set-group" data-testid="settings-autonomy">
+        <div className="set-row">
+          <div className="sr-info">
+            <div className="sr-t">Agent tự động ghi vào vault</div>
+            <div className="sr-d">
+              {err ? <span className="neg">⚠ {err}</span> : "Bỏ qua hàng đợi duyệt — agent ghi thẳng vào vault (mọi kind). Mặc định TẮT để an toàn."}
+            </div>
+          </div>
+          <Toggle on={on} onChange={onFlip} disabled={busy} label="Agent tự động ghi vào vault" testId="cfg-wikiAgentAutonomous-toggle" />
+        </div>
+        {/* state-aware warning: ON = active danger; OFF = the safe default explained */}
+        {on ? (
+          <div className="wgate blocked" data-testid="autonomy-warn-on" style={{ marginTop: 4 }}>
+            <div className="wgate-body">
+              <b>⚠ Autonomous ĐANG BẬT — agent ghi thẳng, không qua bạn duyệt</b>
+              <span className="mut">
+                Đây đảo ngược nguyên tắc &ldquo;AI đề xuất, người duyệt&rdquo;. Mọi write của agent vẫn được audit đầy đủ
+                (hiện trong P1 · filter &ldquo;đã accept&rdquo; với decidedBy <code>agent:auto</code>). Tắt để quay lại proposals-only.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="hint" data-testid="autonomy-warn-off" style={{ padding: "8px 12px", marginTop: 4, lineHeight: 1.5 }}>
+            An toàn (mặc định): mọi đề xuất của agent vào hàng đợi P1 chờ bạn duyệt — AI <b>không bao giờ</b> tự ghi.
+          </div>
+        )}
       </div>
     </div>
   );
