@@ -20,7 +20,12 @@ from fastapi import APIRouter, HTTPException
 from core.base import BaseModule
 from core.responses import ok
 
-from . import reader, service
+from . import proposals_service, reader, service
+from .proposals_schema import (
+    BatchAcceptInput,
+    DecideInput,
+    ProposalCreateInput,
+)
 from .schema import MergeInput, NoteCreateInput, NoteUpdateInput
 
 logger = logging.getLogger("life-os.wiki.router")
@@ -142,6 +147,78 @@ def delete_note(note_id: int):
     except service.NoteNotFound:
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
     return ok(data={"deleted": note_id})
+
+
+# --------------------------------------------------------------------------- #
+# W4a — Proposal / approval queue (M4 trust boundary in code)                   #
+# Every AI mutation lands here as a PENDING proposal; a human accepts (applies   #
+# via the M1 single-writer) or rejects (nothing applied). Static paths are       #
+# declared BEFORE /proposals/{proposal_id} so "batch-accept" isn't captured as   #
+# an id.                                                                         #
+# --------------------------------------------------------------------------- #
+@router.post("/proposals")
+def create_proposal(body: ProposalCreateInput):
+    """Enqueue a proposal (PENDING). Records intent only — NOTHING is written to
+    the vault until a human accepts. Returns the stored proposal."""
+    return ok(data=proposals_service.create_proposal(body))
+
+
+@router.get("/proposals")
+def list_proposals(status: str = "pending"):
+    """Proposals newest-first. ``status`` defaults to ``pending`` (the P1 review
+    queue's default view); pass ``accepted`` / ``rejected`` to filter, or ``all``
+    for every proposal. Includes a ``counts`` map for the queue badge. Empty queue
+    → ``proposals: []`` (honest empty state, never 500/null)."""
+    filter_status = None if status == "all" else status
+    data = proposals_service.list_proposals(filter_status)
+    return ok(data={"proposals": data, "counts": proposals_service.count_by_status()})
+
+
+@router.post("/proposals/accept-batch")
+def accept_batch_proposals(body: BatchAcceptInput):
+    """Accept many proposals in one call (P1 batch action). Each applies
+    independently — one failure never aborts the rest. Returns
+    ``{results: [{id, ok, proposal?, error?}], accepted, failed}``."""
+    return ok(data=proposals_service.batch_accept(body.ids, decided_by=body.decidedBy))
+
+
+@router.get("/proposals/{proposal_id}")
+def get_proposal(proposal_id: int):
+    """One proposal. 404 if absent."""
+    p = proposals_service.get_proposal(proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+    return ok(data=p)
+
+
+@router.post("/proposals/{proposal_id}/accept")
+def accept_proposal(proposal_id: int, body: DecideInput | None = None):
+    """ACCEPT: apply the mutation through the M1 single-writer, then mark accepted.
+    404 absent · 409 already decided · 422 the payload/mutation is invalid (the
+    proposal stays pending so it can be retried)."""
+    decided_by = (body or DecideInput()).decidedBy
+    try:
+        p = proposals_service.accept_proposal(proposal_id, decided_by=decided_by)
+    except proposals_service.ProposalNotFound:
+        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+    except proposals_service.AlreadyDecided as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except proposals_service.ApplyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return ok(data=p, warning=f"applied proposal #{proposal_id} → note #{p['appliedNoteId']}")
+
+
+@router.post("/proposals/{proposal_id}/reject")
+def reject_proposal(proposal_id: int, body: DecideInput | None = None):
+    """REJECT: mark rejected. NOTHING is applied. 404 absent · 409 already decided."""
+    decided_by = (body or DecideInput()).decidedBy
+    try:
+        p = proposals_service.reject_proposal(proposal_id, decided_by=decided_by)
+    except proposals_service.ProposalNotFound:
+        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+    except proposals_service.AlreadyDecided as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return ok(data=p)
 
 
 MODULE = BaseModule(name="wiki", router=router)
