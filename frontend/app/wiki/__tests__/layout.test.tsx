@@ -16,10 +16,16 @@ describe("Wiki 2-pane layout (WEXP)", () => {
     expect(screen.getByTestId("wiki-pane-left")).toBeInTheDocument();
     expect(screen.getByTestId("wiki-pane-content")).toHaveTextContent("CONTENT");
     await waitFor(() => expect(screen.getByTestId("wiki-explorer")).toBeInTheDocument());
+    // Settle the async tree fetch (status loading→ready) so its state update lands
+    // inside act() rather than after the test — silences the React act() warning.
+    await screen.findByTestId("wex-empty");
   });
 
   it("collapse toggle hides the explorer pane", async () => {
     render(<WikiLayout><div>x</div></WikiLayout>);
+    // Let WikiExplorer's async tree fetch settle first, so its state update lands
+    // inside act() (the fetch resolves after the synchronous assertions otherwise).
+    await screen.findByTestId("wex-empty");
     const pane = screen.getByTestId("wiki-pane-left");
     expect(pane).not.toHaveAttribute("hidden");
     fireEvent.click(screen.getByTestId("wiki-pane-toggle"));
@@ -30,6 +36,9 @@ describe("Wiki 2-pane layout (WEXP)", () => {
 
   it("content (the wiki route) always renders even when collapsed", async () => {
     render(<WikiLayout><div data-testid="child">ROUTE</div></WikiLayout>);
+    // Settle the explorer's async fetch before asserting (avoids an act() warning
+    // from the tree state landing after the test's synchronous assertions).
+    await screen.findByTestId("wex-empty");
     fireEvent.click(screen.getByTestId("wiki-pane-toggle"));
     expect(screen.getByTestId("child")).toHaveTextContent("ROUTE");
   });
