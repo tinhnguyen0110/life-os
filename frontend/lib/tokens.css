@@ -599,7 +599,11 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
    ============================================================ */
 /* 2-pane: explorer LEFT | content. Flip side = swap the grid columns / order. */
 .wiki-2pane { display:grid; grid-template-columns:264px 1fr; gap:0; align-items:start; position:relative; }
-.wiki-2pane.wex-collapsed { grid-template-columns:0 1fr; }
+/* Collapsed: the explorer pane is display:none (removed from grid auto-placement),
+   so a `0 1fr` 2-col template would auto-place the content into the 0-width FIRST
+   column (crushing it to width 0). Use a single 1fr column so the content fills the
+   freed width. */
+.wiki-2pane.wex-collapsed { grid-template-columns:1fr; }
 .wiki-pane-left { border-right:1px solid var(--line); min-height:calc(100vh - 150px); background:var(--bg-1); position:sticky; top:0; max-height:calc(100vh - 60px); overflow-y:auto; }
 .wiki-pane-left[hidden] { display:none; }
 .wiki-pane-content { min-width:0; padding-left:18px; }
