@@ -34,12 +34,21 @@ per server session).
 The read server runs over **stdio**. Add to your Claude Code MCP config
 (`~/.claude.json` `mcpServers`, or project `.mcp.json`):
 
+Both servers run over **stdio**, registered SEPARATELY (least-privilege — read and
+write are distinct processes with distinct capability sets). Add to your Claude Code
+MCP config (`~/.claude.json` `mcpServers`, or project `.mcp.json`):
+
 ```json
 {
   "mcpServers": {
     "lifeos-wiki-read": {
       "command": "python",
       "args": ["-m", "modules.wiki.mcp.read_server"],
+      "cwd": "/path/to/life-os/backend"
+    },
+    "lifeos-wiki-write": {
+      "command": "python",
+      "args": ["-m", "modules.wiki.mcp.write_server"],
       "cwd": "/path/to/life-os/backend"
     }
   }
@@ -48,8 +57,14 @@ The read server runs over **stdio**. Add to your Claude Code MCP config
 
 (In the container the cwd is `/app`; `mcp` is installed via `pyproject.toml`.)
 
-Then in Claude Code: the 7 `wiki_*` tools become available — the agent reads your
-vault, cites notes by integer ID ("note 47"), and never writes directly.
+Then in Claude Code:
+- the 7 `wiki_*` read tools — the agent reads your vault, cites notes by integer ID
+  ("note 47"), never writes directly.
+- the 6 `propose_*` write tools (`propose_note` / `propose_edit` / `propose_link` /
+  `propose_unlink` / `propose_merge` / `propose_moc`) — each ENQUEUES a PENDING
+  proposal into the review queue (`GET /wiki/proposals`); **nothing lands in the
+  vault until you ACCEPT it in the P1 queue screen.** Every propose requires a
+  `rationale` (the agent must explain WHY). The agent proposes; you dispose.
 
 ## Run / smoke-test manually
 
