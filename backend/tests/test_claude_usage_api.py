@@ -112,3 +112,113 @@ def test_put_override_422_negative_cap(app_client):
 def test_put_override_empty_ok(app_client):
     # all-None override is valid (clears nothing, uses defaults)
     assert app_client.put("/claude-usage/override", json={}).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A4 — edge cases / error paths not previously covered at the API layer
+# ---------------------------------------------------------------------------
+
+def test_get_usage_stale_surfaced_as_warning(app_client):
+    """When the stats-cache is stale (lastComputedDate is old), GET /claude-usage
+    returns a warning string mentioning the stale date — NOT just a silent stale flag."""
+    import json
+    from core.config import settings
+
+    stale_date = "2026-01-01"
+    fix = app_client._stats_fixture  # type: ignore[attr-defined]
+    fix.write_text(json.dumps({
+        "lastComputedDate": stale_date,
+        "dailyModelTokens": [{"date": stale_date, "tokensByModel": {"claude-sonnet-4-6": 10_000}}],
+        "modelUsage": {"claude-sonnet-4-6": {"inputTokens": 10_000, "outputTokens": 0,
+                                              "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}},
+    }))
+
+    resp = app_client.get("/claude-usage")
+    assert resp.status_code == 200
+    body = resp.json()
+    # stale path → warning in the envelope
+    assert body.get("warning") is not None
+    assert "stale" in body["warning"]
+    assert stale_date in body["warning"]
+    # data.stale flag is also set
+    assert body["data"]["stale"] is True
+    assert body["data"]["asOf"] == stale_date
+
+
+def test_get_usage_non_claude_model_excluded_from_by_model_api(app_client):
+    """A non-Claude model in stats-cache is excluded from byModel at the API layer
+    (not just unit-level). Only claude-* keys surface in the response."""
+    import json
+
+    today = _today()
+    fix = app_client._stats_fixture  # type: ignore[attr-defined]
+    fix.write_text(json.dumps({
+        "lastComputedDate": today,
+        "dailyModelTokens": [{"date": today, "tokensByModel": {
+            "claude-opus-4-7": 100_000,
+            "MiniMax-Text-01": 4_660_000_000,   # garbage non-Claude model
+        }}],
+        "modelUsage": {
+            "claude-opus-4-7": {"inputTokens": 100_000, "outputTokens": 0,
+                                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+            "MiniMax-Text-01": {"inputTokens": 4_660_000_000, "outputTokens": 0,
+                                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+        },
+    }))
+
+    resp = app_client.get("/claude-usage")
+    assert resp.status_code == 200
+    by_model = resp.json()["data"]["byModel"]
+    model_names = [b["model"] for b in by_model]
+    assert all(m.startswith("claude-") for m in model_names), \
+        f"Non-Claude models leaked into byModel: {model_names}"
+    assert "MiniMax-Text-01" not in model_names
+    # cost must NOT include MiniMax's garbage tokens — costUSD at sonnet fallback
+    # for 4.66B tokens would be ~$14k; the real cost for 100k opus tokens is ~$0.50
+    cost_usd = resp.json()["data"]["costUSD"]
+    assert cost_usd < 10.0, f"Non-Claude cost leaked: costUSD={cost_usd}"
+
+
+def test_get_usage_cost_usd_derived_when_zero_in_cache(app_client):
+    """costUSD=0 in the raw cache → service DERIVES it from the pricing table.
+    We can't inject a raw 'costUSD' field since the service computes it; verify
+    that a known token count produces a non-zero derived cost."""
+    import json
+
+    today = _today()
+    fix = app_client._stats_fixture  # type: ignore[attr-defined]
+    fix.write_text(json.dumps({
+        "lastComputedDate": today,
+        "dailyModelTokens": [{"date": today, "tokensByModel": {"claude-sonnet-4-6": 1_000_000}}],
+        "modelUsage": {
+            "claude-sonnet-4-6": {
+                "inputTokens": 1_000_000, "outputTokens": 0,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+                # note: no explicit costUSD key — service derives it
+            }
+        },
+    }))
+
+    resp = app_client.get("/claude-usage")
+    assert resp.status_code == 200
+    d = resp.json()["data"]
+    # 1M sonnet input @ $3/1M = $3.00
+    assert d["costUSD"] == pytest.approx(3.0, abs=0.01)
+    assert d["byModel"][0]["costUSD"] == pytest.approx(3.0, abs=0.01)
+
+
+def test_get_usage_pct_zero_when_no_tokens(app_client):
+    """An empty stats-cache (no token data) → pct=0, used=0, source='none'."""
+    from core.config import settings
+
+    # Remove the stats-cache so there's truly no source
+    import json
+    fix = app_client._stats_fixture  # type: ignore[attr-defined]
+    fix.unlink()
+
+    resp = app_client.get("/claude-usage")
+    assert resp.status_code == 200
+    d = resp.json()["data"]
+    assert d["used"] == 0
+    assert d["pct"] == 0.0
+    assert d["source"] == "none"
