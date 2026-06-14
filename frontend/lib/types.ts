@@ -950,12 +950,15 @@ export interface WikiGraphCluster {
   mocSuggestion: boolean;
 }
 
-/** GET /wiki/graph payload — mirrors reader.graph. Ego-graph around `center`. */
+/** GET /wiki/graph payload — mirrors reader.graph. Ego-graph around `center`.
+ *  `clusters` uses the SAME shape the backend ego-graph emits (reader.detect_clusters
+ *  → {members, size, density, importance, suggestedTitle}) — NOT the stale
+ *  WikiGraphCluster ({label, noteIds}), which the backend never returns. */
 export interface WikiGraph {
   center: number;
   nodes: WikiGraphNode[];
   edges: WikiGraphEdge[];
-  clusters: WikiGraphCluster[];
+  clusters: WikiCluster[];
 }
 
 /** One FTS5 search hit (GET /wiki/search?q=). EMPTY array when no match. */

@@ -303,18 +303,15 @@ function WikiGraphInner() {
               graph.clusters.map((c, i) => (
                 <div className="wcluster" key={`c-${i}`} data-testid="graph-cluster">
                   <div className="wcluster-top">
-                    <b>{c.label}</b>
+                    <b>{c.suggestedTitle ?? `Cụm ${c.size} note`}</b>
                     <span className="wconf">mật độ {(c.density * 100).toFixed(0)}%</span>
                   </div>
                   <div className="wcluster-members">
-                    {c.noteIds.map((id) => {
-                      const nn = graph.nodes.find((x) => x.id === id);
-                      return (
-                        <span key={id} className="tagchip clickable" onClick={() => router.push(`/wiki/${id}`)}>
-                          #{id} {nn ? (nn.title || "").slice(0, 14) : ""}
-                        </span>
-                      );
-                    })}
+                    {c.members.map((m) => (
+                      <span key={m.id} className="tagchip clickable" onClick={() => router.push(`/wiki/${m.id}`)}>
+                        #{m.id} {(m.title || "").slice(0, 14)}
+                      </span>
+                    ))}
                   </div>
                 </div>
               ))
