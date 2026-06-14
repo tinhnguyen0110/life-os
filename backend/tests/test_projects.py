@@ -502,6 +502,33 @@ class TestServiceListProjects:
         assert by_id["outboundos"].health != "dead"
         assert by_id["bogus"].health == "dead"
 
+    def test_read_one_exception_is_caught_and_warned(self, monkeypatch, isolated_paths):
+        """The last-resort except in list_projects: even if read_one() itself RAISES
+        (not just returns a dead status), the project is dropped with a warning and
+        the list does not crash. read_one is normally fail-open, so this guards the
+        'never crash the list' contract against a future regression there."""
+        import modules.projects.service as svc
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {"outboundos": REAL_REPOS["outboundos"]})
+        svc._STATUS_CACHE.clear()
+
+        def boom(project_id, repo_path):
+            raise RuntimeError("reader blew up")
+        monkeypatch.setattr(svc, "read_one", boom)
+
+        statuses, warnings = list_projects()
+        assert statuses == []  # the one project was dropped, not surfaced half-built
+        assert any("outboundos" in w and "read error" in w for w in warnings)
+
+    def test_load_meta_returns_empty_when_read_raises(self, monkeypatch, isolated_paths):
+        """_load_meta swallows a md_store.read failure → {} so discovery never
+        crashes on an unreadable status.md (distinct from 'file absent')."""
+        import modules.projects.service as svc
+        def boom(_path):
+            raise OSError("status.md unreadable")
+        monkeypatch.setattr(svc.md_store, "read", boom)
+        assert svc._load_meta("anything") == {}
+
 
 class TestServiceGetProject:
     """get_project() — single-project accessor. DATA_DIR isolated per test."""

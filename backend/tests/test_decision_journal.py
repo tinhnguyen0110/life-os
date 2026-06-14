@@ -250,3 +250,64 @@ def test_api_resolve_via_put_then_brier_end_to_end(client):
 def test_api_auto_discovered_in_health(client):
     modules = client.get("/health").json()["data"]["modules"]
     assert "decision-journal" in modules
+
+
+# --------------------------------------------------------------------------- #
+# Malformed-doc parsing (fail-open) — _parse returns None on each bad shape,    #
+# never raises. A confidence-only happy-path test would not exercise these.     #
+# --------------------------------------------------------------------------- #
+def test_parse_rejects_doc_without_front_matter():
+    # No leading '---' → not a decision doc → None (not an exception).
+    assert dj._parse("just some text, no front-matter\n") is None
+
+
+def test_parse_rejects_unterminated_front_matter():
+    # Opens '---' but never closes it → split yields <2 parts → None.
+    assert dj._parse("---\nid: x\ndecision: d\n") is None
+
+
+def test_parse_rejects_malformed_yaml():
+    # Valid fences but the YAML inside is broken → YAMLError caught → None.
+    assert dj._parse("---\nid: : : broken\n---\nbody\n") is None
+
+
+def test_parse_rejects_non_dict_front_matter():
+    # YAML parses to a list, not a mapping → None.
+    assert dj._parse("---\n- a\n- b\n---\nbody\n") is None
+
+
+def test_parse_rejects_missing_required_key():
+    # Well-formed YAML mapping but missing required keys (id/decision/...) →
+    # DecisionEntry construction raises, caught → None.
+    assert dj._parse("---\ndecision: only this\n---\nbody\n") is None
+
+
+def test_parse_accepts_minimal_valid_doc():
+    # Distinguishing case: a fully-valid doc DOES parse — proves the rejections
+    # above are about malformed-ness, not a _parse that always returns None.
+    doc = (
+        "---\n"
+        "id: dj-ok\ndecision: ship it\nconfidence: 70\ndate: '2026-06-14'\n"
+        "domain: project\ncreatedAt: '2026-06-14T00:00:00Z'\n"
+        "updatedAt: '2026-06-14T00:00:00Z'\n"
+        "---\n## Decision\nship it\n"
+    )
+    e = dj._parse(doc)
+    assert e is not None and e.id == "dj-ok" and e.confidence == 70
+
+
+def test_list_entries_skips_malformed_keeps_good_and_warns(dj_db):
+    # One good entry written through the normal path, one malformed file dropped
+    # straight onto disk. list_entries must return ONLY the good one and surface
+    # a warning naming the bad id — fail-open, not a crash, not silent loss.
+    from store import md_store
+
+    good = dj.create_entry(DecisionInput(decision="keep me", confidence=60, domain="project"))
+    md_store.write_file(dj._rel("zzz-broken"), "---\nid: : : nope\n---\n", "seed malformed")
+
+    stats, warnings = dj.list_entries()
+
+    ids = [e.id for e in stats.entries]
+    assert good.id in ids
+    assert "zzz-broken" not in ids
+    assert any("zzz-broken" in w for w in warnings)

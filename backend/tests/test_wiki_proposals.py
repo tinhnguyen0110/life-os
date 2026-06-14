@@ -530,3 +530,55 @@ def test_autonomy_auto_apply_audits_both_rows(wiki_db):
     tools = [(r["tool"], r["actor"]) for r in pstore.recent_audit(correlation_id="auto-sess", limit=50)]
     assert ("propose", "agent:claude") in tools  # the create audit
     assert ("accept", "agent:auto") in tools      # the auto-accept audit
+
+
+# --------------------------------------------------------------------------- #
+# _apply — payload-translation error branches not covered by the accept tests   #
+# above. _apply is the dispatch core; calling it directly exercises the guards   #
+# that create_proposal's schema validation would otherwise mask.                 #
+# --------------------------------------------------------------------------- #
+def test_apply_note_edit_without_target_is_apply_error(wiki_db):
+    # note_edit needs a targetId; a proposal dict lacking one → ApplyError, with a
+    # message that names the missing field (distinct from a wrong-but-present id).
+    with pytest.raises(psvc.ApplyError) as ei:
+        psvc._apply({"kind": "note_edit", "targetId": None, "payload": {"title": "x"}})
+    assert "targetId" in str(ei.value) or "no targetId" in str(ei.value)
+
+
+def test_apply_unknown_kind_is_apply_error(wiki_db):
+    # A kind the dispatcher doesn't recognise → ApplyError naming the kind. (The
+    # schema blocks this at create-time, so only a direct/forged dict reaches it.)
+    with pytest.raises(psvc.ApplyError) as ei:
+        psvc._apply({"kind": "teleport", "payload": {}})
+    assert "teleport" in str(ei.value)
+
+
+def test_apply_link_add_without_target_is_apply_error(wiki_db):
+    # link_add with no targetId → ApplyError (the _apply_link_add guard).
+    with pytest.raises(psvc.ApplyError):
+        psvc._apply({"kind": "link_add", "targetId": None, "payload": {"target": "Note"}})
+
+
+def test_autonomous_enabled_defaults_off_when_config_read_raises(wiki_db, monkeypatch):
+    # Fail-soft: if reading the config raises, autonomy must resolve to OFF (the
+    # SAFE default — never auto-apply on an unreadable config), not propagate.
+    import modules.settings.service as settings_service
+    def boom():
+        raise RuntimeError("config store unreadable")
+    monkeypatch.setattr(settings_service, "get_config", boom)
+    assert psvc._autonomous_enabled() is False
+
+
+def test_audit_failure_does_not_break_the_action(wiki_db, monkeypatch):
+    # Fail-soft add-on: if the audit append RAISES, the primary proposal mutation
+    # must still succeed (audit is best-effort). Patch append_audit to blow up and
+    # assert the proposal was still created and is queryable.
+    def boom(**kwargs):
+        raise RuntimeError("audit table gone")
+    monkeypatch.setattr(psvc.pstore, "append_audit", boom)
+
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "survives audit failure"},
+    ))
+    assert p["id"] is not None
+    assert psvc.get_proposal(p["id"]) is not None  # the action completed despite audit error

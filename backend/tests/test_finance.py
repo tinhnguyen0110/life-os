@@ -283,3 +283,65 @@ def test_overview_with_okx_uses_basis_as_cost(isolated_paths, monkeypatch):
     assert crypto2.value == 11000.0
     assert crypto2.pnl.cost == 10500.0  # unchanged
     assert crypto2.pnl.abs == 500.0  # P&L = 11000 - 10500
+
+
+# --------------------------------------------------------------------------- #
+# Fail-open error/edge paths — a store read that RAISES (not just "file absent")  #
+# must degrade gracefully, never propagate. These exercise the except-branches   #
+# that the happy-path tests skip.                                                 #
+# --------------------------------------------------------------------------- #
+def test_list_holdings_returns_empty_when_read_raises(isolated_paths, monkeypatch):
+    # md_store.read raising (e.g. permission/IO error) → [] not a crash.
+    def boom(_path):
+        raise OSError("disk gone")
+    monkeypatch.setattr(service.md_store, "read", boom)
+    assert service.list_holdings() == []
+
+
+def test_list_holdings_skips_individual_invalid_holding(isolated_paths):
+    # Front-matter with a good holding + a structurally-invalid one. The valid one
+    # survives; the invalid is dropped (per-item try/except), not the whole list.
+    from store import md_store
+    md_store.write_file(
+        service.HOLDINGS_MD,
+        "---\nholdings:\n"
+        "  - symbol: BTC\n    channel: crypto\n    qty: 1\n    avgCost: 100\n"
+        "  - not_a_mapping\n"  # invalid item → Holding(**item) raises → skipped
+        "---\n",
+        "mixed holdings",
+    )
+    out = service.list_holdings()
+    syms = [h.symbol for h in out]
+    assert "BTC" in syms
+    assert len(out) == 1  # the malformed item was skipped, not fatal
+
+
+def test_golden_path_baseline_and_warning_when_read_raises(isolated_paths, monkeypatch):
+    # Read failure on golden_path.md → fall back to BASELINE_TARGETS + a warning.
+    def boom(_path):
+        raise OSError("io")
+    monkeypatch.setattr(service.md_store, "read", boom)
+    targets, _ladder, warnings = service.get_golden_path()
+    assert targets == dict(service.BASELINE_TARGETS)
+    assert warnings  # at least one warning surfaced (not silent)
+
+
+def test_get_crypto_basis_non_numeric_is_unset(isolated_paths):
+    # A stored basis that can't be cast to float → (None, "unset"), not a ValueError.
+    from store import md_store
+    md_store.write_file(
+        service.CRYPTO_BASIS_MD,
+        "---\nbasis: not-a-number\nsource: manual\n---\n",
+        "corrupt basis",
+    )
+    basis, source = service.get_crypto_basis()
+    assert basis is None
+    assert source == "unset"
+
+
+def test_parse_front_matter_non_dict_yields_empty():
+    # YAML that parses to a non-dict (a bare scalar/list) → {} (distinguishing:
+    # a real mapping below DOES parse, proving this isn't an always-{} stub).
+    assert service._parse_front_matter("---\n- a\n- b\n---\n") == {}
+    parsed = service._parse_front_matter("---\nkey: value\n---\n")
+    assert parsed == {"key": "value"}

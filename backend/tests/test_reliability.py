@@ -170,6 +170,44 @@ def test_H2_empty_vault_skips_grounding_no_write(wiki_db):
 
 
 # --------------------------------------------------------------------------- #
+# _pick_probe_note — the read-only probe selector. Covers its two fallbacks:    #
+# a note whose body is empty falls back to the TITLE; a note that get_note()    #
+# can't materialise is skipped rather than crashing the scan.                   #
+# --------------------------------------------------------------------------- #
+def test_pick_probe_note_falls_back_to_title_when_body_empty(wiki_db):
+    # A note with empty content but a real title → probe passage = the title,
+    # not an empty string (which would make grounding meaningless).
+    nid = wsvc.create_note(NoteCreateInput(title="orphan title", content="")).id
+    picked = rel._pick_probe_note()
+    assert picked is not None
+    note_id, passage = picked
+    assert note_id == nid
+    assert passage == "orphan title"
+
+
+def test_pick_probe_note_skips_note_get_returns_none(wiki_db, monkeypatch):
+    # Two notes on disk; get_note() returns None for the FIRST id (e.g. a row that
+    # can't be materialised) → the scan skips it and picks the second, instead of
+    # returning None or raising.
+    first = wsvc.create_note(NoteCreateInput(title="first", content="body one is here")).id
+    second = wsvc.create_note(NoteCreateInput(title="second", content="body two is here")).id
+
+    real_get = wsvc.get_note
+    def get_skipping_first(note_id):
+        if int(note_id) == int(first):
+            return None
+        return real_get(note_id)
+    # _pick_probe_note calls wiki_service.get_note — patch that binding.
+    monkeypatch.setattr(rel.wiki_service, "get_note", get_skipping_first)
+
+    picked = rel._pick_probe_note()
+    assert picked is not None
+    note_id, passage = picked
+    assert note_id == second  # the skippable first note was passed over
+    assert passage  # a real passage from the second note
+
+
+# --------------------------------------------------------------------------- #
 # API + auto-discovery                                                          #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
