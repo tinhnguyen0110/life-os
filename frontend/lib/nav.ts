@@ -52,6 +52,7 @@ export const NAV: NavGroup[] = [
     items: [
       { route: "/claude-usage", label: "Claude Usage", icon: "i-cpu", screen: "S9", badge: { text: "71%", cls: "r" } },
       { route: "/notes", label: "Ghi chú", icon: "i-note", screen: "S10" },
+      { route: "/decision-journal", label: "Quyết định", icon: "i-journal", screen: "DJ" },
     ],
   },
   {
@@ -97,6 +98,7 @@ export const CRUMB: Record<string, string> = {
   "/exchange": "OKX Exchange",
   "/claude-usage": "Claude Usage",
   "/notes": "Ghi chú",
+  "/decision-journal": "Nhật ký quyết định",
   "/brief": "Brief hôm nay",
   "/settings": "Cài đặt",
   "/routines": "Automation / Routines",

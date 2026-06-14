@@ -29,7 +29,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", ()
     expect(screens).toContain("P1");
     expect(screens).toContain("W5");
     expect(screens).toContain("A1c");
-    expect(unique.size).toBe(20);
+    expect(screens).toContain("DJ");
+    expect(unique.size).toBe(21);
   });
 
   it("every nav route has a breadcrumb entry", () => {

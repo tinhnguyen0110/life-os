@@ -1154,3 +1154,90 @@ export interface WikiConflictResolveInput {
   noteId: number;
   content: string;
 }
+
+/* ---- Decision Journal + Calibration (W7-A2 / F1-H1) — MIRRORS backend
+   modules/decision_journal/schema.py. A GENERAL decision (not a trade): decision +
+   thesis + falsification condition + confidence% (the probability claim) → on
+   resolve, an outcome (right/wrong on the THESIS axis) drives calibration. Brier +
+   confidence-band + rule-based domain bias-cluster. ---- */
+
+export type DecisionStatus = "open" | "resolved";
+export type DecisionOutcome = "right" | "wrong";
+
+/** A stored decision (GET → data.entries[]). `id` is a STRING (slug-ish). `predicted`
+ *  null → Brier derives it from confidence/100. `outcome` null while open. */
+export interface DecisionEntry {
+  id: string;
+  decision: string;
+  thesis: string | null;
+  falsificationCondition: string | null;
+  /** probability claim 0-100 (REQUIRED). */
+  confidence: number;
+  /** explicit 0-1 prob; null → derive confidence/100. */
+  predicted: number | null;
+  date: string;
+  /** free-form bias-cluster key (investment/project/...). */
+  domain: string;
+  status: DecisionStatus;
+  outcome: DecisionOutcome | null;
+  lesson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST body (DecisionInput) — id/timestamps server-set. confidence REQUIRED. */
+export interface DecisionCreateInput {
+  decision: string;
+  thesis?: string | null;
+  falsificationCondition?: string | null;
+  confidence: number;
+  predicted?: number | null;
+  date?: string;
+  domain: string;
+  status?: DecisionStatus | null;
+  outcome?: DecisionOutcome | null;
+  lesson?: string | null;
+}
+
+/** PUT body (DecisionPatch) — ALL optional; a partial resolve is
+ *  `{status:"resolved", outcome:"right"}` (no need to resend required fields). */
+export interface DecisionPatchInput {
+  decision?: string;
+  thesis?: string | null;
+  falsificationCondition?: string | null;
+  confidence?: number | null;
+  predicted?: number | null;
+  date?: string;
+  domain?: string | null;
+  status?: DecisionStatus | null;
+  outcome?: DecisionOutcome | null;
+  lesson?: string | null;
+}
+
+/** One confidence band vs actual outcome-right rate (resolved+confident only). */
+export interface DecisionCalibrationBand {
+  band: string;
+  predicted: number;
+  /** %(outcome=='right') within the band — the THESIS axis. */
+  actual: number;
+  n: number;
+}
+
+/** A domain whose resolved-wrong-rate exceeds the threshold over the min sample
+ *  (rule-based bias detection, min-n gated). */
+export interface DecisionBiasFlag {
+  domain: string;
+  wrongRate: number;
+  n: number;
+}
+
+/** GET /decision-journal payload — entries + derived calibration/bias stats.
+ *  `brier` null if 0 resolved (lower=better). */
+export interface DecisionJournalData {
+  entries: DecisionEntry[];
+  count: number;
+  resolvedCount: number;
+  brier: number | null;
+  calibration: DecisionCalibrationBand[];
+  biasFlags: DecisionBiasFlag[];
+}

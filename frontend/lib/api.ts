@@ -49,6 +49,10 @@ import type {
   WikiCitationVerifyResult,
   WikiConflictList,
   WikiConflictResolveInput,
+  DecisionJournalData,
+  DecisionEntry,
+  DecisionCreateInput,
+  DecisionPatchInput,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -517,6 +521,29 @@ export function resolveWikiConflict(
   body: WikiConflictResolveInput,
 ): Promise<ApiResponse<unknown>> {
   return apiPost<unknown>(`/wiki/sync/conflicts/${conflictId}/resolve`, body);
+}
+
+/* ---- Decision Journal + Calibration (W7-A2 / F1-H1) ---- */
+
+/** List decisions + derived calibration/bias stats (brier/bands/biasFlags embedded). */
+export function getDecisionJournal(): Promise<ApiResponse<DecisionJournalData>> {
+  return apiGet<DecisionJournalData>("/decision-journal");
+}
+
+/** Log a new decision (confidence REQUIRED). Throws ApiError(422) on bad confidence/empty. */
+export function createDecision(body: DecisionCreateInput): Promise<ApiResponse<DecisionEntry>> {
+  return apiPost<DecisionEntry>("/decision-journal", body);
+}
+
+/** Partial update / resolve — `{status:"resolved", outcome:"right"}` resolves without
+ *  resending required fields. Throws ApiError on bad body / 404. */
+export function updateDecision(id: string, body: DecisionPatchInput): Promise<ApiResponse<DecisionEntry>> {
+  return apiPut<DecisionEntry>(`/decision-journal/${encodeURIComponent(id)}`, body);
+}
+
+/** Delete a decision. 404 if unknown. */
+export function deleteDecision(id: string): Promise<ApiResponse<DecisionEntry>> {
+  return apiDelete<DecisionEntry>(`/decision-journal/${encodeURIComponent(id)}`);
 }
 
 export const apiBase = BASE;
