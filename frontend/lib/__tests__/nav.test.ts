@@ -14,7 +14,7 @@ describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", ()
     ]);
   });
 
-  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W3/W4/P1/W5) across nav items", () => {
+  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W3/W4/P1/W5/A1c) across nav items", () => {
     const screens = NAV.flatMap((g) => g.items.map((i) => i.screen));
     const unique = new Set(screens);
     // 14 foundation entries (S1..S14 minus S3 detail, PLUS S-okx) + Wiki nav group:
@@ -28,7 +28,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", ()
     expect(screens).toContain("W4");
     expect(screens).toContain("P1");
     expect(screens).toContain("W5");
-    expect(unique.size).toBe(19);
+    expect(screens).toContain("A1c");
+    expect(unique.size).toBe(20);
   });
 
   it("every nav route has a breadcrumb entry", () => {

@@ -112,4 +112,28 @@ describe("W4 Graph Explorer", () => {
     render(<WikiGraphPage />);
     await waitFor(() => expect(screen.getByTestId("graph-empty")).toBeInTheDocument());
   });
+
+  it("A1c polish: status filter dims non-matching nodes (developing #12 dimmed when filter=evergreen)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    fireEvent.click(screen.getByTestId("graph-filter-evergreen"));
+    const nodes = screen.getAllByTestId("graph-node");
+    const dev12 = nodes.find((n) => n.getAttribute("data-node-id") === "12")!; // developing
+    const ever88 = nodes.find((n) => n.getAttribute("data-node-id") === "88")!; // evergreen
+    expect(dev12).toHaveAttribute("data-dimmed", "true");
+    expect(ever88).not.toHaveAttribute("data-dimmed");
+  });
+
+  it("A1c polish: orphan-highlight toggle flips on", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const toggle = screen.getByTestId("graph-highlight-orphan");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
 });

@@ -45,6 +45,10 @@ import type {
   WikiBatchAcceptResult,
   WikiClusterList,
   WikiMocList,
+  WikiCitationVerifyInput,
+  WikiCitationVerifyResult,
+  WikiConflictList,
+  WikiConflictResolveInput,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -487,6 +491,32 @@ export function getWikiClusters(): Promise<ApiResponse<WikiClusterList>> {
 /** W5 — existing MOC notes (noteType="moc"), newest-first. Empty when none ratified. */
 export function getWikiMocs(): Promise<ApiResponse<WikiMocList>> {
   return apiGet<WikiMocList>("/wiki/mocs");
+}
+
+/* ---- A1b citation verify + A1a sync conflicts (W7) ---- */
+
+/** Verify a batch of LLM-returned citations (deterministic CODE post-verify): each
+ *  claim → verified/weaklyGrounded/rejected/ungrounded + the note it resolves to. */
+export function verifyWikiCitations(
+  body: WikiCitationVerifyInput,
+): Promise<ApiResponse<WikiCitationVerifyResult>> {
+  return apiPost<WikiCitationVerifyResult>("/wiki/citations/verify", body);
+}
+
+/** List sync conflicts. `status` ∈ open(default) | resolved. Empty → conflicts:[]. */
+export function getWikiConflicts(
+  status: "open" | "resolved" = "open",
+): Promise<ApiResponse<WikiConflictList>> {
+  return apiGet<WikiConflictList>(`/wiki/sync/conflicts?status=${status}`);
+}
+
+/** Resolve a conflict: write the chosen content THROUGH the single-writer queue +
+ *  mark resolved. Throws ApiError(404) if absent/already-resolved/note-gone. */
+export function resolveWikiConflict(
+  conflictId: number,
+  body: WikiConflictResolveInput,
+): Promise<ApiResponse<unknown>> {
+  return apiPost<unknown>(`/wiki/sync/conflicts/${conflictId}/resolve`, body);
 }
 
 export const apiBase = BASE;

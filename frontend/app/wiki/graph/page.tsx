@@ -55,6 +55,9 @@ function WikiGraphInner() {
 
   const [center, setCenter] = useState<number | null>(null);
   const [depth, setDepth] = useState<number>(2);
+  // A1c graph polish: status filter (dims non-matching nodes) + orphan highlight.
+  const [statusFilter, setStatusFilter] = useState<"all" | WikiStatus>("all");
+  const [highlightOrphan, setHighlightOrphan] = useState(false);
 
   // seed center from ?note= query (so /wiki/graph?note=12 deep-links, e.g. from a note's "graph quanh note").
   useEffect(() => {
@@ -129,6 +132,11 @@ function WikiGraphInner() {
     const col = STATUS_COLOR[n.status] ?? "var(--tx-1)";
     const isOrphan = n.degree === 0 && !isCenter;
     const label = n.title && n.title.length > 22 ? n.title.slice(0, 20) + "…" : (n.title || `#${n.id}`);
+    // A1c polish: status filter dims non-matching nodes (center always shown);
+    // orphan-highlight ring when toggled. Filter is VISUAL (dim), not removal — keeps
+    // the ego-graph topology intact so you see what's filtered out, not a blank.
+    const dimmed = statusFilter !== "all" && n.status !== statusFilter && !isCenter;
+    const orphanRing = isOrphan || (highlightOrphan && n.degree === 0);
     return (
       <g
         key={`n-${n.id}`}
@@ -138,6 +146,8 @@ function WikiGraphInner() {
         data-testid="graph-node"
         data-node-id={n.id}
         data-center={isCenter || undefined}
+        data-dimmed={dimmed || undefined}
+        opacity={dimmed ? 0.22 : 1}
       >
         {isCenter && (
           <circle r={r + 6} fill="none" stroke={col} strokeWidth={1.5} strokeDasharray="2 3" opacity={0.6} />
@@ -148,7 +158,7 @@ function WikiGraphInner() {
           fillOpacity={isOrphan ? 0.25 : 1}
           style={isCenter ? { filter: `drop-shadow(0 0 8px ${col})` } : undefined}
         />
-        {isOrphan && <circle r={r + 3} fill="none" stroke="var(--red)" strokeWidth={1} strokeDasharray="2 2" />}
+        {orphanRing && <circle r={r + 3} fill="none" stroke="var(--red)" strokeWidth={highlightOrphan ? 1.6 : 1} strokeDasharray="2 2" />}
         <text y={r + 13} className="wgnode-lbl" style={isCenter ? { fontWeight: 700, fill: "var(--tx-0)" } : undefined}>
           {label}
         </text>
@@ -246,9 +256,38 @@ function WikiGraphInner() {
         </div>
 
         <div className="wgraph-side">
+          {/* A1c polish: filter controls (status dim + orphan highlight) + summary */}
           <div className="panel">
-            <div className="phead"><span className="kicker">Tóm tắt</span></div>
+            <div className="phead"><span className="kicker">Bộ lọc & tóm tắt</span></div>
             <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="wfilter-row">
+                <span className="mut">Status</span>
+                <div className="seg" role="group" aria-label="status filter">
+                  {(["all", "evergreen", "developing", "fleeting"] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={statusFilter === s ? "on" : ""}
+                      onClick={() => setStatusFilter(s)}
+                      data-testid={`graph-filter-${s}`}
+                    >
+                      {s === "all" ? "all" : s.slice(0, 4)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="wfilter-row">
+                <span className="mut">Highlight orphan</span>
+                <button
+                  type="button"
+                  className={`tab ${highlightOrphan ? "on" : ""}`}
+                  onClick={() => setHighlightOrphan((v) => !v)}
+                  aria-pressed={highlightOrphan}
+                  data-testid="graph-highlight-orphan"
+                >
+                  {highlightOrphan ? "ON" : "OFF"}
+                </button>
+              </div>
               <div className="wfilter-row"><span className="mut">Nodes</span><span className="num">{graph?.nodes.length ?? 0}</span></div>
               <div className="wfilter-row"><span className="mut">Edges</span><span className="num">{graph?.edges.length ?? 0}</span></div>
               <div className="wfilter-row"><span className="mut">Depth</span><span className="num">{depth} hop</span></div>

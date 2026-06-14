@@ -1075,3 +1075,82 @@ export interface WikiMoc {
 export interface WikiMocList {
   items: WikiMoc[];
 }
+
+/* ---- A1b Citation verify (W7) — MIRRORS POST /wiki/citations/verify. The SPEC
+   surface (L257): grounded Q&A is EXTERNAL Claude Code (MCP), NOT an in-app chat;
+   the FE shows "answered via MCP, N citations verified" + click→note+span. This is
+   the verify display, deterministic CODE post-verification of LLM-returned cites. ---- */
+
+/** One claim to verify. `noteId`/`span` null = ungrounded (no citation given). */
+export interface WikiCitation {
+  claim: string;
+  noteId?: number | null;
+  span?: string | null;
+}
+
+/** POST /wiki/citations/verify body. */
+export interface WikiCitationVerifyInput {
+  claims: WikiCitation[];
+}
+
+/** verified = span found in the cited note · weaklyGrounded = note exists, span
+ *  fuzzy/partial · rejected = cited note/span absent · ungrounded = no citation. */
+export type WikiCitationStatus = "verified" | "weaklyGrounded" | "rejected" | "ungrounded";
+
+/** One verify result. `resolvedNoteId` = the note the citation actually resolves to
+ *  (for click→jump); `reason` = machine code (span_not_in_note / no_citation / …). */
+export interface WikiCitationResult {
+  claim: string;
+  noteId: number | null;
+  status: WikiCitationStatus;
+  reason: string;
+  resolvedNoteId: number | null;
+}
+
+export interface WikiCitationSummary {
+  verified: number;
+  rejected: number;
+  ungrounded: number;
+  weaklyGrounded: number;
+  total: number;
+}
+
+/** POST /wiki/citations/verify response. */
+export interface WikiCitationVerifyResult {
+  results: WikiCitationResult[];
+  summary: WikiCitationSummary;
+}
+
+/* ---- A1a M3 sync conflicts (W7, deferred from A1a) — MIRRORS reader sync_store.
+   Block-level LWW convergence keeps EVERY version (0 data loss); a TRUE conflict
+   (same note+block edited divergently) is surfaced here for human resolution. ---- */
+
+/** One kept version of a conflicting block (the LWW loser is recoverable). */
+export interface WikiConflictVersion {
+  device: string;
+  content: string;
+  ts: string;
+}
+
+/** One detected conflict (GET /wiki/sync/conflicts → data.conflicts[]). */
+export interface WikiConflict {
+  id: number;
+  noteId: number;
+  blockIndex: number;
+  versions: WikiConflictVersion[];
+  status: "open" | "resolved";
+  detected: string;
+  resolved: string | null;
+}
+
+/** GET /wiki/sync/conflicts payload. Empty = no open conflicts (honest). */
+export interface WikiConflictList {
+  conflicts: WikiConflict[];
+}
+
+/** POST /wiki/sync/conflicts/{id}/resolve body — human picks the winning content,
+ *  written THROUGH the single-writer queue (update_note) for one auditable path. */
+export interface WikiConflictResolveInput {
+  noteId: number;
+  content: string;
+}

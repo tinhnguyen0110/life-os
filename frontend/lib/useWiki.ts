@@ -26,6 +26,8 @@ import {
   batchAcceptWikiProposals,
   getWikiClusters,
   getWikiMocs,
+  getWikiConflicts,
+  resolveWikiConflict,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type {
@@ -40,6 +42,7 @@ import type {
   WikiBatchAcceptResult,
   WikiCluster,
   WikiMoc,
+  WikiConflict,
 } from "@/lib/types";
 
 export type WikiStatusState = "loading" | "error" | "ready";
@@ -453,4 +456,57 @@ export function useWikiMoc(): UseWikiMoc {
   }, [nonce]);
 
   return { clusters, mocs, status, errMsg, clustersUnavailable, mocsUnavailable, reload };
+}
+
+/* ------------------------------------------------------------------ */
+/* A1a — sync conflicts: list + resolve (fail-closed)                 */
+/* ------------------------------------------------------------------ */
+export interface UseWikiConflicts {
+  conflicts: WikiConflict[];
+  status: WikiStatusState;
+  errMsg: string;
+  reload: () => void;
+  /** resolve a conflict with the chosen content → refetch. THROWS ApiError(404)
+   *  when the conflict is gone/already-resolved/note-missing (caller surfaces it,
+   *  fail-closed — the list is NOT optimistically mutated). */
+  resolve: (conflictId: number, noteId: number, content: string) => Promise<void>;
+}
+
+export function useWikiConflicts(): UseWikiConflicts {
+  const [conflicts, setConflicts] = useState<WikiConflict[]>([]);
+  const [status, setStatus] = useState<WikiStatusState>("loading");
+  const [errMsg, setErrMsg] = useState("");
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      try {
+        const res = await getWikiConflicts("open");
+        if (!alive) return;
+        setConflicts(Array.isArray(res?.data?.conflicts) ? res.data.conflicts : []);
+        setStatus("ready");
+      } catch (e) {
+        if (!alive) return;
+        setErrMsg(errMessage(e));
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nonce]);
+
+  const resolve = useCallback(
+    async (conflictId: number, noteId: number, content: string) => {
+      await resolveWikiConflict(conflictId, { noteId, content }); // throws → caller surfaces
+      reload();
+    },
+    [reload],
+  );
+
+  return { conflicts, status, errMsg, reload, resolve };
 }
