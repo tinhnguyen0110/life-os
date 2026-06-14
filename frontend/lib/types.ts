@@ -861,3 +861,98 @@ export interface WikiSuggestion {
   confidence: number;
   state: "candidate" | "accepted" | "rejected" | "pinned";
 }
+
+/* ---- W1 Vault Overview (GET /wiki/overview) — mirrors reader.overview ---- */
+
+/** op-log op kind. M1 emits create/edit/link/refine/merge/delete; the agent kinds
+ *  (link_candidate/moc_proposal) are in the enum for M4 but never produced now. */
+export type WikiOpKind =
+  | "create" | "edit" | "link" | "link_candidate"
+  | "refine" | "merge" | "moc_proposal" | "delete";
+
+/** Vault-wide counters. `pctWithLink` is null on an empty vault (no denominator). */
+export interface WikiVaultStats {
+  totalNotes: number;
+  byStatus: { fleeting: number; developing: number; evergreen: number };
+  totalLinks: number;
+  orphanCount: number;
+  ghostLinkCount: number;
+  /** % of notes with ≥1 link; null when totalNotes==0 (avoid div-by-zero). */
+  pctWithLink: number | null;
+  asOf: string;
+}
+
+/** One orphan-sweep row (degree-0 / stale note). */
+export interface WikiOrphan {
+  id: number;
+  title: string | null;
+  status: WikiStatus;
+  degree: number;
+  lastTouched: string;
+}
+
+/** One op-log activity row (recentActivity[], newest→oldest). `detail`/`noteTitle`
+ *  may be empty/null. `actor` = human | agent (agent never auto-writes at M1). */
+export interface WikiActivity {
+  ts: string;
+  op: WikiOpKind;
+  actor: "human" | "agent";
+  noteId: number;
+  noteTitle: string;
+  detail: string | null;
+}
+
+/** GET /wiki/overview payload — mirrors reader.overview. `inbox`/`orphans` are
+ *  short summaries (full lists live on W3 / W4). `proposalCount` is 0 at M1. */
+export interface WikiOverview {
+  stats: WikiVaultStats;
+  inbox: WikiInboxItem[];
+  orphans: WikiOrphan[];
+  recentActivity: WikiActivity[];
+  proposalCount: number;
+}
+
+/* ---- W4 Graph Explorer (GET /wiki/graph?note=X&depth=N) — mirrors reader.graph ---- */
+
+/** One graph node. The API does NOT carry x/y — the FE computes a radial ego-layout
+ *  client-side (center fixed, neighbors on rings by hop distance). */
+export interface WikiGraphNode {
+  id: number;
+  title: string;
+  status: WikiStatus;
+  degree: number;
+}
+
+/** One typed edge. `type` ∈ relates|supports|contradicts|refines|example_of (M1
+ *  typed graph). `isResolved=false` = ghost target (note not yet created). */
+export interface WikiGraphEdge {
+  source: number;
+  target: number;
+  type: string;
+  isResolved: boolean;
+}
+
+/** One AI-detected cluster (MOC candidate). EMPTY at M1 (no embedded clustering);
+ *  the shape is kept so M4/W5 slot in unchanged. */
+export interface WikiGraphCluster {
+  label: string;
+  noteIds: number[];
+  density: number;
+  mocSuggestion: boolean;
+}
+
+/** GET /wiki/graph payload — mirrors reader.graph. Ego-graph around `center`. */
+export interface WikiGraph {
+  center: number;
+  nodes: WikiGraphNode[];
+  edges: WikiGraphEdge[];
+  clusters: WikiGraphCluster[];
+}
+
+/** One FTS5 search hit (GET /wiki/search?q=). EMPTY array when no match. */
+export interface WikiSearchHit {
+  id: number;
+  title: string | null;
+  status: WikiStatus;
+  snippet: string;
+}

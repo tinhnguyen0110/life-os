@@ -11,7 +11,8 @@ export type IconKey =
   | "i-home" | "i-proj" | "i-grave" | "i-fin" | "i-pie" | "i-journal"
   | "i-mkt" | "i-cpu" | "i-note" | "i-set" | "i-bolt" | "i-pulse"
   | "i-refresh" | "i-chevron" | "i-bell" | "i-doc"
-  | "i-link" | "i-check" | "i-back";
+  | "i-link" | "i-check" | "i-back"
+  | "i-graph" | "i-plus" | "i-search";
 
 const PATHS: Record<IconKey, ReactElement> = {
   "i-home": <><path {...C} d="M3 11l9-7 9 7" /><path {...C} d="M5 10v10h14V10" /></>,
@@ -33,6 +34,10 @@ const PATHS: Record<IconKey, ReactElement> = {
   "i-link": <><path {...C} d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5" /><path {...C} d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5" /></>,
   "i-check": <path {...C} d="M5 12l5 5L20 7" />,
   "i-back": <><path {...C} d="M19 12H5" /><path {...C} d="M12 19l-7-7 7-7" /></>,
+  // graph = three connected nodes (ego-graph glyph)
+  "i-graph": <><circle {...C} cx="6" cy="18" r="2.5" /><circle {...C} cx="18" cy="16" r="2.5" /><circle {...C} cx="13" cy="6" r="2.5" /><path {...C} d="M8 16.5l3.5-8M15.5 14l-3-6" /></>,
+  "i-plus": <path {...C} d="M12 5v14M5 12h14" />,
+  "i-search": <><circle {...C} cx="11" cy="11" r="7" /><path {...C} d="M21 21l-4.3-4.3" /></>,
 };
 
 export function Icon({ name, className }: { name: IconKey; className?: string }) {

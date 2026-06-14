@@ -34,6 +34,9 @@ import type {
   WikiNoteUpdateInput,
   WikiBacklinks,
   WikiInbox,
+  WikiOverview,
+  WikiSearchHit,
+  WikiGraph,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -406,6 +409,26 @@ export function refineWikiNote(id: number, body: WikiNoteUpdateInput): Promise<A
 /** W3 — fleeting notes awaiting triage (oldest→newest). aiSuggest null at M1. */
 export function getWikiInbox(): Promise<ApiResponse<WikiInbox>> {
   return apiGet<WikiInbox>("/wiki/inbox");
+}
+
+/** W1 — vault overview (stats + inbox/orphan summaries + op-log + proposalCount).
+ *  `warning` carries the empty-vault note on a cold-start vault. */
+export function getWikiOverview(): Promise<ApiResponse<WikiOverview>> {
+  return apiGet<WikiOverview>("/wiki/overview");
+}
+
+/** W1 search box — FTS5 full-text. Empty `q` or no match → data: []. */
+export function searchWiki(q: string): Promise<ApiResponse<WikiSearchHit[]>> {
+  return apiGet<WikiSearchHit[]>(`/wiki/search?q=${encodeURIComponent(q)}`);
+}
+
+/** W4 — ego-graph around `note` (1–2 hops). `depth` defaults to 2. Backend 404s
+ *  the note → ApiError(404); FE surfaces the not-found state. */
+export function getWikiGraph(
+  note: number,
+  depth = 2,
+): Promise<ApiResponse<WikiGraph>> {
+  return apiGet<WikiGraph>(`/wiki/graph?note=${note}&depth=${depth}`);
 }
 
 export const apiBase = BASE;

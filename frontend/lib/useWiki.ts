@@ -18,6 +18,8 @@ import {
   deleteWikiNote,
   refineWikiNote,
   getWikiInbox,
+  getWikiOverview,
+  getWikiGraph,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type {
@@ -25,6 +27,8 @@ import type {
   WikiBacklinks,
   WikiInboxItem,
   WikiNoteUpdateInput,
+  WikiOverview,
+  WikiGraph,
 } from "@/lib/types";
 
 export type WikiStatusState = "loading" | "error" | "ready";
@@ -171,4 +175,107 @@ export function useWikiInbox(): UseWikiInbox {
   );
 
   return { items, status, errMsg, warning, reload, refine };
+}
+
+/* ------------------------------------------------------------------ */
+/* W1 — vault overview (read-only: stats + summaries + op-log)        */
+/* ------------------------------------------------------------------ */
+export interface UseWikiOverview {
+  overview: WikiOverview | null;
+  status: WikiStatusState;
+  errMsg: string;
+  /** empty-vault / cold-start note (shown as info, not an error). */
+  warning: string | null;
+  reload: () => void;
+}
+
+export function useWikiOverview(): UseWikiOverview {
+  const [overview, setOverview] = useState<WikiOverview | null>(null);
+  const [status, setStatus] = useState<WikiStatusState>("loading");
+  const [errMsg, setErrMsg] = useState("");
+  const [warning, setWarning] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      try {
+        const res = await getWikiOverview();
+        if (!alive) return;
+        setOverview(res?.data ?? null);
+        setWarning(res?.warning ?? null);
+        setStatus("ready");
+      } catch (e) {
+        if (!alive) return;
+        setErrMsg(errMessage(e));
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nonce]);
+
+  return { overview, status, errMsg, warning, reload };
+}
+
+/* ------------------------------------------------------------------ */
+/* W4 — ego-graph around a center note (read-only)                    */
+/* ------------------------------------------------------------------ */
+export interface UseWikiGraph {
+  graph: WikiGraph | null;
+  status: WikiStatusState;
+  errMsg: string;
+  warning: string | null;
+  /** current center / depth (echoed so the UI controls reflect the loaded graph). */
+  center: number | null;
+  depth: number;
+  reload: () => void;
+}
+
+/** Loads /wiki/graph?note=center&depth=depth. When `center` is null (no note
+ *  chosen yet) the hook stays in a non-error "ready" idle state with graph=null
+ *  so the screen can show the "pick a center note" prompt rather than an error. */
+export function useWikiGraph(center: number | null, depth: number): UseWikiGraph {
+  const [graph, setGraph] = useState<WikiGraph | null>(null);
+  const [status, setStatus] = useState<WikiStatusState>("ready");
+  const [errMsg, setErrMsg] = useState("");
+  const [warning, setWarning] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    if (center == null || Number.isNaN(center)) {
+      // idle: no center chosen — not an error, just nothing to draw yet.
+      setGraph(null);
+      setErrMsg("");
+      setWarning(null);
+      setStatus("ready");
+      return;
+    }
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      try {
+        const res = await getWikiGraph(center, depth);
+        if (!alive) return;
+        setGraph(res?.data ?? null);
+        setWarning(res?.warning ?? null);
+        setStatus("ready");
+      } catch (e) {
+        if (!alive) return;
+        setErrMsg(errMessage(e));
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [center, depth, nonce]);
+
+  return { graph, status, errMsg, warning, center, depth, reload };
 }

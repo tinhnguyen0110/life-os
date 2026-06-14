@@ -492,3 +492,77 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wgate-body .mut { font-size:11px; line-height:1.35; }
 .wrefine-foot { display:flex; justify-content:flex-end; gap:9px; padding-top:4px; }
 .wrefine-foot .btn[disabled] { opacity:.45; cursor:not-allowed; }
+
+/* ============================================================
+   W1 — Vault Overview · PORTED from wiki.css (W1 block)
+   ============================================================ */
+.wsearch { display:flex; align-items:center; gap:12px; height:46px; flex-shrink:0;
+  border:1px solid var(--line-2); border-radius:11px; background:var(--bg-1); padding:0 16px; }
+.wsearch .pr { color:var(--tx-2); display:grid; place-items:center; }
+.wsearch .pr svg { width:17px; height:17px; }
+.wsearch input { flex:1; background:transparent; border:0; outline:0; color:var(--tx-0); font-family:var(--mono); font-size:13px; }
+.wsearch input::placeholder { color:var(--tx-2); }
+.wsearch kbd { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:5px; padding:3px 7px; }
+/* FTS results dropdown (not in mock — minimal, token-aligned) */
+.wsearch-res { display:flex; flex-direction:column; gap:1px; margin-top:-4px; padding:6px; border:1px solid var(--line-2); border-top:0; border-radius:0 0 11px 11px; background:var(--bg-1); }
+.wsearch-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; cursor:pointer; }
+.wsearch-row:hover { background:var(--bg-2); }
+.wsearch-row .wlr-s { color:var(--tx-2); }
+.wsearch-empty { padding:10px 12px; font-size:11.5px; color:var(--tx-2); }
+
+.wtiles { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; }
+.wtile { background:var(--bg-1); border:1px solid var(--line); border-radius:11px; padding:13px 14px; display:flex; flex-direction:column; gap:3px; }
+.wtile-l { font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--tx-2); }
+.wtile-v { font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--tx-0); }
+.wtile-v.acc { color:var(--accent); } .wtile-v.amber { color:var(--amber); } .wtile-v.blue { color:var(--blue); }
+.wtile-v.pos { color:var(--green); } .wtile-v.neg { color:var(--red); } .wtile-v.mut { color:var(--tx-1); }
+.wtile-s { font-family:var(--mono); font-size:10.5px; color:var(--tx-2); }
+
+/* list rows (inbox/orphan summaries in W1) */
+.wlist { padding:7px; display:flex; flex-direction:column; gap:1px; }
+.wlist-row { display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px; text-decoration:none; }
+.wlist-row.clickable { cursor:pointer; }
+.wlist-row.clickable:hover { background:var(--bg-2); }
+.wlist-empty { padding:14px 12px; font-size:11.5px; color:var(--tx-2); }
+.worphan-deg { width:24px; height:24px; border-radius:6px; flex-shrink:0; display:grid; place-items:center;
+  font-family:var(--mono); font-size:11px; font-weight:700; color:var(--red); background:var(--red-dim); }
+
+/* op-log activity */
+.wact-list { padding:8px 10px 10px; display:flex; flex-direction:column; }
+.wact-row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid color-mix(in oklch,var(--line) 50%,transparent); }
+.wact-row:last-child { border-bottom:0; }
+.wact-ts { font-size:10.5px; color:var(--tx-2); width:64px; flex-shrink:0; }
+.wact-op { font-family:var(--mono); font-size:10px; font-weight:600; padding:1px 7px; border-radius:5px; white-space:nowrap; }
+.wact-actor { font-family:var(--mono); font-size:10.5px; white-space:nowrap; flex-shrink:0; }
+.wact-actor.agent { color:var(--amber); } .wact-actor.human { color:var(--tx-1); }
+.wact-detail { font-size:11.5px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--tx-1); }
+
+/* proposal mini (M1: count 0 → honest empty) */
+.wprop-empty { padding:14px; font-size:11.5px; line-height:1.5; color:var(--tx-2); }
+
+/* ============================================================
+   W4 — Graph Explorer · PORTED from wiki.css (W4 block)
+   ============================================================ */
+.wgraph-grid { display:grid; grid-template-columns:1fr 300px; gap:14px; align-items:start; }
+.wgraph-canvas { overflow:hidden; }
+.wgraph-stage { height:460px; background:radial-gradient(circle at 50% 45%, var(--bg-2), var(--bg-0) 80%); position:relative; }
+.wgleg { font-family:var(--mono); font-size:10px; color:var(--tx-1); display:inline-flex; align-items:center; gap:5px; margin-left:10px; }
+.wgl-dot { width:9px; height:9px; border-radius:50%; }
+.wedge-lbl { font-family:var(--mono); font-size:8px; fill:var(--tx-2); text-anchor:middle; }
+.wgnode { cursor:pointer; }
+.wgnode:hover circle { filter:brightness(1.2); }
+.wgnode-lbl { font-family:var(--sans); font-size:10px; fill:var(--tx-1); text-anchor:middle; }
+.wgnode-id { font-family:var(--mono); font-size:9px; font-weight:700; fill:var(--bg-0); }
+.wgraph-side { display:flex; flex-direction:column; gap:14px; }
+.wfilter-row { display:flex; align-items:center; gap:10px; font-size:12px; justify-content:space-between; }
+.wfilter-row .mut { font-family:var(--mono); font-size:11px; }
+.wfilter-inp { background:var(--bg-0); border:1px solid var(--line-2); border-radius:7px; padding:6px 10px; color:var(--tx-0); font-family:var(--mono); font-size:11px; outline:0; width:110px; }
+.wgraph-empty { display:grid; place-items:center; height:100%; text-align:center; padding:24px; color:var(--tx-2); font-size:12.5px; line-height:1.6; }
+.wcluster { padding:12px 14px; }
+.wcluster-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+.wcluster-top b { font-size:13px; }
+.wconf { font-family:var(--mono); font-size:10px; color:var(--tx-2); }
+.wcluster-members { display:flex; flex-wrap:wrap; gap:5px; }
+.wcluster-members .tagchip.clickable { cursor:pointer; }
+.wcluster-members .tagchip.clickable:hover { border-color:var(--accent); color:var(--accent); }
+.wcluster-empty { padding:14px; font-size:11.5px; line-height:1.5; color:var(--tx-2); }
