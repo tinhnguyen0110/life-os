@@ -8,11 +8,20 @@ vi.mock("@/lib/useNav", () => ({
   useSafePathname: () => mockPath,
   useSafeRouter: () => ({ push: vi.fn() }),
 }));
-// Sidebar fetches /routines for the live Automation badge — mock it.
+// Sidebar fetches all 4 module endpoints for the live nav badges (F2-M4) — mock them.
 const getRoutines = vi.fn();
+const getProjects = vi.fn();
+const getMarket = vi.fn();
+const getClaudeUsage = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getRoutines: () => getRoutines() };
+  return {
+    ...actual,
+    getRoutines: () => getRoutines(),
+    getProjects: () => getProjects(),
+    getMarket: () => getMarket(),
+    getClaudeUsage: () => getClaudeUsage(),
+  };
 });
 // next/link → plain anchor in jsdom
 vi.mock("next/link", () => ({
@@ -25,13 +34,18 @@ vi.mock("next/link", () => ({
 
 describe("Sidebar", () => {
   beforeEach(() => {
-    // default: getRoutines resolves (so the badge fetch always has a promise);
-    // per-test overrides set specific activeCount / rejection.
+    // defaults: all 4 badge fetches resolve so the sidebar has live values.
     getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 5, total: 5, runsToday: 0, lastRunAt: null } });
+    getProjects.mockResolvedValue({ success: true, data: { projects: [], summary: { total: 7 } } });
+    getMarket.mockResolvedValue({ success: true, data: { quotes: [], triggers: [], macro: [], alertHistory: [] } });
+    getClaudeUsage.mockResolvedValue({ success: true, data: { pct: 18.9 } });
   });
   afterEach(() => {
     cleanup();
     getRoutines.mockReset();
+    getProjects.mockReset();
+    getMarket.mockReset();
+    getClaudeUsage.mockReset();
   });
 
   it("Automation nav badge shows LIVE activeCount (was static '5')", async () => {
@@ -99,11 +113,40 @@ describe("Sidebar", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("renders badge text where defined (Projects=4, Market=2, Claude=71%, Automation=5)", () => {
+  it("F2-M4: all 4 badges render LIVE values (projects total, claude pct, automation activeCount)", async () => {
     mockPath = "/";
-    const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
-    const projects = container.querySelector('a[href="/projects"]');
-    expect(within(projects as HTMLElement).getByText("4")).toBeInTheDocument();
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    // projects → summary.total=7 (was static "4")
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("7"));
+    // claude-usage → round(pct)=19% (was static "71%")
+    expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("19%");
+    // automation → activeCount=5
+    expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5");
+  });
+
+  it("F2-M4: market badge HIDDEN when 0 alerts (a red '0' alert is noise)", async () => {
+    mockPath = "/";
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    // default mock: triggers [] → 0 alerts → badge hidden
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("7"));
+    expect(screen.queryByTestId("nav-badge-/market")).toBeNull();
+  });
+
+  it("F2-M4: market badge SHOWN with the alert count when >0", async () => {
+    mockPath = "/";
+    getMarket.mockResolvedValue({ success: true, data: { quotes: [], triggers: [{}, {}, {}], macro: [], alertHistory: [] } });
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/market")).toHaveTextContent("3"));
+  });
+
+  it("F2-M4: each badge fails soft → static fallback when its endpoint is down", async () => {
+    mockPath = "/";
+    getProjects.mockRejectedValue(new Error("down"));
+    getClaudeUsage.mockRejectedValue(new Error("down"));
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    // projects falls back to static "4", claude to static "71%" — sidebar never blocks
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("4"));
+    expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("71%");
   });
 
   it("does NOT render any AI route (ARCH §11 — embedded AI dropped)", () => {

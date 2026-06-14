@@ -24,10 +24,15 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// Prevent real fetch calls in TopBar health probe + routine-active badge
+// Prevent real fetch calls in TopBar health probe + the 4 live Sidebar nav badges
+// (F2-M4: Sidebar now fetches routines/projects/market/claude-usage — all mocked here
+// so the shell renders without a real fetch; values irrelevant to these structural tests).
 vi.mock("@/lib/api", () => ({
   getHealth: vi.fn().mockResolvedValue({ success: true, data: { status: "ok", modules: [] } }),
   getRoutines: vi.fn().mockResolvedValue({ success: true, data: { routines: [], activeCount: 0, total: 0, runsToday: 0, lastRunAt: null } }),
+  getProjects: vi.fn().mockResolvedValue({ success: true, data: { projects: [], summary: { total: 0 } } }),
+  getMarket: vi.fn().mockResolvedValue({ success: true, data: { quotes: [], triggers: [], macro: [], alertHistory: [] } }),
+  getClaudeUsage: vi.fn().mockResolvedValue({ success: true, data: { pct: 0 } }),
   ApiError: class ApiError extends Error {},
 }));
 
