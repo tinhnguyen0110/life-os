@@ -17,6 +17,15 @@ vi.mock("@/lib/api", async () => {
 
 import { TopBar } from "../TopBar";
 
+// TopBar fires two async fetches on mount (getHealth → api-pill, getRoutines →
+// routine-active-pill). Tests that assert synchronously must still let BOTH settle
+// or React logs an act() warning when the state lands after the test. waitFor
+// retries inside act() until the api-pill leaves its initial "checking" label —
+// by then both mounted-effect promises have flushed.
+async function settleTopBar() {
+  await waitFor(() => expect(screen.getByTestId("api-pill")).not.toHaveTextContent("checking"));
+}
+
 describe("TopBar", () => {
   beforeEach(() => {
     push.mockClear();
@@ -43,6 +52,7 @@ describe("TopBar", () => {
     getHealth.mockResolvedValue({ success: true, data: { status: "ok", modules: [] } });
     render(<TopBar />);
     expect(screen.getByTestId("crumb")).toHaveTextContent("Thị trường & Cảnh báo");
+    await settleTopBar();
   });
 
   it("API pill goes live when /health succeeds", async () => {
@@ -62,6 +72,7 @@ describe("TopBar", () => {
     render(<TopBar />);
     screen.getByLabelText("Cảnh báo").click();
     expect(push).toHaveBeenCalledWith("/market");
+    await settleTopBar();
   });
 
   it("detail route falls back to the parent breadcrumb", async () => {
@@ -69,5 +80,6 @@ describe("TopBar", () => {
     getHealth.mockResolvedValue({ success: true, data: { status: "ok", modules: [] } });
     render(<TopBar />);
     expect(screen.getByTestId("crumb")).toHaveTextContent("Dự án");
+    await settleTopBar();
   });
 });

@@ -32,6 +32,14 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+// Sidebar fires 4 badge fetches on mount (routines/projects/market/claude). Tests
+// that assert structure synchronously must still let those settle, else React logs
+// an act() warning when the badge state lands after the test. waitFor retries inside
+// act() until the projects badge resolves to its live value (the default-mock "7").
+async function settleSidebar() {
+  await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("7"));
+}
+
 describe("Sidebar", () => {
   beforeEach(() => {
     // defaults: all 4 badge fetches resolve so the sidebar has live values.
@@ -61,7 +69,7 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5"));
   });
 
-  it("renders all 7 nav groups (+ Tri thức for Wiki)", () => {
+  it("renders all 7 nav groups (+ Tri thức for Wiki)", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     const secs = Array.from(container.querySelectorAll(".sb-sec")).map((e) => e.textContent);
@@ -69,9 +77,10 @@ describe("Sidebar", () => {
       expect(secs).toContain(g.sec);
     }
     expect(NAV).toHaveLength(7);
+    await settleSidebar();
   });
 
-  it("renders a link for every nav route (21 nav items: +Wiki group +Decision Journal)", () => {
+  it("renders a link for every nav route (21 nav items: +Wiki group +Decision Journal)", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     for (const route of ALL_ROUTES) {
@@ -82,27 +91,31 @@ describe("Sidebar", () => {
     expect(ALL_ROUTES).toHaveLength(21);
     expect(container.querySelector('a[href="/wiki/sync"]')).toBeTruthy();
     expect(container.querySelector('a[href="/decision-journal"]')).toBeTruthy();
+    await settleSidebar();
   });
 
-  it("marks the active route with `on` and aria-current", () => {
+  it("marks the active route with `on` and aria-current", async () => {
     mockPath = "/market";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     const active = container.querySelector('a[href="/market"]');
     expect(active?.className).toContain("on");
     expect(active?.getAttribute("aria-current")).toBe("page");
+    await settleSidebar();
   });
 
-  it("Home is only active at exactly `/` (not on sub-routes)", () => {
+  it("Home is only active at exactly `/` (not on sub-routes)", async () => {
     mockPath = "/projects";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     const home = container.querySelector('a[href="/"]');
     expect(home?.className).not.toContain("on");
+    await settleSidebar();
   });
 
-  it("detail route /projects/abc keeps /projects active (prefix match)", () => {
+  it("detail route /projects/abc keeps /projects active (prefix match)", async () => {
     mockPath = "/projects/abc";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     expect(container.querySelector('a[href="/projects"]')?.className).toContain("on");
+    await settleSidebar();
   });
 
   it("collapse button fires the callback", async () => {
@@ -111,6 +124,7 @@ describe("Sidebar", () => {
     render(<Sidebar onToggleCollapse={onToggle} />);
     screen.getByLabelText("Thu gọn sidebar").click();
     expect(onToggle).toHaveBeenCalledTimes(1);
+    await settleSidebar();
   });
 
   it("F2-M4: all 4 badges render LIVE values (projects total, claude pct, automation activeCount)", async () => {
@@ -151,10 +165,11 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("71%");
   });
 
-  it("does NOT render any AI route (ARCH §11 — embedded AI dropped)", () => {
+  it("does NOT render any AI route (ARCH §11 — embedded AI dropped)", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     expect(container.querySelector('a[href="/ai"]')).toBeNull();
     expect(screen.queryByText(/AI Brain/i)).toBeNull();
+    await settleSidebar();
   });
 });

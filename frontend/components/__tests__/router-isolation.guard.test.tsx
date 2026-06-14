@@ -22,7 +22,14 @@
  * `vi.mock("@/lib/useNav")` to THIS file, it defeats the guard — don't.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
+
+// TopBar fetches on mount (getHealth + getRoutines). These guard tests assert
+// synchronously, so the resolved state lands after the test → a React act() warning.
+// Flushing pending microtasks/effects inside act() settles it (no behaviour change).
+async function flushEffects() {
+  await act(async () => { await Promise.resolve(); });
+}
 
 // Stub ONLY the network boundary. Navigation is intentionally left real so the
 // safe-wrapper fallback is the thing actually exercised.
@@ -41,18 +48,20 @@ describe("router-isolation guard (no next/navigation or useNav mock)", () => {
     cleanup();
   });
 
-  it("TopBar renders without throwing when NO AppRouter provider is mounted", () => {
+  it("TopBar renders without throwing when NO AppRouter provider is mounted", async () => {
     // If the safe-wrapper fallback (useNav) were removed, next/navigation's
     // useRouter()/usePathname() invariant would throw here — turning this RED.
     expect(() => render(<TopBar />)).not.toThrow();
+    await flushEffects();
   });
 
-  it("falls back to the Home crumb ('/') when no router/path context exists", () => {
+  it("falls back to the Home crumb ('/') when no router/path context exists", async () => {
     // useSafePathname() → "/" with no PathnameContext → crumbFor("/") === "Home".
     // A leaked mock that pinned pathname to some other route would break this,
     // exposing the cross-file bleed.
     render(<TopBar />);
     expect(screen.getByTestId("crumb")).toHaveTextContent("Home");
+    await flushEffects();
   });
 
   it("still drives its own state (API pill) without any navigation mock", async () => {
@@ -62,10 +71,11 @@ describe("router-isolation guard (no next/navigation or useNav mock)", () => {
     );
   });
 
-  it("the bell click is a no-op router push (does not throw) without a provider", () => {
+  it("the bell click is a no-op router push (does not throw) without a provider", async () => {
     // useSafeRouter() → NOOP_ROUTER.push when unmounted. Clicking the bell must
     // not crash — proving the no-op fallback, not a leaked mock, is in effect.
     render(<TopBar />);
     expect(() => screen.getByLabelText("Cảnh báo").click()).not.toThrow();
+    await flushEffects();
   });
 });

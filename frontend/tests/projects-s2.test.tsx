@@ -8,8 +8,17 @@
  * Baseline when all modules land: vitest ≥ 125 (90 + 35+ new tests here).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import type { ProjectHealth, ProjectStatus, ProjectMetrics } from "@/lib/types";
+
+// ProjectsPage / ProjectDetailPage fetch on mount (global.fetch mock). Section F/G
+// tests assert synchronously, so the resolved-state update lands after the test → a
+// React act() warning. Flushing pending microtasks/effects inside act() before the
+// test ends applies those updates cleanly (purely settles async state — no behaviour
+// change). The pure-component sections (A–E) don't fetch, so they don't need this.
+async function flushEffects() {
+  await act(async () => { await Promise.resolve(); });
+}
 
 // ------------------------------------------------------------------ #
 // Import guards — skip whole describe blocks until modules exist.
@@ -424,53 +433,60 @@ describe("S2 Projects List screen", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders without crashing (fetch mocked)", () => {
+  it("renders without crashing (fetch mocked)", async () => {
     if (!ProjectsPage) return;
     expect(() => render(<ProjectsPage />)).not.toThrow();
+    await flushEffects();
   });
 
-  it("renders heading 'Dự án'", () => {
+  it("renders heading 'Dự án'", async () => {
     if (!ProjectsPage) return;
     render(<ProjectsPage />);
     // /dự án/i collides with "Dự án" column header + "Dự án mới" button — use h1 role
     expect(screen.getByRole("heading", { name: /^dự án$/i, level: 1 })).toBeInTheDocument();
+    await flushEffects();
   });
 
-  it("renders summary KpiCards (4 stat blocks) once real S2 lands", () => {
+  it("renders summary KpiCards (4 stat blocks) once real S2 lands", async () => {
     if (!ProjectsPage) return;
     const { container } = render(<ProjectsPage />);
     const stats = container.querySelectorAll(".stat");
+    await flushEffects();
     if (stats.length === 0) return; // still EmptyScreen stub — skip gracefully
     expect(stats.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("renders a .dtable when projects exist (after T2 lands)", () => {
+  it("renders a .dtable when projects exist (after T2 lands)", async () => {
     if (!ProjectsPage) return;
     const { container } = render(<ProjectsPage />);
     const table = container.querySelector(".dtable");
+    await flushEffects();
     if (!table) return; // still EmptyScreen stub — skip gracefully
     expect(table).toBeTruthy();
   });
 
-  it("progress=null renders '—' not 0% (after T2 lands)", () => {
+  it("progress=null renders '—' not 0% (after T2 lands)", async () => {
     if (!ProjectsPage) return;
     mockFetchProjects([PROJECT_STALL]); // progress: null
     const { container } = render(<ProjectsPage />);
     const table = container.querySelector(".dtable");
+    await flushEffects();
     if (!table) return; // still a stub — skip gracefully
     expect(container.textContent).not.toMatch(/\b0%/);
   });
 
-  it("empty list renders empty state (not crash)", () => {
+  it("empty list renders empty state (not crash)", async () => {
     if (!ProjectsPage) return;
     mockFetchProjects([]);
     expect(() => render(<ProjectsPage />)).not.toThrow();
+    await flushEffects();
   });
 
-  it("fetch error → renders without crash (friendly error state)", () => {
+  it("fetch error → renders without crash (friendly error state)", async () => {
     if (!ProjectsPage) return;
     global.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     expect(() => render(<ProjectsPage />)).not.toThrow();
+    await flushEffects();
   });
 });
 
@@ -497,14 +513,15 @@ describe("S3 Project Detail screen", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders without crashing (fetch mocked)", () => {
+  it("renders without crashing (fetch mocked)", async () => {
     if (!ProjectDetailPage) return;
     expect(() =>
       render(<ProjectDetailPage params={{ id: "outboundos" }} />)
     ).not.toThrow();
+    await flushEffects();
   });
 
-  it("404 — fetch returns 404 → renders without crash", () => {
+  it("404 — fetch returns 404 → renders without crash", async () => {
     if (!ProjectDetailPage) return;
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -514,30 +531,36 @@ describe("S3 Project Detail screen", () => {
     expect(() =>
       render(<ProjectDetailPage params={{ id: "nobody" }} />)
     ).not.toThrow();
+    await flushEffects();
   });
 
-  it("renders project name once T3 lands (stub skips gracefully)", () => {
+  it("renders project name once T3 lands (stub skips gracefully)", async () => {
     if (!ProjectDetailPage) return;
     mockFetchProject(PROJECT_ACT);
     const { container } = render(<ProjectDetailPage params={{ id: "outboundos" }} />);
+    await flushEffects();
     // Real S3 renders p.name in <h1>; stub renders params.id only.
     // Guard: only assert after T3 ships real content.
     if (!container.textContent?.includes("OutboundOS")) return;
-    expect(screen.getByText(/OutboundOS/i)).toBeInTheDocument();
+    // The name appears in the heading AND the breadcrumb once the fetch settles —
+    // getAllByText (≥1) asserts it renders without tripping on the duplicate.
+    expect(screen.getAllByText(/OutboundOS/i).length).toBeGreaterThan(0);
   });
 
-  it("lastAuto=null renders 'chưa chạy' once T3 lands", () => {
+  it("lastAuto=null renders 'chưa chạy' once T3 lands", async () => {
     if (!ProjectDetailPage) return;
     mockFetchProject(PROJECT_SLOW); // lastAuto: null
     const { container } = render(<ProjectDetailPage params={{ id: "crewly" }} />);
+    await flushEffects();
     if (!container.textContent?.includes("chưa chạy")) return; // still stub
     expect(container.textContent).toContain("chưa chạy");
   });
 
-  it("progress=null renders '—' once T3 lands", () => {
+  it("progress=null renders '—' once T3 lands", async () => {
     if (!ProjectDetailPage) return;
     mockFetchProject(PROJECT_STALL); // progress: null
     const { container } = render(<ProjectDetailPage params={{ id: "habit-tracker" }} />);
+    await flushEffects();
     // Guard: stub page won't have progress display
     if (!container.querySelector("[data-testid='progress-bar']")) return;
     const bar = container.querySelector("[data-testid='progress-bar']") as HTMLElement;

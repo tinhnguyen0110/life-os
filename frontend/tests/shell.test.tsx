@@ -7,9 +7,17 @@
  * Skipped per component if the import fails (file not yet written by frontend).
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
+
+// Sidebar + TopBar fire mocked fetches on mount. These structural smoke tests assert
+// synchronously, so the resolved-state updates land after the test → a React act()
+// warning. Flushing pending microtasks/effects inside act() before the test ends lets
+// those state updates apply cleanly. (Behaviour unchanged — purely settles async state.)
+async function flushEffects() {
+  await act(async () => { await Promise.resolve(); });
+}
 
 // Mock next/navigation so TopBar/Sidebar don't throw "invariant expected app router"
 // when rendered outside a Next.js App Router context.
@@ -55,25 +63,28 @@ try { ({ TickerTape } = await import("@/components/TickerTape")); } catch { /* n
 // ---------------------------------------------------------------------------
 
 describe("Sidebar", () => {
-  it("renders without crashing", () => {
+  it("renders without crashing", async () => {
     if (!Sidebar) return; // pre-scaffold: skip until component exists
     const { container } = render(<Sidebar />);
     expect(container).toBeTruthy();
+    await flushEffects();
   });
 
-  it("renders 6 nav groups", () => {
+  it("renders 6 nav groups", async () => {
     if (!Sidebar) return;
     render(<Sidebar />);
     // Expect 6 group headings (Tổng quan, Dự án, Tài chính, Hằng ngày, Hệ thống, Cấu hình)
     const groups = document.querySelectorAll("[data-nav-group]");
     expect(groups.length).toBeGreaterThanOrEqual(6);
+    await flushEffects();
   });
 
-  it("renders all 14 nav items", () => {
+  it("renders all 14 nav items", async () => {
     if (!Sidebar) return;
     render(<Sidebar />);
     const items = document.querySelectorAll("[data-nav-item]");
     expect(items.length).toBeGreaterThanOrEqual(14);
+    await flushEffects();
   });
 
   it("supports collapse toggle", async () => {
@@ -95,24 +106,27 @@ describe("Sidebar", () => {
 // ---------------------------------------------------------------------------
 
 describe("TopBar", () => {
-  it("renders without crashing", () => {
+  it("renders without crashing", async () => {
     if (!TopBar) return;
     render(<TopBar route="Home" />);
     expect(document.body).toBeTruthy();
+    await flushEffects();
   });
 
-  it("shows an API live indicator", () => {
+  it("shows an API live indicator", async () => {
     if (!TopBar) return;
     render(<TopBar route="Home" />);
     // Should have some indicator of API status
     const pill = document.querySelector("[data-api-status]");
     expect(pill).toBeTruthy();
+    await flushEffects();
   });
 
-  it("shows the route breadcrumb", () => {
+  it("shows the route breadcrumb", async () => {
     if (!TopBar) return;
     render(<TopBar route="Projects" />);
     expect(screen.getByText(/Projects/i)).toBeTruthy();
+    await flushEffects();
   });
 });
 
