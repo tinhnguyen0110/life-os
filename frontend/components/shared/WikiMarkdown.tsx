@@ -20,8 +20,15 @@ import remarkGfm from "remark-gfm";
  *  [[47|title]] → labelled link · [[47]] → bare-id link · [[Title]] → ghost. */
 const WIKILINK_RE = /\[\[(\d+)\|([^\]]+)\]\]|\[\[(\d+)\]\]|\[\[([^\]\d][^\]]*)\]\]/g;
 
-/** Split a plain string into text + wikilink nodes (REUSED from WikiLinkRenderer). */
-function splitWikilinks(text: string, keyBase: string): ReactNode[] {
+/** title (lowercased) → note id, for resolving `[[Title]]` body links. Built by the
+ *  caller from the note's resolved outbound edges (backend-computed). Absent / empty
+ *  → every title link stays a ghost (the pre-resolution behavior). */
+export type WikiLinkResolve = Map<string, number>;
+
+/** Split a plain string into text + wikilink nodes (REUSED from WikiLinkRenderer).
+ *  ``resolve`` maps a lowercased title → id so `[[Title]]` of an EXISTING note renders
+ *  a clickable link (like the outbound-links panel); an unresolved title stays a ghost. */
+function splitWikilinks(text: string, keyBase: string, resolve?: WikiLinkResolve): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -35,7 +42,15 @@ function splitWikilinks(text: string, keyBase: string): ReactNode[] {
     } else if (m[3] !== undefined) {
       out.push(<Link key={k} href={`/wiki/${m[3]}`} className="wlink" data-wikilink={m[3]}>#{m[3]}</Link>);
     } else {
-      out.push(<span key={k} className="wlink ghost" data-wikilink-ghost title="Ghost link — note chưa tồn tại">{m[4]}</span>);
+      // [[Title]] — resolve the title → id (case-insensitive) against the note's
+      // resolved outbound edges. Resolvable → clickable link; else → ghost.
+      const title = m[4];
+      const id = resolve?.get(title.trim().toLowerCase());
+      if (id !== undefined) {
+        out.push(<Link key={k} href={`/wiki/${id}`} className="wlink" data-wikilink={id}>{title}</Link>);
+      } else {
+        out.push(<span key={k} className="wlink ghost" data-wikilink-ghost title="Ghost link — note chưa tồn tại">{title}</span>);
+      }
     }
     last = m.index + m[0].length;
   }
@@ -46,16 +61,18 @@ function splitWikilinks(text: string, keyBase: string): ReactNode[] {
 /** Walk react-markdown's rendered children; replace any string child with its
  *  wikilink-split nodes. Non-string children (already-rendered elements: bold,
  *  code, nested links) pass through untouched. */
-function withWikilinks(children: ReactNode, keyBase: string): ReactNode {
+function withWikilinks(children: ReactNode, keyBase: string, resolve?: WikiLinkResolve): ReactNode {
   const arr = Array.isArray(children) ? children : [children];
   return arr.map((child, i) =>
     typeof child === "string"
-      ? <Fragment key={`${keyBase}-${i}`}>{splitWikilinks(child, `${keyBase}-${i}`)}</Fragment>
+      ? <Fragment key={`${keyBase}-${i}`}>{splitWikilinks(child, `${keyBase}-${i}`, resolve)}</Fragment>
       : child,
   );
 }
 
-export function WikiMarkdown({ content, testId }: { content: string; testId?: string }) {
+export function WikiMarkdown(
+  { content, testId, resolve }: { content: string; testId?: string; resolve?: WikiLinkResolve },
+) {
   const body = (content ?? "").trim();
   if (!body) {
     return (
@@ -71,14 +88,14 @@ export function WikiMarkdown({ content, testId }: { content: string; testId?: st
         components={{
           // Inject wikilink-splitting into every block that holds inline text. The
           // children may be strings (→ split) or elements (bold/code/em → kept).
-          p: ({ children }) => <p>{withWikilinks(children, "p")}</p>,
-          li: ({ children }) => <li>{withWikilinks(children, "li")}</li>,
-          h1: ({ children }) => <h2 className="wmd-h">{withWikilinks(children, "h1")}</h2>,
-          h2: ({ children }) => <h2 className="wmd-h">{withWikilinks(children, "h2")}</h2>,
-          h3: ({ children }) => <h3 className="wmd-h">{withWikilinks(children, "h3")}</h3>,
-          h4: ({ children }) => <h4 className="wmd-h">{withWikilinks(children, "h4")}</h4>,
-          td: ({ children }) => <td>{withWikilinks(children, "td")}</td>,
-          th: ({ children }) => <th>{withWikilinks(children, "th")}</th>,
+          p: ({ children }) => <p>{withWikilinks(children, "p", resolve)}</p>,
+          li: ({ children }) => <li>{withWikilinks(children, "li", resolve)}</li>,
+          h1: ({ children }) => <h2 className="wmd-h">{withWikilinks(children, "h1", resolve)}</h2>,
+          h2: ({ children }) => <h2 className="wmd-h">{withWikilinks(children, "h2", resolve)}</h2>,
+          h3: ({ children }) => <h3 className="wmd-h">{withWikilinks(children, "h3", resolve)}</h3>,
+          h4: ({ children }) => <h4 className="wmd-h">{withWikilinks(children, "h4", resolve)}</h4>,
+          td: ({ children }) => <td>{withWikilinks(children, "td", resolve)}</td>,
+          th: ({ children }) => <th>{withWikilinks(children, "th", resolve)}</th>,
           blockquote: ({ children }) => <blockquote className="wmd-quote">{children}</blockquote>,
           // links the markdown itself contains ([text](url)) — keep as plain anchors.
           a: ({ href, children }) => <a href={href} className="wlink" target="_blank" rel="noreferrer">{children}</a>,

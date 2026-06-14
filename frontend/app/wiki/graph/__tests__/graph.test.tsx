@@ -37,6 +37,27 @@ const GRAPH: WikiGraph = {
   clusters: [],
 };
 
+// Bug #1 regression fixture: a graph WITH a populated cluster, in the SHAPE the
+// backend actually emits (reader.detect_clusters → {members:[{id,title}], size,
+// density, importance, suggestedTitle}). The page crashed here because it read the
+// stale {label, noteIds} shape — `c.noteIds.map` on undefined. This fixture exercises
+// the cluster-render path so that regression can't ship green again.
+const GRAPH_WITH_CLUSTER: WikiGraph = {
+  ...GRAPH,
+  clusters: [
+    {
+      members: [
+        { id: 47, title: "Knowledge work accretes" },
+        { id: 88, title: "MOCs are workstations" },
+      ],
+      size: 2,
+      density: 0.6,
+      importance: 1.2,
+      suggestedTitle: "Knowledge work accretes",
+    },
+  ],
+};
+
 describe("W4 Graph Explorer", () => {
   it("idle (no center chosen) → 'chọn note tâm' prompt, no graph fetch", async () => {
     mockNoteParam = null;
@@ -83,6 +104,37 @@ describe("W4 Graph Explorer", () => {
     expect(empty).toBeInTheDocument();
     expect(empty.textContent).toMatch(/Claude Code/i);
     expect(screen.queryByTestId("graph-cluster")).toBeNull();
+  });
+
+  // --- Bug #1 regression: a graph WITH a cluster must render the cluster + its member
+  //     chips WITHOUT crashing. The page used to read the stale {label, noteIds} shape
+  //     → `c.noteIds.map` on undefined → white-screen TypeError. This renders the real
+  //     {members, suggestedTitle} shape end-to-end.
+  it("graph WITH a cluster renders the cluster + member chips (no crash)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH_WITH_CLUSTER));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    // the cluster block renders (not the empty-state)
+    const cluster = await screen.findByTestId("graph-cluster");
+    expect(cluster).toBeInTheDocument();
+    expect(screen.queryByTestId("graph-cluster-empty")).toBeNull();
+    // suggestedTitle is shown
+    expect(cluster.textContent).toMatch(/Knowledge work accretes/);
+    // each member renders as a chip with its id (the c.members.map path)
+    expect(cluster.textContent).toMatch(/#47/);
+    expect(cluster.textContent).toMatch(/#88/);
+  });
+
+  it("cluster member chip click routes to /wiki/[id]", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH_WITH_CLUSTER));
+    render(<WikiGraphPage />);
+    const cluster = await screen.findByTestId("graph-cluster");
+    const chip88 = [...cluster.querySelectorAll(".tagchip")].find((c) => /#88/.test(c.textContent || ""));
+    expect(chip88).toBeTruthy();
+    fireEvent.click(chip88 as Element);
+    expect(mockPush).toHaveBeenCalledWith("/wiki/88");
   });
 
   it("404 center note → error state, not a crash", async () => {

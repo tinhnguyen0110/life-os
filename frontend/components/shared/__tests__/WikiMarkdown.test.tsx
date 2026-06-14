@@ -32,6 +32,42 @@ describe("WikiMarkdown (WEXP read-render: react-markdown + remark-gfm, wikilinks
     expect(ghost).toHaveAttribute("data-wikilink-ghost");
   });
 
+  // --- Bug #2 regression: title-based [[Title]] of an EXISTING note must resolve to
+  //     a clickable link (it used to ALWAYS render a dead ghost — the renderer had no
+  //     title→id map). The note page passes `resolve` built from resolved outbound edges.
+  it("[[Title]] of an existing note (in resolve map) → clickable link to its id", () => {
+    const resolve = new Map<string, number>([["linking notes", 2]]);
+    render(<WikiMarkdown content={"see [[Linking Notes]] here"} resolve={resolve} />);
+    const link = screen.getByText("Linking Notes").closest("a")!;
+    expect(link).toHaveAttribute("href", "/wiki/2");
+    expect(link).toHaveAttribute("data-wikilink", "2");
+    // it is NOT a ghost
+    expect(screen.getByText("Linking Notes")).not.toHaveAttribute("data-wikilink-ghost");
+  });
+
+  it("[[Title]] resolution is case-insensitive", () => {
+    const resolve = new Map<string, number>([["atomic notes", 1]]);
+    render(<WikiMarkdown content={"ref [[ATOMIC notes]] inline"} resolve={resolve} />);
+    expect(screen.getByText("ATOMIC notes").closest("a")).toHaveAttribute("href", "/wiki/1");
+  });
+
+  it("DISTINGUISHING: with a resolve map, an UNresolved title stays a ghost (not a false link)", () => {
+    // Only "linking notes" is resolvable; "Nonexistent Topic" must remain a ghost —
+    // proves resolution is real, not a blanket "everything becomes a link".
+    const resolve = new Map<string, number>([["linking notes", 2]]);
+    render(<WikiMarkdown content={"[[Linking Notes]] and [[Nonexistent Topic]]"} resolve={resolve} />);
+    expect(screen.getByText("Linking Notes").closest("a")).toHaveAttribute("href", "/wiki/2");
+    const ghost = screen.getByText("Nonexistent Topic");
+    expect(ghost.closest("a")).toBeNull();
+    expect(ghost).toHaveAttribute("data-wikilink-ghost");
+  });
+
+  it("no resolve map → [[Title]] stays a ghost (back-compat default)", () => {
+    render(<WikiMarkdown content={"a [[Some Note]] ref"} />);
+    expect(screen.getByText("Some Note").closest("a")).toBeNull();
+    expect(screen.getByText("Some Note")).toHaveAttribute("data-wikilink-ghost");
+  });
+
   it("wikilink inside a LIST ITEM still resolves (custom li renderer)", () => {
     render(<WikiMarkdown content={"- item with [[5|five]]"} />);
     const link = screen.getByText("five").closest("a")!;

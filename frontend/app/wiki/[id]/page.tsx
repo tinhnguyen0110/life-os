@@ -69,6 +69,17 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
 
   const bl = backlinks ?? { linked: [], unlinked: [], outbound: [] };
 
+  // Title→id resolution for body `[[Title]]` links: the backend already resolved this
+  // note's outbound edges (backlinks.outbound). Map each RESOLVED edge's title
+  // (lowercased) → id so a body `[[Linking Notes]]` of an existing note renders a
+  // clickable link, consistent with the OUTBOUND LINKS panel. Unresolved titles (not
+  // in the map) stay ghosts.
+  const linkResolve = new Map<string, number>(
+    bl.outbound
+      .filter((o): o is { id: number; title: string; isResolved: true } => o.isResolved && o.id !== undefined)
+      .map((o) => [o.title.trim().toLowerCase(), o.id] as const),
+  );
+
   function openEdit() {
     if (!note) return;
     setFormErr("");
@@ -231,7 +242,7 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
                     tạo {note.created} · sửa {note.updated}
                   </span>
                 </div>
-                <WikiMarkdown content={note.content} />
+                <WikiMarkdown content={note.content} resolve={linkResolve} />
                 {note.trustTier === "candidate" && <CandidateWarning testId="wiki-candidate-warn" />}
               </>
             )}
