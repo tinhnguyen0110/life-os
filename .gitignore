@@ -49,10 +49,49 @@ Thumbs.db
 frontend/.claude/
 backend/.claude/
 
-# Process / know-how — not public
+# --- Internal process / planning docs (not for public repo) ---
+# Per user 2026-06-14: keep these local-only. Wiki module docs (docs/WIKI-*,
+# sprints/OVERVIEW_wiki_llm.md, sprints/plan_sprint_W1*) ARE tracked — only the
+# legacy foundation process files below are ignored.
 CLAUDE.md
 .claude/
-sprints/
 backend/data/
 life-os-ARCHITECTURE.md
 life-os-SPEC-FULL.md
+sprints/ROADMAP.md
+sprints/end_sprint_0.md
+sprints/end_sprint_1.md
+sprints/end_sprint_1A.md
+sprints/end_sprint_2.md
+sprints/end_sprint_3.md
+sprints/end_sprint_3B.md
+sprints/end_sprint_4.md
+sprints/end_sprint_5.md
+sprints/end_sprint_6.md
+sprints/end_sprint_7.md
+sprints/end_sprint_8.md
+sprints/end_sprint_9.md
+sprints/end_sprint_10A.md
+sprints/end_sprint_10B.md
+sprints/end_sprint_11.md
+sprints/end_sprint_12.md
+sprints/end_sprint_12A.md
+sprints/end_sprint_13.md
+sprints/plan_sprint_0.md
+sprints/plan_sprint_1.md
+sprints/plan_sprint_1A.md
+sprints/plan_sprint_2.md
+sprints/plan_sprint_3.md
+sprints/plan_sprint_3B.md
+sprints/plan_sprint_4.md
+sprints/plan_sprint_5.md
+sprints/plan_sprint_6.md
+sprints/plan_sprint_7.md
+sprints/plan_sprint_8.md
+sprints/plan_sprint_9.md
+sprints/plan_sprint_10.md
+sprints/plan_sprint_10B.md
+sprints/plan_sprint_11.md
+sprints/plan_sprint_12.md
+sprints/plan_sprint_12A.md
+sprints/plan_sprint_13.md

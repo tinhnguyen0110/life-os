@@ -1,0 +1,233 @@
+/* ============================================================
+   WIKI — Knowledge vault styles
+   ============================================================ */
+
+/* guarantee inline header icons stay small (belt-and-suspenders vs app.css cache) */
+.phead .kicker svg, .vtitle svg, .wrefine-lbl svg, .wai-box .wrefine-lbl svg { width:13px; height:13px; vertical-align:-2px; flex-shrink:0; }
+
+/* ---- shared wiki primitives ---- */
+.wstatus { font-family:var(--mono); font-size:9.5px; font-weight:600; padding:2px 8px; border-radius:100px; white-space:nowrap; }
+.wtrust { font-family:var(--mono); font-size:10px; font-weight:600; padding:2px 8px; border-radius:6px; display:inline-flex; align-items:center; gap:4px; }
+.wtrust svg { width:11px; height:11px; }
+.wtrust.ver { color:var(--green); background:var(--green-dim); }
+.wtrust.cand { color:var(--amber); background:var(--amber-dim); }
+.wtype { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:6px; padding:2px 8px; }
+.violet { color:var(--violet); }
+
+/* wiki links in prose */
+.wlink { color:var(--accent); border-bottom:1px solid color-mix(in oklch,var(--accent) 35%,transparent); cursor:pointer; font-weight:500; }
+.wlink:hover { background:color-mix(in oklch,var(--accent) 12%,transparent); }
+.wlink.ghost { color:var(--amber); border-bottom-style:dashed; border-color:color-mix(in oklch,var(--amber) 40%,transparent); }
+
+/* ============================================================
+   W1 — Vault Overview
+   ============================================================ */
+.wsearch { display:flex; align-items:center; gap:12px; height:46px; flex-shrink:0;
+  border:1px solid var(--line-2); border-radius:11px; background:var(--bg-1); padding:0 16px; }
+.wsearch .pr { color:var(--tx-2); display:grid; place-items:center; }
+.wsearch .pr svg { width:17px; height:17px; }
+.wsearch input { flex:1; background:transparent; border:0; outline:0; color:var(--tx-0); font-family:var(--mono); font-size:13px; }
+.wsearch input::placeholder { color:var(--tx-2); }
+.wsearch kbd { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:5px; padding:3px 7px; }
+
+.wtiles { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; }
+.wtile { background:var(--bg-1); border:1px solid var(--line); border-radius:11px; padding:13px 14px; display:flex; flex-direction:column; gap:3px; }
+.wtile-l { font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--tx-2); }
+.wtile-v { font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--tx-0); }
+.wtile-v.acc { color:var(--accent); } .wtile-v.amber { color:var(--amber); } .wtile-v.blue { color:var(--blue); }
+.wtile-v.pos { color:var(--green); } .wtile-v.neg { color:var(--red); } .wtile-v.mut { color:var(--tx-1); }
+.wtile-s { font-family:var(--mono); font-size:10.5px; color:var(--tx-2); }
+
+/* list rows (inbox/orphan in W1) */
+.wlist { padding:7px; display:flex; flex-direction:column; gap:1px; }
+.wlist-row { display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px; }
+.wlist-row.clickable { cursor:pointer; }
+.wlist-row.clickable:hover { background:var(--bg-2); }
+.wlr-body { flex:1; min-width:0; }
+.wlr-t { font-size:12.5px; color:var(--tx-0); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wlr-s { font-size:11px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.worphan-deg { width:24px; height:24px; border-radius:6px; flex-shrink:0; display:grid; place-items:center;
+  font-family:var(--mono); font-size:11px; font-weight:700; color:var(--red); background:var(--red-dim); }
+
+/* op-log activity */
+.wact-list { padding:8px 10px 10px; display:flex; flex-direction:column; }
+.wact-row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid color-mix(in oklch,var(--line) 50%,transparent); }
+.wact-row:last-child { border-bottom:0; }
+.wact-ts { font-size:10.5px; color:var(--tx-2); width:46px; flex-shrink:0; }
+.wact-op { font-family:var(--mono); font-size:10px; font-weight:600; padding:1px 7px; border-radius:5px; white-space:nowrap; }
+.wact-actor { font-family:var(--mono); font-size:10.5px; white-space:nowrap; flex-shrink:0; }
+.wact-actor.agent { color:var(--amber); } .wact-actor.human { color:var(--tx-1); }
+.wact-detail { font-size:11.5px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* proposal mini */
+.wprop-mini { display:flex; align-items:center; gap:10px; padding:8px 9px; border-radius:8px; cursor:pointer; }
+.wprop-mini:hover { background:var(--bg-2); }
+.wprop-kind { font-family:var(--mono); font-size:9px; font-weight:700; text-transform:uppercase; padding:2px 7px; border-radius:5px; flex-shrink:0; }
+.wprop-kind.link_candidate { color:var(--accent); background:var(--accent-dim); }
+.wprop-kind.moc_proposal { color:var(--amber); background:var(--amber-dim); }
+.wprop-kind.merge_suggestion { color:var(--violet); background:#2a1f3c; }
+.wprop-kind.agent_note { color:var(--blue); background:#11314f; }
+
+/* ============================================================
+   W2 — Note View / Edit
+   ============================================================ */
+.wnote-head { display:flex; align-items:center; gap:10px; }
+.wnote-id { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--accent); }
+.wnote-grid { display:grid; grid-template-columns:1fr 380px; gap:14px; align-items:start; }
+.wnote-main { display:flex; flex-direction:column; gap:14px; }
+.wnote-side { display:flex; flex-direction:column; gap:14px; }
+.wnote-body-panel { padding:18px 22px; }
+.wnote-title { width:100%; background:transparent; border:0; outline:0; font-family:var(--sans); font-size:24px; font-weight:600; color:var(--tx-0); letter-spacing:-.01em; padding:0; margin-bottom:10px; }
+.wnote-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:16px; }
+.wmeta-k { font-family:var(--mono); font-size:10px; color:var(--tx-2); text-transform:uppercase; letter-spacing:.06em; }
+.wnote-body { font-size:14.5px; line-height:1.75; color:var(--tx-0); }
+.wnote-body p { margin-bottom:13px; } .wnote-body p:last-child { margin-bottom:0; }
+.wcand-warn { margin-top:16px; padding:11px 13px; border-radius:9px; background:var(--amber-dim); border:1px solid color-mix(in oklch,var(--amber) 30%,transparent);
+  font-size:12px; color:var(--amber-soft); display:flex; align-items:center; gap:8px; line-height:1.4; }
+.wcand-warn svg { width:15px; height:15px; flex-shrink:0; }
+
+/* outbound */
+.woutlist { padding:8px; display:flex; flex-direction:column; gap:3px; }
+.woutlink { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:8px; font-size:12.5px; color:var(--tx-0); }
+.woutlink svg { width:14px; height:14px; color:var(--accent); flex-shrink:0; }
+.woutlink.clickable { cursor:pointer; } .woutlink.clickable:hover { background:var(--bg-2); }
+.woutlink .faint { font-family:var(--mono); font-size:10.5px; }
+.woutlink.ghost { color:var(--amber); border:1px dashed color-mix(in oklch,var(--amber) 30%,transparent); }
+.woutlink.ghost svg { color:var(--amber); }
+
+/* AI suggestions */
+.wsugg-list { padding:8px; display:flex; flex-direction:column; gap:8px; }
+.wsugg { background:var(--bg-2); border:1px solid var(--line-2); border-radius:9px; padding:11px 12px; }
+.wsugg.rejected { opacity:.5; background:transparent; }
+.wsugg-top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.wsugg-top b { font-size:12.5px; color:var(--tx-0); line-height:1.35; flex:1; min-width:0; }
+.wconf { font-family:var(--mono); font-size:10px; color:var(--tx-2); border:1px solid var(--line-2); border-radius:5px; padding:1px 6px; white-space:nowrap; }
+.wsugg-why { font-size:11.5px; line-height:1.45; color:var(--tx-1); margin-bottom:9px; }
+.wsugg-why .acc { font-family:var(--mono); font-weight:600; }
+.wsugg-acts { display:flex; gap:6px; }
+.wsugg-acts .btn svg { width:12px; height:12px; }
+
+/* backlinks */
+.wbl-sec-lbl { font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--tx-2); padding:10px 14px 5px; }
+.wbl-sec-lbl .faint { text-transform:none; letter-spacing:0; }
+.wbl-list { padding:0 8px 6px; display:flex; flex-direction:column; gap:2px; }
+.wbl-row { padding:9px 11px; border-radius:8px; min-width:0; }
+.wbl-row.clickable { cursor:pointer; } .wbl-row.clickable:hover { background:var(--bg-2); }
+.wbl-head { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; flex-wrap:nowrap; }
+.wbl-head b { font-size:12px; color:var(--tx-0); line-height:1.35; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wbl-head .faint { flex-shrink:0; }
+.wbl-head .faint { font-family:var(--mono); font-size:10px; }
+.wbl-snip { font-size:11.5px; line-height:1.4; }
+.wbl-snip b { color:var(--accent); font-weight:600; }
+.wbl-row.unlinked { background:color-mix(in oklch,var(--amber) 5%,transparent); border:1px dashed color-mix(in oklch,var(--amber) 22%,transparent); }
+.wbl-empty { padding:8px 14px; font-family:var(--mono); font-size:11px; color:var(--tx-2); }
+
+/* ============================================================
+   W3 — Inbox / Refine
+   ============================================================ */
+.winbox-grid { display:grid; grid-template-columns:340px 1fr; gap:14px; align-items:start; height:calc(100vh - 175px); }
+.winbox-progress { font-family:var(--mono); font-size:14px; color:var(--tx-2); }
+.winbox-list { flex:1; overflow-y:auto; padding:7px; display:flex; flex-direction:column; gap:2px; }
+.winbox-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:9px; cursor:pointer; border:1px solid transparent; }
+.winbox-row:hover { background:var(--bg-2); }
+.winbox-row.on { background:var(--bg-2); border-color:color-mix(in oklch,var(--accent) 40%,transparent); }
+.wcap-src { font-family:var(--mono); font-size:9px; font-weight:600; padding:2px 6px; border-radius:5px; background:var(--bg-3); color:var(--tx-1); white-space:nowrap; flex-shrink:0; }
+.wcap-src.command_bar { color:var(--green); } .wcap-src.mcp_agent { color:var(--amber); }
+.wcap-src.daily_note { color:var(--blue); } .wcap-src.quick_add { color:var(--violet); }
+.wdupe-flag { font-family:var(--mono); font-size:9px; font-weight:700; color:var(--red); background:var(--red-dim); padding:2px 6px; border-radius:5px; }
+
+.wrefine { overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 175px); }
+.wrefine-body { overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:16px; }
+.wrefine-sec { display:flex; flex-direction:column; gap:8px; }
+.wrefine-lbl { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-2); display:flex; align-items:center; gap:6px; }
+.wrefine-lbl svg { width:13px; height:13px; color:var(--amber); }
+.wraw { font-family:var(--mono); font-size:12.5px; line-height:1.6; color:var(--tx-1); background:var(--bg-0); border:1px solid var(--line); border-radius:9px; padding:12px 14px; }
+.wai-box { background:color-mix(in oklch,var(--amber) 4%,transparent); border:1px solid var(--amber-dim); border-radius:11px; padding:13px 14px; }
+.wai-row { display:flex; gap:12px; padding:5px 0; font-size:12.5px; line-height:1.45; }
+.wai-k { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--tx-2); width:72px; flex-shrink:0; padding-top:2px; }
+.wai-v { flex:1; color:var(--tx-0); }
+.wai-v.pos { color:var(--green); } .wai-v.amber { color:var(--amber); }
+.wrefine-title { background:var(--bg-0); border:1px solid var(--line-2); border-radius:8px; padding:10px 13px; color:var(--tx-0); font-family:var(--sans); font-size:15px; font-weight:600; outline:0; }
+.wrefine-title:focus { border-color:var(--accent); }
+.wrefine-text { background:var(--bg-0); border:1px solid var(--line-2); border-radius:8px; padding:11px 13px; color:var(--tx-0); font-family:var(--sans); font-size:13.5px; line-height:1.6; outline:0; resize:vertical; min-height:90px; }
+.wrefine-text:focus { border-color:var(--accent); }
+.wrefine-status { display:flex; align-items:center; gap:10px; }
+
+.wgate { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:11px; }
+.wgate.blocked { background:color-mix(in oklch,var(--red) 6%,transparent); border:1px solid color-mix(in oklch,var(--red) 30%,transparent); }
+.wgate.ok { background:color-mix(in oklch,var(--green) 6%,transparent); border:1px solid color-mix(in oklch,var(--green) 30%,transparent); }
+.wgate-icon { width:30px; height:30px; border-radius:8px; display:grid; place-items:center; flex-shrink:0; }
+.wgate-icon svg { width:16px; height:16px; }
+.wgate.blocked .wgate-icon { background:var(--red-dim); color:var(--red); }
+.wgate.ok .wgate-icon { background:var(--green-dim); color:var(--green); }
+.wgate-body { flex:1; display:flex; flex-direction:column; gap:2px; }
+.wgate-body b { font-size:12.5px; } .wgate.blocked b { color:var(--red); } .wgate.ok b { color:var(--green); }
+.wgate-body .mut { font-size:11px; line-height:1.35; }
+.wrefine-foot { display:flex; justify-content:flex-end; gap:9px; padding-top:4px; }
+.wrefine-foot .btn[disabled] { opacity:.45; cursor:not-allowed; }
+
+/* ============================================================
+   W4 — Graph Explorer
+   ============================================================ */
+.wgraph-grid { display:grid; grid-template-columns:1fr 300px; gap:14px; align-items:start; }
+.wgraph-canvas { overflow:hidden; }
+.wgraph-stage { height:460px; background:radial-gradient(circle at 50% 45%, var(--bg-2), var(--bg-0) 80%); position:relative; }
+.wgleg { font-family:var(--mono); font-size:10px; color:var(--tx-1); display:inline-flex; align-items:center; gap:5px; margin-left:10px; }
+.wgl-dot { width:9px; height:9px; border-radius:50%; }
+.wedge-lbl { font-family:var(--mono); font-size:8px; fill:var(--tx-2); text-anchor:middle; }
+.wgnode { cursor:pointer; }
+.wgnode:hover circle { filter:brightness(1.2); }
+.wgnode-lbl { font-family:var(--sans); font-size:10px; fill:var(--tx-1); text-anchor:middle; }
+.wgnode-id { font-family:var(--mono); font-size:9px; font-weight:700; fill:var(--bg-0); }
+.wgraph-side { display:flex; flex-direction:column; gap:14px; }
+.wfilter-row { display:flex; align-items:center; gap:10px; font-size:12px; justify-content:space-between; }
+.wfilter-row .mut { font-family:var(--mono); font-size:11px; }
+.wfilter-inp { background:var(--bg-0); border:1px solid var(--line-2); border-radius:7px; padding:6px 10px; color:var(--tx-0); font-family:var(--mono); font-size:11px; outline:0; width:110px; }
+.wcluster { padding:12px 14px; }
+.wcluster-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+.wcluster-top b { font-size:13px; }
+.wcluster-members { display:flex; flex-wrap:wrap; gap:5px; }
+.wcluster-members .tagchip.clickable { cursor:pointer; }
+.wcluster-members .tagchip.clickable:hover { border-color:var(--accent); color:var(--accent); }
+
+/* ============================================================
+   W5 — MOC Workspace
+   ============================================================ */
+.wmoc-grid { display:grid; grid-template-columns:380px 1fr; gap:14px; align-items:start; }
+.wmoc-members { flex:1; overflow-y:auto; padding:7px; display:flex; flex-direction:column; gap:3px; max-height:calc(100vh - 230px); }
+.wmoc-member { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:9px; background:var(--bg-2); border:1px solid var(--line); cursor:grab; }
+.wmoc-member:hover { border-color:var(--line-2); }
+.wmoc-drag { color:var(--tx-2); font-size:13px; cursor:grab; }
+.wmoc-num { font-family:var(--mono); font-size:11px; color:var(--tx-2); flex-shrink:0; }
+.wmoc-member .wlr-t { font-size:12px; }
+.wmoc-main { display:flex; flex-direction:column; gap:14px; }
+.wmoc-scaffold { padding:16px 18px; font-size:13.5px; line-height:1.7; color:var(--tx-0); font-family:var(--mono); }
+.wmoc-scaffold p { margin-bottom:8px; }
+.wmoc-scaffold b { color:var(--accent); }
+.wmoc-edit-hint { padding:0 18px 14px; }
+.wmoc-through { padding:14px 18px; font-size:14px; line-height:1.65; color:var(--tx-0); font-style:italic; border-left:2px solid var(--accent); margin:4px 14px 14px; background:color-mix(in oklch,var(--accent) 4%,transparent); border-radius:0 8px 8px 0; }
+.wcontra-row { padding:13px 16px; border-bottom:1px solid var(--line); }
+.wcontra-row:last-child { border-bottom:0; }
+.wcontra-pair { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:7px; font-size:12.5px; }
+.wcontra-vs { font-family:var(--mono); font-size:10.5px; color:var(--red); background:var(--red-dim); padding:2px 8px; border-radius:100px; }
+.wcontra-note { font-size:12px; line-height:1.5; margin-bottom:10px; }
+.wcontra-acts { display:flex; gap:7px; }
+
+/* ============================================================
+   P1 — Proposal Queue
+   ============================================================ */
+.wprop-list { display:flex; flex-direction:column; gap:12px; }
+.wprop-card { background:var(--bg-1); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+.wprop-card:hover { border-color:var(--line-2); }
+.wprop-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.wprop-kind-badge { font-family:var(--mono); font-size:10px; font-weight:600; padding:3px 9px; border-radius:6px; display:inline-flex; align-items:center; gap:5px; }
+.wprop-kind-badge svg { width:12px; height:12px; }
+.wprop-actor { font-family:var(--mono); font-size:11px; color:var(--amber); }
+.wprop-link { font-size:13px; color:var(--tx-0); margin-bottom:9px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; line-height:1.4; }
+.wprop-content { font-size:11.5px; line-height:1.45; margin-top:5px; padding:8px 10px; background:var(--bg-0); border-radius:7px; }
+.wprop-why { font-size:12px; line-height:1.5; color:var(--tx-1); margin-bottom:11px; }
+.wprop-why .acc { font-family:var(--mono); font-weight:600; }
+.wprop-warn { font-size:11.5px; color:var(--amber-soft); background:var(--amber-dim); border-radius:7px; padding:8px 11px; margin-bottom:11px; line-height:1.4; }
+.wprop-acts { display:flex; align-items:center; gap:7px; }
+.wprop-acts .btn svg { width:12px; height:12px; }
+.wprop-card.removing { opacity:0; transform:translateX(20px); transition:.3s; }
