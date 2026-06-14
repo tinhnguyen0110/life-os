@@ -37,6 +37,12 @@ import type {
   WikiOverview,
   WikiSearchHit,
   WikiGraph,
+  WikiProposal,
+  WikiProposalList,
+  WikiProposalStatus,
+  WikiDecideInput,
+  WikiBatchAcceptInput,
+  WikiBatchAcceptResult,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -429,6 +435,43 @@ export function getWikiGraph(
   depth = 2,
 ): Promise<ApiResponse<WikiGraph>> {
   return apiGet<WikiGraph>(`/wiki/graph?note=${note}&depth=${depth}`);
+}
+
+/* ---- P1 Proposal Queue (W4a) — review surface for AI-proposed mutations ---- */
+
+/** List proposals. `status` ∈ pending(default) | accepted | rejected | all.
+ *  Response carries `counts` for the filter chips. Empty queue → proposals: []. */
+export function getWikiProposals(
+  status: WikiProposalStatus | "all" = "pending",
+): Promise<ApiResponse<WikiProposalList>> {
+  return apiGet<WikiProposalList>(`/wiki/proposals?status=${status}`);
+}
+
+/** Accept ONE proposal → applies it via the changes-queue/op-log (→ verified).
+ *  Throws ApiError(4xx) with a {detail} message when the apply can't proceed
+ *  (e.g. target note missing, malformed payload) — caller surfaces it (fail-closed). */
+export function acceptWikiProposal(
+  id: number,
+  body?: WikiDecideInput,
+): Promise<ApiResponse<WikiProposal>> {
+  return apiPost<WikiProposal>(`/wiki/proposals/${id}/accept`, body ?? {});
+}
+
+/** Reject ONE proposal (remembered — not re-suggested). */
+export function rejectWikiProposal(
+  id: number,
+  body?: WikiDecideInput,
+): Promise<ApiResponse<WikiProposal>> {
+  return apiPost<WikiProposal>(`/wiki/proposals/${id}/reject`, body ?? {});
+}
+
+/** Batch-accept many proposals in one call (P1 queue batch action). `ids` non-empty.
+ *  Returns per-id results — the batch can PARTIALLY succeed (200 + accepted>0 AND
+ *  failed>0), so the caller must inspect `failed`/`results`, not just the 2xx. */
+export function batchAcceptWikiProposals(
+  body: WikiBatchAcceptInput,
+): Promise<ApiResponse<WikiBatchAcceptResult>> {
+  return apiPost<WikiBatchAcceptResult>("/wiki/proposals/accept-batch", body);
 }
 
 export const apiBase = BASE;

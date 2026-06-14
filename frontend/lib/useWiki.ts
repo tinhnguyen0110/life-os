@@ -20,6 +20,10 @@ import {
   getWikiInbox,
   getWikiOverview,
   getWikiGraph,
+  getWikiProposals,
+  acceptWikiProposal,
+  rejectWikiProposal,
+  batchAcceptWikiProposals,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type {
@@ -29,6 +33,9 @@ import type {
   WikiNoteUpdateInput,
   WikiOverview,
   WikiGraph,
+  WikiProposal,
+  WikiProposalStatus,
+  WikiBatchAcceptResult,
 } from "@/lib/types";
 
 export type WikiStatusState = "loading" | "error" | "ready";
@@ -278,4 +285,90 @@ export function useWikiGraph(center: number | null, depth: number): UseWikiGraph
   }, [center, depth, nonce]);
 
   return { graph, status, errMsg, warning, center, depth, reload };
+}
+
+/* ------------------------------------------------------------------ */
+/* P1 — proposal queue (list + accept/reject/batch, fail-closed)      */
+/* ------------------------------------------------------------------ */
+export type ProposalFilter = WikiProposalStatus | "all";
+
+export interface UseWikiProposals {
+  proposals: WikiProposal[];
+  counts: Partial<Record<WikiProposalStatus, number>>;
+  filter: ProposalFilter;
+  setFilter: (f: ProposalFilter) => void;
+  status: WikiStatusState;
+  errMsg: string;
+  reload: () => void;
+  /** accept ONE → refetch. THROWS ApiError(4xx) when the apply can't proceed
+   *  (target missing / bad payload) — caller surfaces it visibly (fail-closed). */
+  accept: (id: number, decidedBy?: string) => Promise<void>;
+  /** reject ONE → refetch. Throws on failure. */
+  reject: (id: number, decidedBy?: string) => Promise<void>;
+  /** batch-accept many → refetch. Returns the per-id result summary so the caller
+   *  can surface a PARTIAL failure (200 + failed>0). Throws only on a whole-call
+   *  error (network / 4xx envelope). */
+  batchAccept: (ids: number[], decidedBy?: string) => Promise<WikiBatchAcceptResult | null>;
+}
+
+export function useWikiProposals(initial: ProposalFilter = "pending"): UseWikiProposals {
+  const [proposals, setProposals] = useState<WikiProposal[]>([]);
+  const [counts, setCounts] = useState<Partial<Record<WikiProposalStatus, number>>>({});
+  const [filter, setFilter] = useState<ProposalFilter>(initial);
+  const [status, setStatus] = useState<WikiStatusState>("loading");
+  const [errMsg, setErrMsg] = useState("");
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    (async () => {
+      try {
+        const res = await getWikiProposals(filter);
+        if (!alive) return;
+        setProposals(Array.isArray(res?.data?.proposals) ? res.data.proposals : []);
+        setCounts(res?.data?.counts ?? {});
+        setStatus("ready");
+      } catch (e) {
+        if (!alive) return;
+        setErrMsg(errMessage(e));
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [filter, nonce]);
+
+  const accept = useCallback(
+    async (id: number, decidedBy?: string) => {
+      // throws on non-2xx (e.g. "target note N not found") → caller surfaces (fail-closed);
+      // the queue is NOT optimistically mutated, so a failed apply leaves the card in place.
+      await acceptWikiProposal(id, decidedBy ? { decidedBy } : undefined);
+      reload();
+    },
+    [reload],
+  );
+
+  const reject = useCallback(
+    async (id: number, decidedBy?: string) => {
+      await rejectWikiProposal(id, decidedBy ? { decidedBy } : undefined);
+      reload();
+    },
+    [reload],
+  );
+
+  const batchAccept = useCallback(
+    async (ids: number[], decidedBy?: string): Promise<WikiBatchAcceptResult | null> => {
+      if (!ids.length) return null;
+      const res = await batchAcceptWikiProposals({ ids, ...(decidedBy ? { decidedBy } : {}) });
+      reload();
+      return res?.data ?? null;
+    },
+    [reload],
+  );
+
+  return { proposals, counts, filter, setFilter, status, errMsg, reload, accept, reject, batchAccept };
 }

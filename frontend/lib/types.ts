@@ -956,3 +956,73 @@ export interface WikiSearchHit {
   status: WikiStatus;
   snippet: string;
 }
+
+/* ---- P1 Proposal Queue (W4a) — MIRRORS backend modules/wiki/proposals_schema.py.
+   The single review surface for every AI-proposed mutation. Trust boundary: AI
+   write-back ALWAYS lands here as `pending` first; a human accepts/rejects — AI
+   NEVER edits an evergreen note's body in place. ---- */
+
+/** Proposal kind enum — frozen W4a (proposals_schema.ProposalKind). NOT the mock's
+ *  aspirational link_candidate/moc_proposal set; build to the live contract. */
+export type WikiProposalKind =
+  | "note_create" | "note_edit" | "link_add" | "link_remove" | "merge" | "moc";
+
+/** pending → accepted | rejected (terminal). */
+export type WikiProposalStatus = "pending" | "accepted" | "rejected";
+
+/** One stored proposal (GET /wiki/proposals → data.proposals[]). `payload` is a
+ *  kind-specific dict (note_edit→{title?,content?,status?,...} · link_add→{target,display?}
+ *  · merge→{sourceId,targetId} · …) rendered generically. `decided*`/`appliedNoteId`
+ *  are set only once a human decides; `appliedNoteId` deep-links the applied note. */
+export interface WikiProposal {
+  id: number;
+  kind: WikiProposalKind;
+  /** the note the proposal acts on (edit/merge target); null for some link/create. */
+  targetId: number | null;
+  payload: Record<string, unknown>;
+  rationale: string;
+  /** "agent" | "agent:<name>" | "human". */
+  actor: string;
+  status: WikiProposalStatus;
+  correlationId: string | null;
+  created: string;
+  decided: string | null;
+  decidedBy: string | null;
+  appliedNoteId: number | null;
+}
+
+/** GET /wiki/proposals payload — mirrors reader. `counts` drives the queue badge /
+ *  filter chips. `proposals: []` on an empty queue (honest empty, never null). */
+export interface WikiProposalList {
+  proposals: WikiProposal[];
+  counts: Partial<Record<WikiProposalStatus, number>>;
+}
+
+/** Accept/reject body (DecideInput) — `decidedBy` defaults to "human" server-side. */
+export interface WikiDecideInput {
+  decidedBy?: string;
+}
+
+/** Batch-accept body (BatchAcceptInput). `ids` must be non-empty. */
+export interface WikiBatchAcceptInput {
+  ids: number[];
+  decidedBy?: string;
+}
+
+/** One per-id result from POST /wiki/proposals/accept-batch. `ok=false` carries
+ *  `error` (e.g. "not found" / apply-failed); `ok=true` carries the applied proposal. */
+export interface WikiBatchAcceptResultItem {
+  id: number;
+  ok: boolean;
+  proposal?: WikiProposal;
+  error?: string;
+}
+
+/** POST /wiki/proposals/accept-batch response. A batch can PARTIALLY succeed
+ *  (200 envelope with accepted>0 AND failed>0) — the UI must surface failed, not
+ *  treat the 200 as all-success. */
+export interface WikiBatchAcceptResult {
+  results: WikiBatchAcceptResultItem[];
+  accepted: number;
+  failed: number;
+}

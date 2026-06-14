@@ -12,7 +12,8 @@ export type IconKey =
   | "i-mkt" | "i-cpu" | "i-note" | "i-set" | "i-bolt" | "i-pulse"
   | "i-refresh" | "i-chevron" | "i-bell" | "i-doc"
   | "i-link" | "i-check" | "i-back"
-  | "i-graph" | "i-plus" | "i-search";
+  | "i-graph" | "i-plus" | "i-search"
+  | "i-x" | "i-merge" | "i-pin" | "i-moc";
 
 const PATHS: Record<IconKey, ReactElement> = {
   "i-home": <><path {...C} d="M3 11l9-7 9 7" /><path {...C} d="M5 10v10h14V10" /></>,
@@ -38,6 +39,12 @@ const PATHS: Record<IconKey, ReactElement> = {
   "i-graph": <><circle {...C} cx="6" cy="18" r="2.5" /><circle {...C} cx="18" cy="16" r="2.5" /><circle {...C} cx="13" cy="6" r="2.5" /><path {...C} d="M8 16.5l3.5-8M15.5 14l-3-6" /></>,
   "i-plus": <path {...C} d="M12 5v14M5 12h14" />,
   "i-search": <><circle {...C} cx="11" cy="11" r="7" /><path {...C} d="M21 21l-4.3-4.3" /></>,
+  "i-x": <path {...C} d="M6 6l12 12M18 6L6 18" />,
+  // merge = two branches joining into one
+  "i-merge": <><path {...C} d="M6 3v6a6 6 0 0 0 6 6h6" /><path {...C} d="M15 12l3 3-3 3" /><path {...C} d="M6 21V9" /></>,
+  "i-pin": <><path {...C} d="M12 17v5" /><path {...C} d="M9 3h6l-1 7 3 3H7l3-3z" /></>,
+  // moc = map/grid of connected nodes
+  "i-moc": <><rect {...C} x="3" y="3" width="7" height="7" rx="1" /><rect {...C} x="14" y="14" width="7" height="7" rx="1" /><path {...C} d="M10 6h4a3 3 0 0 1 3 3v5" /></>,
 };
 
 export function Icon({ name, className }: { name: IconKey; className?: string }) {
