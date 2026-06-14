@@ -60,22 +60,23 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # Create (record intent only — no vault write)                                 #
 # --------------------------------------------------------------------------- #
-def _actor_is_agent(actor: str | None) -> bool:
-    """True for an AGENT-originated proposal (D-W4d.2): actor starts with "agent"
-    or "mcp:". A human-created proposal (actor="human" via REST/P1) returns False —
-    the autonomy toggle NEVER auto-applies the human's own deliberate drafts."""
-    a = (actor or "").lower()
-    return a.startswith("agent") or a.startswith("mcp:")
-
-
-def create_proposal(inp: ProposalCreateInput) -> dict[str, Any]:
+def create_proposal(inp: ProposalCreateInput, *, auto_apply_eligible: bool = False) -> dict[str, Any]:
     """Enqueue one pending proposal. Records INTENT only.
 
     Normally (the north-star) nothing applies until a human accepts in P1. BUT W4d
     (USER-ORDERED, reverses D8): if the ``wikiAgentAutonomous`` setting is ON AND the
-    proposal is agent-originated (D-W4d.2), this immediately auto-accepts it via the
-    SAME ``accept_proposal`` chokepoint (decidedBy="agent:auto") — the write lands
-    directly, still fully audited + visible in P1's accepted history.
+    CALLER is auto-apply-eligible, this immediately auto-accepts it via the SAME
+    ``accept_proposal`` chokepoint (decidedBy="agent:auto") — the write lands directly,
+    still fully audited + visible in P1's accepted history.
+
+    **F1-S1 (trust boundary keys on the CALLER, NOT the client string):**
+    ``auto_apply_eligible`` is set by the trusted CALLER, not derived from
+    ``inp.actor``. ONLY the MCP write-server (an agent channel) passes
+    ``auto_apply_eligible=True``; the REST router (a human channel) NEVER does. A REST
+    POST cannot bypass the human P1 queue by sending ``actor="agent"`` — the client
+    string is provenance metadata only, it does NOT grant auto-apply. (The bug it
+    fixes: ``ProposalCreateInput.actor`` defaults "agent", so a no-actor REST POST
+    auto-applied when autonomy was ON.)
 
     The auto-accept is FAIL-SOFT (D-W4d.3): if the apply raises (e.g. bad target),
     the proposal stays PENDING (fail-closed on the write) and this returns the
@@ -92,9 +93,10 @@ def create_proposal(inp: ProposalCreateInput) -> dict[str, Any]:
     logger.info("wiki proposal %s created (kind=%s actor=%s)", pid, inp.kind, inp.actor)
 
     # W4d auto-apply chokepoint — read the runtime setting per-call (a live PATCH
-    # takes effect on the next propose, no restart). Only agent-originated proposals
-    # auto-apply, and only when the toggle is ON.
-    if _actor_is_agent(inp.actor) and _autonomous_enabled():
+    # takes effect on the next propose, no restart). Auto-apply requires BOTH the
+    # toggle ON AND a trusted auto-apply-eligible CALLER (F1-S1) — never the client's
+    # actor string.
+    if auto_apply_eligible and _autonomous_enabled():
         try:
             accepted = accept_proposal(pid, decided_by="agent:auto")
             logger.info("wiki proposal %s AUTO-APPLIED (wikiAgentAutonomous ON)", pid)

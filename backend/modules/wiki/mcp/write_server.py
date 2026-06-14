@@ -87,10 +87,15 @@ def _enqueue(kind: ProposalKind, *, target_id: int | None, payload: dict[str, An
     the stored proposal dict. NOTHING is applied to the vault (W4a invariant)."""
     r = _require_rationale(rationale)
     _audit(tool, {"kind": kind, "targetId": target_id, "payload": payload})
-    return create_proposal(ProposalCreateInput(
-        kind=kind, targetId=target_id, payload=payload, rationale=r,
-        actor=ACTOR, correlationId=SESSION_ID,
-    ))
+    # F1-S1: the MCP write-server is the AGENT channel → it (and ONLY it) is
+    # auto-apply-eligible. The REST router does NOT pass this, so a human-channel
+    # POST can never auto-apply regardless of the actor string it sends. The trust
+    # boundary keys on the CALLER (this server), not on inp.actor.
+    return create_proposal(
+        ProposalCreateInput(kind=kind, targetId=target_id, payload=payload,
+                            rationale=r, actor=ACTOR, correlationId=SESSION_ID),
+        auto_apply_eligible=True,
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -397,6 +397,19 @@ def test_api_empty_queue_honest(client):
     assert data["proposals"] == [] and data["counts"] == {}
 
 
+def test_api_S1_rest_post_cannot_bypass_p1_even_with_agent_actor(client):
+    # F1-S1 END-TO-END regression guard: toggle autonomy ON, then POST a proposal via
+    # the REST endpoint sending actor="agent:evil" — it must STAY PENDING (the REST
+    # router is the human channel, never auto_apply_eligible). The forged actor string
+    # cannot bypass the human P1 queue.
+    client.patch("/settings", json={"wikiAgentAutonomous": True})
+    r = client.post("/wiki/proposals", json={
+        "kind": "note_create", "payload": {"title": "forged"}, "actor": "agent:evil"})
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "pending"  # NOT accepted — P1 not bypassed
+    client.patch("/settings", json={"wikiAgentAutonomous": False})  # restore
+
+
 def test_api_list_defaults_to_pending_and_all_filter(client):
     # one accepted + one pending
     acc_id = client.post("/wiki/proposals", json={"kind": "note_create",
@@ -417,8 +430,10 @@ def test_api_list_defaults_to_pending_and_all_filter(client):
 
 # --------------------------------------------------------------------------- #
 # W4d — agent autonomy toggle (USER-ORDERED, reverses D8). Chokepoint in        #
-# create_proposal: ON + agent-actor → auto-accept (decidedBy=agent:auto);       #
-# OFF (default) → pending. Tests live here (test-where-the-reader-greps).        #
+# create_proposal: ON + auto_apply_eligible CALLER → auto-accept (agent:auto);   #
+# OFF (default) → pending. F1-S1: auto-apply keys on the CALLER (auto_apply_     #
+# eligible param), NOT inp.actor — a REST/human POST can't bypass P1 by sending  #
+# actor="agent". Tests live here (test-where-the-reader-greps).                  #
 # --------------------------------------------------------------------------- #
 from modules.settings import service as cfg  # noqa: E402
 from modules.settings.schema import AppConfigPatch  # noqa: E402
@@ -429,31 +444,32 @@ def _set_autonomous(on: bool) -> None:
 
 
 def test_autonomy_off_default_proposal_stays_pending(wiki_db):
-    # default OFF (fresh config) — an agent propose stays pending, vault unchanged.
+    # default OFF (fresh config) — even an eligible caller's propose stays pending.
     before = wiki_store.count_notes()
     p = psvc.create_proposal(ProposalCreateInput(
         kind="note_create", payload={"title": "x"}, actor="mcp:writer",
-    ))
+    ), auto_apply_eligible=True)
     assert p["status"] == "pending"
     assert wiki_store.count_notes() == before
 
 
-def test_autonomy_on_agent_proposal_auto_applies(wiki_db):
+def test_autonomy_on_eligible_caller_auto_applies(wiki_db):
+    # the MCP write-server channel (auto_apply_eligible=True) + toggle ON → auto-apply.
     _set_autonomous(True)
     before = wiki_store.count_notes()
     p = psvc.create_proposal(ProposalCreateInput(
         kind="note_create", payload={"title": "auto note", "content": "body"},
         actor="mcp:writer",
-    ))
-    # auto-applied in the one call: accepted, decidedBy agent:auto, note landed.
+    ), auto_apply_eligible=True)
     assert p["status"] == "accepted" and p["decidedBy"] == "agent:auto"
     assert p["appliedNoteId"] is not None
     assert wiki_store.count_notes() == before + 1
     assert wsvc.get_note(p["appliedNoteId"]).title == "auto note"
 
 
-def test_autonomy_on_human_proposal_does_not_auto_apply(wiki_db):
-    # D-W4d.2: a human-created proposal NEVER auto-applies even when the toggle is ON.
+def test_autonomy_on_ineligible_caller_does_not_auto_apply(wiki_db):
+    # the REST/human channel (auto_apply_eligible defaults False) NEVER auto-applies,
+    # even with toggle ON.
     _set_autonomous(True)
     before = wiki_store.count_notes()
     p = psvc.create_proposal(ProposalCreateInput(
@@ -463,12 +479,26 @@ def test_autonomy_on_human_proposal_does_not_auto_apply(wiki_db):
     assert wiki_store.count_notes() == before
 
 
+def test_S1_rest_actor_string_cannot_bypass_p1(wiki_db):
+    # F1-S1 REGRESSION GUARD (the security fix): a REST/human-channel POST that
+    # SENDS actor="agent" (or any agent string) but is NOT auto_apply_eligible must
+    # STAY PENDING when the toggle is ON. The trust boundary keys on the CALLER, not
+    # the client's actor string — a forged actor cannot bypass the human P1 queue.
+    _set_autonomous(True)
+    before = wiki_store.count_notes()
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "forged agent"}, actor="agent:evil",
+    ))  # NOT auto_apply_eligible (the REST router never passes it)
+    assert p["status"] == "pending", "a forged actor string must NOT auto-apply"
+    assert wiki_store.count_notes() == before
+
+
 def test_autonomy_on_bad_target_fails_soft_stays_pending(wiki_db):
     # D-W4d.3: auto-apply of a bad edit fails-closed → proposal stays pending + warning.
     _set_autonomous(True)
     p = psvc.create_proposal(ProposalCreateInput(
         kind="note_edit", targetId=4242, payload={"title": "x"}, actor="agent:claude",
-    ))
+    ), auto_apply_eligible=True)
     assert p["status"] == "pending"
     assert "auto-apply failed" in (p.get("warning") or "")
     # it's still retriable in the queue
@@ -479,11 +509,13 @@ def test_autonomy_live_flip(wiki_db):
     # ON → lands; flip OFF → next propose is pending again (read per-call, no restart).
     _set_autonomous(True)
     on = psvc.create_proposal(ProposalCreateInput(
-        kind="note_create", payload={"title": "on"}, actor="mcp:writer"))
+        kind="note_create", payload={"title": "on"}, actor="mcp:writer"),
+        auto_apply_eligible=True)
     assert on["status"] == "accepted"
     _set_autonomous(False)
     off = psvc.create_proposal(ProposalCreateInput(
-        kind="note_create", payload={"title": "off"}, actor="mcp:writer"))
+        kind="note_create", payload={"title": "off"}, actor="mcp:writer"),
+        auto_apply_eligible=True)
     assert off["status"] == "pending"
 
 
@@ -494,7 +526,7 @@ def test_autonomy_auto_apply_audits_both_rows(wiki_db):
     p = psvc.create_proposal(ProposalCreateInput(
         kind="note_create", payload={"title": "audited auto"}, actor="agent:claude",
         correlationId="auto-sess",
-    ))
+    ), auto_apply_eligible=True)
     tools = [(r["tool"], r["actor"]) for r in pstore.recent_audit(correlation_id="auto-sess", limit=50)]
     assert ("propose", "agent:claude") in tools  # the create audit
     assert ("accept", "agent:auto") in tools      # the auto-accept audit
