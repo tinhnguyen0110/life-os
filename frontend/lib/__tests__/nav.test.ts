@@ -1,27 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { NAV, CRUMB, ALL_ROUTES } from "../nav";
 
-describe("nav config (D3 — 14 screens, 6 groups, no AI)", () => {
-  it("has exactly 6 groups in SPEC §1 order", () => {
+describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", () => {
+  it("has exactly 7 groups in SPEC §1 order (+ Tri thức for Wiki)", () => {
     expect(NAV.map((g) => g.sec)).toEqual([
       "Tổng quan",
       "Dự án",
       "Tài chính",
       "Hằng ngày",
+      "Tri thức",
       "Hệ thống",
       "Cấu hình",
     ]);
   });
 
-  it("covers all 14 screens S1–S14 + OKX Exchange across nav items", () => {
+  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki across nav items", () => {
     const screens = NAV.flatMap((g) => g.items.map((i) => i.screen));
     const unique = new Set(screens);
-    // S1..S14 minus S3 (detail of S2), PLUS the OKX Exchange screen (S-okx) →
-    // 14 distinct nav entries. (S3/S6 detail views resolve under their parents.)
+    // 14 foundation entries (S1..S14 minus S3 detail, PLUS S-okx) + W3 Wiki Inbox.
+    // (S3/S6 + /wiki/[id] detail views resolve under their parents.)
     expect(screens).toContain("S1");
     expect(screens).toContain("S14");
     expect(screens).toContain("S-okx");
-    expect(unique.size).toBe(14);
+    expect(screens).toContain("W3");
+    expect(unique.size).toBe(15);
   });
 
   it("every nav route has a breadcrumb entry", () => {

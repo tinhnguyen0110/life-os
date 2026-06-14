@@ -29,10 +29,18 @@ import type {
   ValidationErrorItem,
   ExchangeOverview,
   CryptoBasis,
+  WikiNote,
+  WikiNoteCreateInput,
+  WikiNoteUpdateInput,
+  WikiBacklinks,
+  WikiInbox,
 } from "./types";
 
+// In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
+// bare-metal dev → MUST be life-os BE :8686 (NOT :8000 = OutboundOS, a different app;
+// the old :8000 default silently 404'd wiki calls bare-metal). [W1-FE, architect-requested]
 const BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8686";
 
 export class ApiError extends Error {
   status: number;
@@ -360,6 +368,44 @@ export function getCryptoBasis(): Promise<ApiResponse<CryptoBasis>> {
 /** Finance — user override for crypto cost basis (PUT /finance/crypto-basis). */
 export function setCryptoBasis(basis: number): Promise<ApiResponse<CryptoBasis>> {
   return apiPut<CryptoBasis>("/finance/crypto-basis", { basis });
+}
+
+/* ---- Wiki (W1–W5 · integer-ID PKM) — frozen M1 contract (end_sprint_W1c §3) ---- */
+
+/** W2 — one wiki note by integer id. 404 → ApiError(404). */
+export function getWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
+  return apiGet<WikiNote>(`/wiki/notes/${id}`);
+}
+
+/** W3 capture — create a (default fleeting) wiki note. Returns the created note. */
+export function createWikiNote(body: WikiNoteCreateInput): Promise<ApiResponse<WikiNote>> {
+  return apiPost<WikiNote>("/wiki/notes", body);
+}
+
+/** W2 edit — partial update (PUT /wiki/notes/{id}). Bad enum → ApiError(422) per-field. */
+export function updateWikiNote(id: number, body: WikiNoteUpdateInput): Promise<ApiResponse<WikiNote>> {
+  return apiPut<WikiNote>(`/wiki/notes/${id}`, body);
+}
+
+/** Delete a wiki note (inbound links become ghost server-side). 404 if unknown. */
+export function deleteWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
+  return apiDelete<WikiNote>(`/wiki/notes/${id}`);
+}
+
+/** W2 — a note's connections: linked + unlinked mentions + outbound (resolved/ghost). */
+export function getWikiBacklinks(id: number): Promise<ApiResponse<WikiBacklinks>> {
+  return apiGet<WikiBacklinks>(`/wiki/notes/${id}/backlinks`);
+}
+
+/** W3 refine — apply edit + flip status. ≥1-link gate is SERVER-enforced: 0-link &
+ *  non-cold-start → ApiError(422) (surface visibly); cold-start → 200 + warning. */
+export function refineWikiNote(id: number, body: WikiNoteUpdateInput): Promise<ApiResponse<WikiNote>> {
+  return apiPost<WikiNote>(`/wiki/notes/${id}/refine`, body);
+}
+
+/** W3 — fleeting notes awaiting triage (oldest→newest). aiSuggest null at M1. */
+export function getWikiInbox(): Promise<ApiResponse<WikiInbox>> {
+  return apiGet<WikiInbox>("/wiki/inbox");
 }
 
 export const apiBase = BASE;

@@ -729,3 +729,135 @@ export interface ExchangeOverview {
   syncedAt: string | null;
   configured: boolean;
 }
+
+/* ============================================================
+   Wiki / Knowledge vault (W1–W5) — MIRRORS backend modules/wiki/schema.py
+   (Sprint W1a, FROZEN) + the W1c reader shapes (backlinks / inbox). Integer-ID
+   PKM notes — SEPARATE from the string-ID `notes` module above. Frozen contract:
+   end_sprint_W1c §3 (12 endpoints, envelope {success,data,warning?}).
+   AI-derived fields (aiSuggest / suggestions) are null/empty at M1 — M4 (Claude
+   Code via MCP) populates them. Render the empty state, never fabricate.
+   ============================================================ */
+export type WikiStatus = "fleeting" | "developing" | "evergreen";
+export type WikiNoteType = "concept" | "literature";
+export type WikiTrustTier = "verified" | "candidate";
+
+/** A stored wiki note — mirrors `Note` (GET /wiki/notes/{id}). `id` is the
+ *  immutable integer identity; `title` is mutable ("" for a raw fleeting capture).
+ *  `contentHash` = sha256 of the body. Timestamps ISO-8601 UTC, server-set. */
+export interface WikiNote {
+  id: number;
+  title: string;
+  aliases: string[];
+  status: WikiStatus;
+  noteType: WikiNoteType;
+  trustTier: WikiTrustTier;
+  /** "human" | "agent:<name>". */
+  author: string;
+  tags: string[];
+  /** markdown body (may contain `[[id|title]]` wikilinks). */
+  content: string;
+  created: string;
+  updated: string;
+  contentHash: string;
+}
+
+/** POST /wiki/notes body — mirrors `NoteCreateInput`. id/timestamps server-assigned.
+ *  A fleeting capture legitimately has no title; links/title come at REFINE. */
+export interface WikiNoteCreateInput {
+  content?: string;
+  title?: string;
+  status?: WikiStatus;
+  noteType?: WikiNoteType;
+  tags?: string[];
+  author?: string;
+  /** command_bar | quick_add | mcp_agent | daily_note (free-form; default quick_add). */
+  captureSource?: string;
+}
+
+/** PUT /wiki/notes/{id} (+ POST .../refine) body — mirrors `NoteUpdateInput`.
+ *  Partial: a field left undefined is unchanged; a present field overwrites.
+ *  Bad enum value → per-field 422 (ApiError.fieldErrors()). */
+export interface WikiNoteUpdateInput {
+  title?: string;
+  content?: string;
+  status?: WikiStatus;
+  noteType?: WikiNoteType;
+  trustTier?: WikiTrustTier;
+  aliases?: string[];
+  tags?: string[];
+}
+
+/** One inbound linked mention (GET /wiki/notes/{id}/backlinks → linked[]). The
+ *  `snippet` is body text around the mention, may carry `<b>`-highlight HTML.
+ *  `anchor` = the `^block-id` the mention sits in, when present. */
+export interface WikiLinkedMention {
+  id: number;
+  title: string;
+  snippet: string;
+  anchor?: string;
+}
+
+/** One unlinked mention (backlinks → unlinked[]) — a note that names this title/
+ *  alias in prose but hasn't linked it (FTS-derived; "link nó" candidate). */
+export interface WikiUnlinkedMention {
+  id: number;
+  title: string;
+  snippet: string;
+}
+
+/** One outbound edge (backlinks → outbound[]). Resolved → {id,title,isResolved:true};
+ *  ghost (target note doesn't exist yet) → {ghost,isResolved:false}. Discriminate
+ *  on `isResolved` / presence of `id` vs `ghost`. */
+export type WikiOutboundLink =
+  | { id: number; title: string; isResolved: true; ghost?: undefined }
+  | { ghost: string; isResolved: false; id?: undefined };
+
+/** GET /wiki/notes/{id}/backlinks — mirrors reader.backlinks (W1c). */
+export interface WikiBacklinks {
+  linked: WikiLinkedMention[];
+  unlinked: WikiUnlinkedMention[];
+  outbound: WikiOutboundLink[];
+}
+
+/** One inbox (fleeting) item — mirrors reader.inbox (W1c). `aiSuggest` is null at
+ *  M1 (no embedded AI); the shape is kept so M4 slots in unchanged. */
+export interface WikiInboxItem {
+  id: number;
+  /** null = no title yet (raw fleeting capture). */
+  title: string | null;
+  status: WikiStatus;
+  /** body snippet of the raw capture. */
+  rawContent: string;
+  /** ISO/display capture time. */
+  captured: string;
+  /** command_bar | quick_add | mcp_agent | daily_note. */
+  captureSource: string;
+  /** outbound resolved-link count (drives the ≥1-link refine gate, server-enforced). */
+  linkCount: number;
+  /** null at M1 — M4 populates {titleClaim,summary,atomicityFlag,dupeOf}. */
+  aiSuggest: WikiAiSuggest | null;
+}
+
+/** GET /wiki/inbox payload — mirrors reader.inbox. */
+export interface WikiInbox {
+  items: WikiInboxItem[];
+}
+
+/** AI refine suggestion for an inbox item — null at M1, M4 populates. */
+export interface WikiAiSuggest {
+  titleClaim: string;
+  summary: string;
+  atomicityFlag: string;
+  dupeOf: { id: number; title: string; similarity: number } | null;
+}
+
+/** One AI link-suggestion (GET /wiki/notes/{id}/suggestions). EMPTY at M1 (no
+ *  embedded AI) — render the empty state, M4 populates via Claude Code. */
+export interface WikiSuggestion {
+  id: number;
+  title: string;
+  why: string;
+  confidence: number;
+  state: "candidate" | "accepted" | "rejected" | "pinned";
+}

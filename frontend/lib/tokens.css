@@ -18,7 +18,7 @@
   /* data roles */
   --green:#34E08A; --green-dim:#123a26;
   --red:#FF5C5C; --red-dim:#4a1c1c;
-  --amber:#F5B43D; --amber-dim:#4a3914;      /* mid / slow / attention */
+  --amber:#F5B43D; --amber-dim:#4a3914; --amber-soft:#f8cd7d;  /* mid / slow / attention */
   --blue:#4DA6FF; --violet:#a877ff;
   --glow:0 0 0 1px color-mix(in oklch, var(--accent) 32%, transparent), 0 0 22px -6px var(--accent);
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -381,3 +381,114 @@ select.finput { cursor:pointer; }
 #tweaks .togrow { display:flex; align-items:center; gap:10px; padding:7px 0; }
 #tweaks .togrow .lbl { flex:1; font-size:12.5px; color:var(--tx-1); }
 #tweaks .tw-foot { font-family:var(--mono); font-size:10px; color:var(--tx-2); margin-top:14px; line-height:1.5; }
+
+/* ============================================================
+   WIKI (W1–W5) — PORTED from template/Life Command/app/wiki.css.
+   Shared primitives + W2 (Note view/edit) + W3 (Inbox/Refine) in scope this
+   sprint; W1/W4/W5/P1 sections ported as their screens land. STATUS_META colors
+   are baked into .wstatus.<status> classes (mock used inline style from JS).
+   Plus the FE-added editor/markdown helper classes (.wedit*/.wmd-*).
+   ============================================================ */
+/* ---- shared wiki primitives ---- */
+.wstatus { font-family:var(--mono); font-size:9.5px; font-weight:600; padding:2px 8px; border-radius:100px; white-space:nowrap; }
+.wstatus.fleeting { color:var(--amber); background:var(--amber-dim); }
+.wstatus.developing { color:var(--blue); background:#11314f; }
+.wstatus.evergreen { color:var(--green); background:var(--green-dim); }
+.wtrust { font-family:var(--mono); font-size:10px; font-weight:600; padding:2px 8px; border-radius:6px; display:inline-flex; align-items:center; gap:4px; }
+.wtrust svg { width:11px; height:11px; }
+.wtrust.ver { color:var(--green); background:var(--green-dim); }
+.wtrust.cand { color:var(--amber); background:var(--amber-dim); }
+.wtype { font-family:var(--mono); font-size:10px; color:var(--tx-1); border:1px solid var(--line-2); border-radius:6px; padding:2px 8px; }
+
+/* wiki links in prose */
+.wlink { color:var(--accent); border-bottom:1px solid color-mix(in oklch,var(--accent) 35%,transparent); cursor:pointer; font-weight:500; text-decoration:none; }
+.wlink:hover { background:color-mix(in oklch,var(--accent) 12%,transparent); }
+.wlink.ghost { color:var(--amber); border-bottom-style:dashed; border-color:color-mix(in oklch,var(--amber) 40%,transparent); }
+
+/* ---- W2 — Note View / Edit ---- */
+.wnote-head { display:flex; align-items:center; gap:10px; }
+.wnote-id { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--accent); }
+.wnote-grid { display:grid; grid-template-columns:1fr 380px; gap:14px; align-items:start; }
+.wnote-main { display:flex; flex-direction:column; gap:14px; }
+.wnote-side { display:flex; flex-direction:column; gap:14px; }
+.wnote-body-panel { padding:18px 22px; }
+.wnote-title { width:100%; background:transparent; border:0; outline:0; font-family:var(--sans); font-size:24px; font-weight:600; color:var(--tx-0); letter-spacing:-.01em; padding:0; margin-bottom:10px; }
+.wnote-title:focus { border-bottom:1px solid var(--accent); }
+.wnote-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:16px; }
+.wmeta-k { font-family:var(--mono); font-size:10px; color:var(--tx-2); text-transform:uppercase; letter-spacing:.06em; }
+.wnote-body { font-size:14.5px; line-height:1.75; color:var(--tx-0); }
+.wnote-body p { margin-bottom:13px; } .wnote-body p:last-child { margin-bottom:0; }
+.wmd-h { font-family:var(--sans); font-weight:600; color:var(--tx-0); margin:6px 0 10px; line-height:1.3; }
+h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size:13.5px; }
+.wmd-ul { margin:0 0 13px; padding-left:20px; } .wmd-ul li { margin-bottom:5px; }
+.wmd-empty { font-style:italic; }
+.wcand-warn { margin-top:16px; padding:11px 13px; border-radius:9px; background:var(--amber-dim); border:1px solid color-mix(in oklch,var(--amber) 30%,transparent);
+  font-size:12px; color:var(--amber-soft); display:flex; align-items:center; gap:8px; line-height:1.4; }
+.wcand-warn svg { width:15px; height:15px; flex-shrink:0; }
+
+/* outbound */
+.woutlist { padding:8px; display:flex; flex-direction:column; gap:3px; }
+.woutlink { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:8px; font-size:12.5px; color:var(--tx-0); text-decoration:none; }
+.woutlink svg { width:14px; height:14px; color:var(--accent); flex-shrink:0; }
+.woutlink.clickable { cursor:pointer; } .woutlink.clickable:hover { background:var(--bg-2); }
+.woutlink .faint { font-family:var(--mono); font-size:10.5px; }
+.woutlink.ghost { color:var(--amber); border:1px dashed color-mix(in oklch,var(--amber) 30%,transparent); }
+.woutlink.ghost svg { color:var(--amber); }
+
+/* AI suggestions (M1: empty-state) */
+.wsugg-list { padding:8px; display:flex; flex-direction:column; gap:8px; }
+.wsugg-empty { padding:14px; font-size:12px; line-height:1.5; color:var(--tx-2); text-align:center; }
+
+/* backlinks */
+.wbl-sec-lbl { font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--tx-2); padding:10px 14px 5px; }
+.wbl-sec-lbl .faint { text-transform:none; letter-spacing:0; }
+.wbl-list { padding:0 8px 6px; display:flex; flex-direction:column; gap:2px; }
+.wbl-row { padding:9px 11px; border-radius:8px; min-width:0; text-decoration:none; display:block; }
+.wbl-row.clickable { cursor:pointer; } .wbl-row.clickable:hover { background:var(--bg-2); }
+.wbl-head { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; flex-wrap:nowrap; }
+.wbl-head b { font-size:12px; color:var(--tx-0); line-height:1.35; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wbl-head .faint { flex-shrink:0; font-family:var(--mono); font-size:10px; }
+.wbl-snip { font-size:11.5px; line-height:1.4; }
+.wbl-snip b { color:var(--accent); font-weight:600; }
+.wbl-row.unlinked { background:color-mix(in oklch,var(--amber) 5%,transparent); border:1px dashed color-mix(in oklch,var(--amber) 22%,transparent); }
+.wbl-empty { padding:8px 14px; font-family:var(--mono); font-size:11px; color:var(--tx-2); }
+
+/* ---- FE markdown editor (textarea + preview, no heavy lib) ---- */
+.wedit { display:flex; flex-direction:column; gap:8px; }
+.wedit-bar { display:flex; align-items:center; gap:7px; }
+.wedit-bar code { font-family:var(--mono); font-size:10.5px; color:var(--accent); }
+.wedit-ta { width:100%; background:var(--bg-0); border:1px solid var(--line-2); border-radius:9px; padding:12px 14px; color:var(--tx-0);
+  font-family:var(--sans); font-size:14px; line-height:1.7; outline:0; resize:vertical; min-height:200px; }
+.wedit-ta:focus { border-color:var(--accent); }
+.wedit-preview { background:var(--bg-0); border:1px solid var(--line); border-radius:9px; padding:14px 16px; min-height:200px; }
+
+/* ---- W3 — Inbox / Refine ---- */
+.winbox-grid { display:grid; grid-template-columns:340px 1fr; gap:14px; align-items:start; height:calc(100vh - 175px); }
+.winbox-progress { font-family:var(--mono); font-size:14px; color:var(--tx-2); }
+.winbox-list { flex:1; overflow-y:auto; padding:7px; display:flex; flex-direction:column; gap:2px; }
+.winbox-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:9px; cursor:pointer; border:1px solid transparent; }
+.winbox-row:hover { background:var(--bg-2); }
+.winbox-row.on { background:var(--bg-2); border-color:color-mix(in oklch,var(--accent) 40%,transparent); }
+.wcap-src { font-family:var(--mono); font-size:9px; font-weight:600; padding:2px 6px; border-radius:5px; background:var(--bg-3); color:var(--tx-1); white-space:nowrap; flex-shrink:0; }
+.wcap-src.command_bar { color:var(--green); } .wcap-src.mcp_agent { color:var(--amber); }
+.wcap-src.daily_note { color:var(--blue); } .wcap-src.quick_add { color:var(--violet); }
+.wdupe-flag { font-family:var(--mono); font-size:9px; font-weight:700; color:var(--red); background:var(--red-dim); padding:2px 6px; border-radius:5px; }
+.wrefine { overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 175px); }
+.wrefine-body { overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:16px; }
+.wrefine-sec { display:flex; flex-direction:column; gap:8px; }
+.wrefine-lbl { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-2); display:flex; align-items:center; gap:6px; }
+.wraw { font-family:var(--mono); font-size:12.5px; line-height:1.6; color:var(--tx-1); background:var(--bg-0); border:1px solid var(--line); border-radius:9px; padding:12px 14px; }
+.wai-box { background:color-mix(in oklch,var(--amber) 4%,transparent); border:1px solid var(--amber-dim); border-radius:11px; padding:13px 14px; }
+.wai-empty { font-size:12px; line-height:1.5; color:var(--tx-2); }
+.wrefine-title { background:var(--bg-0); border:1px solid var(--line-2); border-radius:8px; padding:10px 13px; color:var(--tx-0); font-family:var(--sans); font-size:15px; font-weight:600; outline:0; }
+.wrefine-title:focus { border-color:var(--accent); }
+.wrefine-status { display:flex; align-items:center; gap:10px; }
+.wgate { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:11px; }
+.wgate.blocked { background:color-mix(in oklch,var(--red) 6%,transparent); border:1px solid color-mix(in oklch,var(--red) 30%,transparent); }
+.wgate.ok { background:color-mix(in oklch,var(--green) 6%,transparent); border:1px solid color-mix(in oklch,var(--green) 30%,transparent); }
+.wgate.warn { background:color-mix(in oklch,var(--amber) 6%,transparent); border:1px solid color-mix(in oklch,var(--amber) 30%,transparent); }
+.wgate-body { flex:1; display:flex; flex-direction:column; gap:2px; }
+.wgate-body b { font-size:12.5px; } .wgate.blocked b { color:var(--red); } .wgate.ok b { color:var(--green); } .wgate.warn b { color:var(--amber); }
+.wgate-body .mut { font-size:11px; line-height:1.35; }
+.wrefine-foot { display:flex; justify-content:flex-end; gap:9px; padding-top:4px; }
+.wrefine-foot .btn[disabled] { opacity:.45; cursor:not-allowed; }

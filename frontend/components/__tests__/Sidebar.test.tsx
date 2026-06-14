@@ -47,24 +47,24 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5"));
   });
 
-  it("renders all 6 nav groups", () => {
+  it("renders all 7 nav groups (+ Tri thức for Wiki)", () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     const secs = Array.from(container.querySelectorAll(".sb-sec")).map((e) => e.textContent);
     for (const g of NAV) {
       expect(secs).toContain(g.sec);
     }
-    expect(NAV).toHaveLength(6);
+    expect(NAV).toHaveLength(7);
   });
 
-  it("renders a link for every nav route (14 nav items incl OKX Exchange)", () => {
+  it("renders a link for every nav route (15 nav items: 14 foundation + Wiki Inbox)", () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     for (const route of ALL_ROUTES) {
       expect(container.querySelector(`a[href="${route}"]`)).toBeTruthy();
     }
-    // 14 nav items (13 original + OKX Exchange)
-    expect(ALL_ROUTES).toHaveLength(14);
+    // 14 foundation items (13 original + OKX Exchange) + /wiki/inbox (W3)
+    expect(ALL_ROUTES).toHaveLength(15);
   });
 
   it("marks the active route with `on` and aria-current", () => {

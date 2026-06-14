@@ -55,6 +55,16 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    sec: "Tri thức",
+    items: [
+      // W3 Inbox/Refine (live). Wiki Home (/wiki) · Graph (/wiki/graph) · Proposals
+      // land with their screen sprints — NOT linked here yet (no dead links, per
+      // milestone-audit-grep-all-stubs). Inbox badge wired live with the shell
+      // badge task (sidebar-badges-static-placeholder); static placeholder for now.
+      { route: "/wiki/inbox", label: "Wiki Inbox", icon: "i-note", screen: "W3" },
+    ],
+  },
+  {
     sec: "Hệ thống",
     items: [
       { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "5", cls: "g" } },
@@ -86,6 +96,10 @@ export const CRUMB: Record<string, string> = {
   "/settings": "Cài đặt",
   "/routines": "Automation / Routines",
   "/activity": "Activity Feed",
+  // Wiki (W1–W5) — detail route /wiki/[id] resolves to the parent crumb (TopBar
+  // crumbFor falls back to the first path segment). Full "Tri thức" NAV group = T3.
+  "/wiki": "Tri thức",
+  "/wiki/inbox": "Inbox / Refine",
 };
 
 /** All 14 screen routes (detail routes resolve under their parent nav item). */

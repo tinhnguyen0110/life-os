@@ -50,6 +50,15 @@ services:
       # S9 tokens: PRIMARY source — live session transcripts (.jsonl) under the
       # mounted host ~/.claude/projects. Real tokens/cost/byProject (stats-cache died).
       LIFEOS_CLAUDE_PROJECTS_DIR: /claude-home/projects
+    # Resource caps — safety against host-takedown. The host hit load 188 once
+    # (multiple apps + a uvicorn reload-storm). These caps confine any future
+    # leak/storm to THIS container (OOM-killed in isolation), never the host.
+    # Generous headroom (~10× real 94MiB usage) so normal operation never OOMs.
+    # Top-level `mem_limit`/`cpus` (NOT `deploy.resources`, which plain
+    # `docker compose up` ignores outside swarm/--compatibility). Verify the cap
+    # shows in `docker stats` MEM-LIMIT.
+    mem_limit: 1g
+    cpus: 2.0
     # (uvicorn --host 0.0.0.0 --port 8686 --reload — from the Dockerfile CMD.)
 
   frontend:
@@ -71,4 +80,9 @@ services:
       - /app/.next
     depends_on:
       - backend
+    # Resource caps (see backend above). 2g = ~4× real 533MiB usage — next dev can
+    # spike during compile/HMR, so more headroom than backend. cpus capped so a
+    # build/watch storm can't starve the host of all cores.
+    mem_limit: 2g
+    cpus: 2.0
     # (pnpm dev -H 0.0.0.0 -p 3010 — from the Dockerfile CMD.)
