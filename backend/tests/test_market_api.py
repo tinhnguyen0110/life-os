@@ -18,6 +18,7 @@ CG_URL = "https://api.coingecko.com/api/v3/simple/price"
 ASSETS = [
     {"symbol": "BTC", "name": "Bitcoin", "assetClass": "crypto", "cgId": "bitcoin"},
     {"symbol": "FUEVFVND", "name": "ETF VFVND", "assetClass": "etf", "mock": 24.8},
+    {"symbol": "XAU", "name": "Gold (oz)", "assetClass": "gold", "cgId": "pax-gold", "mock": 2650.0},
 ]
 
 
@@ -545,3 +546,40 @@ def test_compare_clean_series_no_false_positive_warning(app_client):
     assert "filtered" not in (body.get("warning") or "").lower()
     row = {r["symbol"]: r for r in body["data"]["comparison"]}["BTC"]
     assert row["points"] == 40  # nothing dropped
+
+
+# --- gold (Task 29): XAU is a tracked asset → flows through the WHOLE pipeline ---
+def test_gold_is_tracked_asset(app_client):
+    """XAU (assetClass=gold) is in the tracked universe — so history/indicators/ohlc
+    treat it as a first-class asset (no 404), proving the pipeline picked it up."""
+    # tracked → empty series is 200 {points:[]}, NOT a 404 (the untracked signal).
+    assert app_client.get("/market/history/XAU").status_code == 200
+
+
+def test_gold_indicators_flow_through_unchanged(app_client):
+    """A seeded XAU close series runs through the EXISTING indicators endpoint with no
+    gold-specific code — proves 'add an asset, reuse the pipeline' (RSI computes)."""
+    _seed_prices("XAU", [2600.0 + i for i in range(40)])  # 40 rising gold ticks
+    body = app_client.get("/market/indicators/XAU?indicators=rsi,summary&hours=100000").json()
+    assert body["success"] is True
+    rsi = body["data"]["indicators"]["rsi"]
+    assert rsi["latest"] is not None  # RSI computed on gold exactly like crypto
+
+
+def test_gold_correlation_vs_btc(app_client):
+    """END-TO-END: gold (XAU) vs BTC correlation via the SAME /correlation endpoint —
+    two co-moving seeded series → 1.0, proving XAU is a full correlation citizen."""
+    _seed_prices("BTC", [float(i) for i in range(1, 30)])       # rising
+    _seed_prices("XAU", [float(2600 + i) for i in range(1, 30)])  # rising in lockstep
+    d = app_client.get("/market/correlation?symbols=BTC,XAU&hours=100000").json()["data"]
+    assert d["matrix"]["BTC"]["XAU"] == 1.0
+    assert d["matrix"]["XAU"]["XAU"] == 1.0
+
+
+def test_gold_ohlc_flows_through(app_client):
+    """XAU close-ticks bucket into OHLC candles via the existing /ohlc endpoint —
+    no gold-specific candle code, the pipeline just works on the new asset."""
+    _seed_prices("XAU", [2600.0, 2610.0, 2605.0, 2620.0, 2615.0])
+    body = app_client.get("/market/ohlc/XAU?hours=100000&interval=60").json()
+    assert body["success"] is True
+    assert len(body["data"]["candles"]) >= 1  # ticks aggregated into ≥1 bar

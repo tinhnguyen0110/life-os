@@ -51,6 +51,10 @@ def _default_market_assets() -> list[dict]:
         {"symbol": "SOL", "name": "Solana", "assetClass": "crypto", "cgId": "solana"},
         {"symbol": "VNINDEX", "name": "VN-Index", "assetClass": "vn", "mock": 1283.5},
         {"symbol": "FUEVFVND", "name": "ETF VFVND", "assetClass": "etf", "mock": 24.8},
+        # Gold (spot, per troy oz). Real free/no-key source = CoinGecko's PAX Gold
+        # (PAXG), a token redeemable 1:1 for physical gold → tracks spot within ~0.1%.
+        # cgId drives the gold reader branch; mock seed (~$2650/oz) is the fail-open.
+        {"symbol": "XAU", "name": "Gold (oz)", "assetClass": "gold", "cgId": "pax-gold", "mock": 2650.0},
     ]
 
 
@@ -146,6 +150,22 @@ class Settings(BaseSettings):
     okx_api_key: str = Field(default="", description="OKX API key")
     okx_api_secret: str = Field(default="", description="OKX API secret")
     okx_api_passphrase: str = Field(default="", description="OKX API passphrase")
+
+    # --- Macro (MACRO-1) — FRED economic data, key-optional --------------------
+    # FRED (St. Louis Fed) has a free JSON API that requires an api_key. Set via
+    # LIFEOS_FRED_API_KEY. Left empty → the macro module fail-opens to honest mock
+    # series + a "macro mock (no FRED key)" warning (never blocks — mock-first).
+    fred_api_key: str = Field(default="", description="FRED API key (free; empty → mock)")
+    fred_base: str = "https://api.stlouisfed.org/fred"
+    # FRED series ids the macro module tracks: indicator key → FRED series id.
+    # FEDFUNDS=Fed funds rate %, CPIAUCSL=US CPI index, DTWEXBGS=broad USD index.
+    fred_series: dict[str, str] = Field(
+        default_factory=lambda: {
+            "fed_funds_rate": "FEDFUNDS",
+            "cpi": "CPIAUCSL",
+            "dxy": "DTWEXBGS",
+        }
+    )
 
     # Browser origins allowed to call the API. Single-user localhost no-auth
     # (CLAUDE.md §2) — CORS here is a browser-functionality enabler, NOT a

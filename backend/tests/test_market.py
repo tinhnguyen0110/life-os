@@ -138,11 +138,13 @@ CRYPTO_BTC = {"symbol": "BTC", "name": "Bitcoin",   "assetClass": "crypto", "cgI
 CRYPTO_ETH = {"symbol": "ETH", "name": "Ethereum",  "assetClass": "crypto", "cgId": "ethereum"}
 MOCK_VOO   = {"symbol": "VOO", "name": "Vanguard",  "assetClass": "etf",    "mock": 512.0}
 MOCK_VN    = {"symbol": "VNINDEX", "name": "VN-Index", "assetClass": "vn",  "mock": 1280.0}
+GOLD_XAU   = {"symbol": "XAU", "name": "Gold (oz)", "assetClass": "gold",   "cgId": "pax-gold", "mock": 2650.0}
 
 FAKE_CG = {
     "bitcoin":  {"usd": 60818.0, "usd_24h_change": -3.14},
     "ethereum": {"usd": 3500.0,  "usd_24h_change": 1.2},
 }
+FAKE_GOLD = {"pax-gold": {"usd": 2654.0, "usd_24h_change": 1.1}}
 
 
 def _fake_resp(data: dict) -> MagicMock:
@@ -265,6 +267,51 @@ class TestReader:
             q = read_quote(CRYPTO_BTC)
         assert isinstance(q, AssetQuote)
         assert q.symbol == "BTC"
+
+    # --- gold (XAU) — REAL price via CoinGecko PAXG, fail-open like crypto ----
+    def test_gold_real_price_via_paxg(self):
+        """XAU (assetClass=gold) fetches a REAL price from CoinGecko's pax-gold id,
+        labelled honestly as coingecko:pax-gold (a spot-tracking token, NOT a mock)."""
+        with patch("modules.market.reader.httpx.get",
+                   return_value=_fake_resp(FAKE_GOLD)) as mg:
+            quotes, warnings = read_quotes([GOLD_XAU])
+            assert mg.called, "gold asset must hit the (mocked) CoinGecko endpoint"
+        xau = next(q for q in quotes if q.symbol == "XAU")
+        assert xau.assetClass == "gold"
+        assert xau.price == pytest.approx(2654.0)          # real feed value, not the 2650 mock seed
+        assert xau.source == "coingecko:pax-gold"          # honest provenance
+        assert getattr(xau, "_feed_change_pct", None) == pytest.approx(1.1)  # 24h change carried for service fallback
+
+    def test_gold_fail_open_to_mock_on_feed_down(self):
+        """Gold source down + no last-known row → deterministic mock (~seed), warned,
+        NEVER crashes the reader (same fail-open contract as crypto)."""
+        import httpx as hx
+        with patch("modules.market.reader.httpx.get",
+                   side_effect=hx.RequestError("gold down", request=MagicMock())):
+            quotes, warnings = read_quotes([GOLD_XAU])
+        assert len(quotes) == 1 and quotes[0].symbol == "XAU"
+        assert quotes[0].source in ("last-known", "mock")
+        assert any("XAU" in w or "gold" in w.lower() for w in warnings)
+
+    def test_gold_missing_in_feed_fails_open_per_asset(self):
+        """Feed returns 200 but omits pax-gold → that gold asset fails open to
+        last-known/mock with a warning; a co-requested BTC still comes through."""
+        partial = {"bitcoin": {"usd": 60818.0, "usd_24h_change": -3.14}}  # no pax-gold
+        with patch("modules.market.reader.httpx.get", return_value=_fake_resp(partial)):
+            quotes, warnings = read_quotes([CRYPTO_BTC, GOLD_XAU])
+        syms = {q.symbol: q for q in quotes}
+        assert "BTC" in syms and syms["BTC"].source == "coingecko"   # crypto unaffected
+        assert "XAU" in syms and syms["XAU"].source in ("last-known", "mock")
+        assert any("XAU" in w for w in warnings)
+
+    def test_gold_without_cgid_is_mocked(self):
+        """A gold asset with no cgId can't be fetched → honest mock + warning."""
+        gold_nokey = {"symbol": "XAU", "name": "Gold", "assetClass": "gold", "mock": 2650.0}
+        with patch("modules.market.reader.httpx.get") as mg:
+            quotes, warnings = read_quotes([gold_nokey])
+        xau = quotes[0]
+        assert xau.source == "mock" and xau.price > 0
+        assert any("XAU" in w and "mock" in w for w in warnings)
 
 
 # ---------------------------------------------------------------------------

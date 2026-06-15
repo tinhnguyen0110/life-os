@@ -145,6 +145,23 @@ def _fetch_coingecko(cg_ids: list[str]) -> dict:
     return body
 
 
+def _fetch_gold(cg_ids: list[str]) -> dict:
+    """Fetch spot-gold quote(s) for the ``gold`` asset class — REAL, free, no-key.
+
+    Source = CoinGecko's PAX Gold (PAXG, ``cgId='pax-gold'``): a token redeemable 1:1
+    for one troy ounce of LBMA-accredited physical gold, so its USD price tracks spot
+    gold within ~0.1%. This is a genuine market price (NOT a mock) obtained from the
+    same free CoinGecko `/simple/price` endpoint the crypto path uses — so it inherits
+    the proven fail-open + TTL-cache behavior. We keep it a SEPARATE function (parallel
+    to ``_fetch_coingecko``) so the gold source can later swap to a dedicated metals
+    feed without touching the crypto path. Raises on failure (caller fails open).
+
+    Returns the raw mapping {cg_id: {"usd": float, "usd_24h_change": float}} — same
+    shape as ``_fetch_coingecko`` so ``read_quotes`` consumes both identically.
+    """
+    return _fetch_coingecko(cg_ids)  # PAXG lives on the same free CoinGecko endpoint
+
+
 def read_quotes(assets: list[dict]) -> tuple[list[AssetQuote], list[str]]:
     """Read quotes for many assets. ONE CoinGecko call for all crypto; mock the rest.
 
@@ -157,7 +174,8 @@ def read_quotes(assets: list[dict]) -> tuple[list[AssetQuote], list[str]]:
     warnings: list[str] = []
 
     crypto = [a for a in assets if a.get("assetClass") == "crypto" and a.get("cgId")]
-    others = [a for a in assets if a.get("assetClass") != "crypto"]
+    gold = [a for a in assets if a.get("assetClass") == "gold"]
+    others = [a for a in assets if a.get("assetClass") not in ("crypto", "gold")]
     unknown = [a for a in assets if a.get("assetClass") == "crypto" and not a.get("cgId")]
 
     for a in unknown:
@@ -196,6 +214,47 @@ def read_quotes(assets: list[dict]) -> tuple[list[AssetQuote], list[str]]:
             q, _ = _last_known_quote(a, f"{a['symbol']}: {reason} — fail-open")
             warnings.append(f"{a['symbol']}: {reason} — used {q.source}")
             quotes.append(q)
+
+    # --- gold (XAU): REAL price via CoinGecko PAXG, fail-open to last-known/mock ---
+    if gold:
+        gold_with_id = [a for a in gold if a.get("cgId")]
+        gold_no_id = [a for a in gold if not a.get("cgId")]
+        for a in gold_no_id:  # a gold asset without a cgId can only be mocked
+            warnings.append(f"{a.get('symbol','?')}: gold asset missing cgId — mocked")
+            q, _ = _mock_quote(a)
+            quotes.append(q)
+
+        gold_feed: dict = {}
+        gold_ok = True
+        if gold_with_id:
+            try:
+                gold_feed = _fetch_gold([a["cgId"] for a in gold_with_id])
+            except Exception as exc:  # feed down → fail-open per asset (never crash)
+                gold_ok = False
+                logger.warning("gold (PAXG) fetch failed (fail-open to last-known/mock): %s", exc)
+                warnings.append(f"gold source unavailable ({type(exc).__name__}) — using last-known/mock")
+
+        for a in gold_with_id:
+            entry = gold_feed.get(a["cgId"]) if gold_ok else None
+            if entry and isinstance(entry.get("usd"), (int, float)):
+                q = AssetQuote(
+                    symbol=a["symbol"],
+                    name=a.get("name", a["symbol"]),
+                    assetClass="gold",
+                    price=float(entry["usd"]),
+                    changePct=None,  # service derives from price_history
+                    currency="USD",
+                    # honest provenance: real spot-tracking price, via the PAXG proxy.
+                    source="coingecko:pax-gold",
+                    ts=_now_iso(),
+                )
+                object.__setattr__(q, "_feed_change_pct", entry.get("usd_24h_change"))
+                quotes.append(q)
+            else:
+                reason = "gold feed missing this asset" if gold_ok else "gold feed unavailable"
+                q, _ = _last_known_quote(a, f"{a['symbol']}: {reason} — fail-open")
+                warnings.append(f"{a['symbol']}: {reason} — used {q.source}")
+                quotes.append(q)
 
     # --- etf/vn (and any unknown non-crypto class): deterministic mock ---
     for a in others:

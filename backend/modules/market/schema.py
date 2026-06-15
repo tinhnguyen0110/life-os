@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AssetClass = Literal["crypto", "etf", "vn"]
+AssetClass = Literal["crypto", "etf", "vn", "gold"]
 AlertOp = Literal["above", "below"]
 AlertState = Literal["hit", "near", "far"]
 
