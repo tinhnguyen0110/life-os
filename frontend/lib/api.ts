@@ -453,6 +453,13 @@ export function getWikiGraph(
   return apiGet<WikiGraph>(`/wiki/graph?note=${note}&depth=${depth}`);
 }
 
+/** GLOBAL-GRAPH — whole-vault graph (GET /wiki/graph with NO note param → global,
+ *  per the GLOBAL-GRAPH T1 contract). Same shape as ego ({center:null, nodes, edges,
+ *  clusters} over the whole vault). Empty vault → {center:null, nodes:[], …}. */
+export function getWikiGraphGlobal(): Promise<ApiResponse<WikiGraph>> {
+  return apiGet<WikiGraph>("/wiki/graph");
+}
+
 /* ---- P1 Proposal Queue (W4a) — review surface for AI-proposed mutations ---- */
 
 /** List proposals. `status` ∈ pending(default) | accepted | rejected | all.

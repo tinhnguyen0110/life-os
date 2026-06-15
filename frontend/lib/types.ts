@@ -955,7 +955,8 @@ export interface WikiGraphCluster {
  *  → {members, size, density, importance, suggestedTitle}) — NOT the stale
  *  WikiGraphCluster ({label, noteIds}), which the backend never returns. */
 export interface WikiGraph {
-  center: number;
+  /** ego center note id; null for the GLOBAL (whole-vault) graph. */
+  center: number | null;
   nodes: WikiGraphNode[];
   edges: WikiGraphEdge[];
   clusters: WikiCluster[];

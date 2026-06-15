@@ -2,12 +2,14 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 
 const getWikiGraph = vi.fn();
+const getWikiGraphGlobal = vi.fn();
 const searchWiki = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
     ...actual,
     getWikiGraph: (...a: unknown[]) => getWikiGraph(...a),
+    getWikiGraphGlobal: (...a: unknown[]) => getWikiGraphGlobal(...a),
     searchWiki: (...a: unknown[]) => searchWiki(...a),
   };
 });
@@ -58,15 +60,51 @@ const GRAPH_WITH_CLUSTER: WikiGraph = {
   ],
 };
 
+// global fixture: center:null, whole-vault nodes/edges.
+const GLOBAL: WikiGraph = { center: null, nodes: GRAPH.nodes, edges: GRAPH.edges, clusters: [] };
+
 describe("W4 Graph Explorer", () => {
-  it("idle (no center chosen) → 'chọn note tâm' prompt, no graph fetch", async () => {
+  it("GLOBAL-GRAPH: default view (no ?note=) fetches the global graph + renders nodes (NOT idle)", async () => {
     mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
     render(<WikiGraphPage />);
-    await waitFor(() => expect(screen.getByTestId("graph-idle")).toBeInTheDocument());
+    await waitFor(() => expect(getWikiGraphGlobal).toHaveBeenCalled());
+    await screen.findByTestId("graph-svg");
+    expect(screen.getAllByTestId("graph-node").length).toBe(3);
+    // global mode active; ego endpoint NOT called for the default view
+    expect(screen.getByTestId("graph-mode-global")).toHaveClass("on");
     expect(getWikiGraph).not.toHaveBeenCalled();
   });
 
-  it("deep-link ?note=47 → fetches graph and renders SVG nodes/edges", async () => {
+  it("GLOBAL-GRAPH: layout is DETERMINISTIC (same vault → identical node positions, no Math.random)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));
+    // render twice; capture each node's transform (x,y) — must be byte-identical.
+    const capture = async (): Promise<Record<string, string | null>> => {
+      const { unmount } = render(<WikiGraphPage />);
+      await screen.findByTestId("graph-svg");
+      const map: Record<string, string | null> = {};
+      for (const n of screen.getAllByTestId("graph-node")) {
+        map[n.getAttribute("data-node-id") ?? ""] = n.getAttribute("transform");
+      }
+      unmount();
+      return map;
+    };
+    const a = await capture();
+    const b = await capture();
+    expect(a).toEqual(b); // deterministic — reload gives the same positions
+    // and positions are real (not all 0,0)
+    expect(Object.values(a).every((t) => /translate\([\d.]+,[\d.]+\)/.test(t || ""))).toBe(true);
+  });
+
+  it("GLOBAL-GRAPH: empty vault → friendly empty (NOT a blank that looks broken)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok({ center: null, nodes: [], edges: [], clusters: [] }));
+    render(<WikiGraphPage />);
+    await waitFor(() => expect(screen.getByTestId("graph-empty-global")).toBeInTheDocument());
+  });
+
+  it("deep-link ?note=47 → fetches EGO graph and renders SVG nodes/edges", async () => {
     mockNoteParam = "47";
     getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
     render(<WikiGraphPage />);
@@ -76,14 +114,24 @@ describe("W4 Graph Explorer", () => {
     expect(screen.getAllByTestId("graph-edge").length).toBe(1);
   });
 
-  it("node click routes to /wiki/[id]", async () => {
+  it("node click → focuses the note (local mode, URL ?note=id)", async () => {
     mockNoteParam = "47";
     getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
     render(<WikiGraphPage />);
     const nodes = await screen.findAllByTestId("graph-node");
     const node88 = nodes.find((n) => n.getAttribute("data-node-id") === "88")!;
     fireEvent.click(node88);
-    expect(mockPush).toHaveBeenCalledWith("/wiki/88");
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+  });
+
+  it("Global toggle from local → goes back to global (URL /wiki/graph)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValue(ok(GRAPH));
+    getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    fireEvent.click(screen.getByTestId("graph-mode-global"));
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph");
   });
 
   it("depth toggle re-fetches at the new depth", async () => {
@@ -134,7 +182,7 @@ describe("W4 Graph Explorer", () => {
     const chip88 = [...cluster.querySelectorAll(".tagchip")].find((c) => /#88/.test(c.textContent || ""));
     expect(chip88).toBeTruthy();
     fireEvent.click(chip88 as Element);
-    expect(mockPush).toHaveBeenCalledWith("/wiki/88");
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
   });
 
   it("404 center note → error state, not a crash", async () => {
@@ -145,17 +193,17 @@ describe("W4 Graph Explorer", () => {
     expect(screen.getByTestId("graph-error")).toHaveTextContent("not found");
   });
 
-  it("center picker → choosing a hit sets center + updates URL", async () => {
+  it("center picker → choosing a hit focuses that note (URL ?note=88)", async () => {
     mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));
     searchWiki.mockResolvedValue(ok([{ id: 88, title: "MOCs are workstations", status: "evergreen", snippet: "..." }]));
     getWikiGraph.mockResolvedValue(ok({ ...GRAPH, center: 88 }));
     render(<WikiGraphPage />);
-    await waitFor(() => expect(screen.getByTestId("graph-idle")).toBeInTheDocument());
+    await screen.findByTestId("graph-svg"); // global renders first
     fireEvent.change(screen.getByTestId("graph-search-input"), { target: { value: "MOC" } });
     const hit = await screen.findByTestId("graph-search-hit");
     fireEvent.click(hit);
     expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
-    await waitFor(() => expect(getWikiGraph).toHaveBeenCalledWith(88, 2));
   });
 
   it("center with no neighbors (degree 0, single node) → 'chưa có hàng xóm' empty", async () => {

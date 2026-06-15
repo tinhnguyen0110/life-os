@@ -20,6 +20,7 @@ import {
   getWikiInbox,
   getWikiOverview,
   getWikiGraph,
+  getWikiGraphGlobal,
   getWikiProposals,
   acceptWikiProposal,
   rejectWikiProposal,
@@ -265,19 +266,17 @@ export function useWikiGraph(center: number | null, depth: number): UseWikiGraph
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
-    if (center == null || Number.isNaN(center)) {
-      // idle: no center chosen — not an error, just nothing to draw yet.
-      setGraph(null);
-      setErrMsg("");
-      setWarning(null);
-      setStatus("ready");
-      return;
-    }
     let alive = true;
     setStatus("loading");
     (async () => {
       try {
-        const res = await getWikiGraph(center, depth);
+        // GLOBAL-GRAPH: center null → whole-vault global graph (the DEFAULT view);
+        // a numeric center → ego-graph around it. Same {center,nodes,edges,clusters}
+        // shape either way (center now nullable for global).
+        const res =
+          center == null || Number.isNaN(center)
+            ? await getWikiGraphGlobal()
+            : await getWikiGraph(center, depth);
         if (!alive) return;
         setGraph(res?.data ?? null);
         setWarning(res?.warning ?? null);
