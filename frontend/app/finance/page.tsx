@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useFinance, driftLabel } from "@/lib/useFinance";
 import { useSafeRouter } from "@/lib/useNav";
 import { KpiCard } from "@/components/shared/KpiCard";
+import { EquityCurve } from "@/components/EquityCurve";
 import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
 import { apiBase, getCryptoBasis, setCryptoBasis } from "@/lib/api";
 import { spark } from "@/lib/spark";
@@ -250,6 +251,9 @@ export default function FinancePage() {
           sub={data.pnlTotal ? `${fmtPct(data.pnlTotal.pct)} trên vốn` : undefined}
         />
       </div>
+
+      {/* FE-3: portfolio value over time (equity curve from GET /finance/history). */}
+      <EquityCurve />
 
       {/* Allocation / P&L per channel — backend drift (render-only), click→S6 */}
       <div className="panel" data-testid="finance-allocation">
