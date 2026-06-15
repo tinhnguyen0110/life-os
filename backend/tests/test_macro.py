@@ -23,8 +23,14 @@ from modules.macro import reader, service, store
 
 
 @pytest.fixture
-def macro_db(isolated_paths):
+def macro_db(isolated_paths, monkeypatch):
     store.init_macro_tables()
+    # FRED-MACRO: the no-key CSV is now the PRIMARY path → cold-start refresh would hit
+    # the live network. Neutralize it by default (CSV fails → deterministic mock), so the
+    # suite stays hermetic. Tests that exercise the real CSV path override reader.httpx.get.
+    def _no_network(*a, **k):
+        raise RuntimeError("network disabled in tests (default macro_db)")
+    monkeypatch.setattr(reader.httpx, "get", _no_network)
     return isolated_paths
 
 
@@ -57,12 +63,20 @@ def test_history_oldest_to_newest(macro_db):
 # --------------------------------------------------------------------------- #
 # Fail-open fetch — no FRED key → mock                                          #
 # --------------------------------------------------------------------------- #
-def test_fetch_no_key_returns_mock(macro_db, monkeypatch):
-    from core.config import settings
+def _csv_fails(monkeypatch):
+    """Make the no-key CSV path fail (so fetch falls through to mock)."""
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(reader.httpx, "get", boom)
 
+
+def test_fetch_csv_failure_returns_mock(macro_db, monkeypatch):
+    """FRED-MACRO: when the no-key CSV is UNREACHABLE → fail-soft to mock (no key set)."""
+    from core.config import settings
     monkeypatch.setattr(settings, "fred_api_key", "")
+    _csv_fails(monkeypatch)
     points, warning = reader.fetch_latest("fed_funds_rate")
-    assert points, "mock must return points even with no key"
+    assert points, "mock must return points even when the CSV fails"
     assert all(p["source"] == "mock" for p in points)
     assert warning and "mock" in warning.lower()
 
@@ -71,6 +85,54 @@ def test_fetch_unknown_indicator(macro_db):
     points, warning = reader.fetch_latest("not-a-real-indicator")
     assert points == []
     assert warning and "unknown" in warning.lower()
+
+
+# --------------------------------------------------------------------------- #
+# FRED-MACRO distinguishing cases: real CSV → source='fred' (not mock); DXY     #
+# empty → mock; fail-soft never 500s.                                           #
+# --------------------------------------------------------------------------- #
+class _FakeResp:
+    def __init__(self, text):
+        self.text = text
+    def raise_for_status(self):
+        pass
+
+
+def _mock_csv(monkeypatch, body):
+    monkeypatch.setattr(reader.httpx, "get", lambda *a, **k: _FakeResp(body))
+
+
+def test_d_real_csv_is_fred_not_mock(macro_db, monkeypatch):
+    """DISTINGUISHING: a real CSV payload → points tagged source='fred' with the REAL
+    values (NOT the mock baseline), no warning. Proves the no-key CSV is the real path."""
+    _mock_csv(monkeypatch,
+              "observation_date,FEDFUNDS\n2026-03-01,3.64\n2026-04-01,3.64\n2026-05-01,3.63\n")
+    points, warning = reader.fetch_latest("fed_funds_rate")
+    assert points and all(p["source"] == "fred" for p in points)   # REAL, not mock
+    assert warning is None
+    assert points[-1]["value"] == 3.63 and points[-1]["ts"] == "2026-05-01"
+    # the real value differs from the mock baseline (proves it's not the deterministic mock)
+    assert points[-1]["value"] != reader._MOCK_BASE.get("fed_funds_rate")
+
+
+def test_d_dxy_empty_csv_falls_to_mock(macro_db, monkeypatch):
+    """DISTINGUISHING: DXY (DTWEXBGS) the public CSV doesn't serve cleanly → an empty/
+    header-only body → fall-soft to mock, tagged source='mock' honestly (no 500)."""
+    _mock_csv(monkeypatch, "observation_date,DTWEXBGS\n")  # header only, no rows
+    points, warning = reader.fetch_latest("dxy")
+    assert points and all(p["source"] == "mock" for p in points)
+    assert warning and "mock" in warning.lower()
+
+
+def test_d_fail_soft_never_raises(macro_db, monkeypatch):
+    """fail-soft: a CSV that 504s / garbage body → mock, NEVER raises (no 500 to caller)."""
+    def boom(*a, **k):
+        raise RuntimeError("504 gateway timeout")
+    monkeypatch.setattr(reader.httpx, "get", boom)
+    # must not raise:
+    points, warning = reader.fetch_latest("cpi")
+    assert points and all(p["source"] == "mock" for p in points)
+    assert warning and "mock" in warning.lower()
 
 
 def test_fetch_network_error_falls_open_to_mock(macro_db, monkeypatch):
@@ -113,9 +175,11 @@ def test_overview_has_all_tracked_indicators(macro_db):
 
 
 def test_overview_mock_is_honest(macro_db, monkeypatch):
+    """When the real source is unreachable → overview is honestly tagged source='mock'."""
     from core.config import settings
 
-    monkeypatch.setattr(settings, "fred_api_key", "")  # no key → mock
+    monkeypatch.setattr(settings, "fred_api_key", "")
+    _csv_fails(monkeypatch)                     # CSV down → fall-soft to mock
     overview, warnings = service.get_overview()
     assert overview.source == "mock"
     assert any("mock" in w.lower() for w in warnings), "must flag mock data honestly"

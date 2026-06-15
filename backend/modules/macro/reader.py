@@ -90,30 +90,72 @@ def _fetch_fred_series(series_id: str, *, limit: int = 12) -> list[dict]:
     return out
 
 
+def _fetch_fred_csv(series_id: str, *, limit: int = 12) -> list[dict]:
+    """FRED-MACRO: fetch a series via the NO-KEY public CSV (fredgraph.csv?id=<series>).
+    Format: a header line ``observation_date,<SERIES_ID>`` then ``YYYY-MM-DD,<value>``
+    rows (value ``.`` = missing). Returns the latest ``limit`` as [{date, value}]
+    oldest→newest. Raises on any failure (caller fails open). No api_key needed."""
+    resp = httpx.get(settings.fred_csv_base, params={"id": series_id}, timeout=FRED_TIMEOUT_S)
+    resp.raise_for_status()
+    text = resp.text or ""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines or "," not in lines[0]:
+        raise ValueError("unexpected FRED CSV body (no header)")
+    out: list[dict] = []
+    for ln in lines[1:]:  # skip header
+        parts = ln.split(",")
+        if len(parts) < 2:
+            continue
+        date, raw = parts[0].strip(), parts[1].strip()
+        if raw in ("", "."):  # FRED uses "." for missing
+            continue
+        try:
+            out.append({"date": date, "value": float(raw)})
+        except (TypeError, ValueError):
+            continue
+    return out[-limit:]  # oldest→newest, last `limit`
+
+
 def fetch_latest(indicator: str) -> tuple[list[dict], str | None]:
     """Fetch recent observations for one indicator. Returns ``(points, warning)``:
-    points are [{indicator, value, ts, source}] oldest→newest. Fail-open:
-      - no FRED key            → mock points + "macro mock (no FRED key) for <ind>"
+    points are [{indicator, value, ts, source}] oldest→newest. PRIMARY path = the
+    no-KEY public FRED CSV (Fed/CPI are REAL with no key); fail-soft to mock. Fail-open:
+      - CSV ok                 → real points, source='fred', no warning
+      - CSV empty/err          → mock points + "macro ... — mock" (e.g. DXY/DTWEXBGS,
+                                 which the public CSV doesn't serve cleanly)
       - unknown indicator      → ([], "unknown macro indicator <ind>")
-      - network/HTTP/parse err → mock points + "macro fetch failed for <ind> — mock"
-    NEVER raises."""
+    NEVER raises. (The JSON API path with an api_key is retained as a secondary fallback
+    if a key is configured AND the CSV failed — but the no-key CSV is the default real
+    source, so most installs need no key.)"""
     series_id = settings.fred_series.get(indicator)
     if series_id is None:
         return [], f"unknown macro indicator {indicator!r}"
 
-    if not settings.fred_api_key:
-        pts = _mock_points(indicator)
-        return pts, f"macro mock (no FRED key) for {indicator}"
-
+    # PRIMARY: no-key public CSV → real Fed/CPI without an api_key.
     try:
-        raw = _fetch_fred_series(series_id)
-        pts = [
-            {"indicator": indicator, "value": r["value"], "ts": r["date"], "source": "fred"}
-            for r in raw
-        ]
-        if not pts:
-            return _mock_points(indicator), f"macro: FRED returned no usable points for {indicator} — mock"
-        return pts, None
-    except Exception as exc:  # noqa: BLE001 — fail-open to mock, never block
-        logger.warning("FRED fetch failed for %s (%s): %s", indicator, series_id, exc)
-        return _mock_points(indicator), f"macro fetch failed for {indicator} — mock"
+        raw = _fetch_fred_csv(series_id)
+        if raw:
+            pts = [
+                {"indicator": indicator, "value": r["value"], "ts": r["date"], "source": "fred"}
+                for r in raw
+            ]
+            return pts, None
+        # CSV reachable but no usable points (e.g. DTWEXBGS) → fall through to mock.
+        logger.info("FRED CSV for %s (%s) returned no usable points — mock", indicator, series_id)
+    except Exception as exc:  # noqa: BLE001 — fail-soft, try the keyed API or mock
+        logger.warning("FRED CSV fetch failed for %s (%s): %s", indicator, series_id, exc)
+        # SECONDARY: if a key is configured, try the JSON API before giving up to mock.
+        if settings.fred_api_key:
+            try:
+                raw = _fetch_fred_series(series_id)
+                pts = [
+                    {"indicator": indicator, "value": r["value"], "ts": r["date"], "source": "fred"}
+                    for r in raw
+                ]
+                if pts:
+                    return pts, None
+            except Exception as exc2:  # noqa: BLE001 — fall through to mock
+                logger.warning("FRED JSON API also failed for %s: %s", indicator, exc2)
+
+    # FAIL-SOFT: honest mock, clearly tagged source='mock'.
+    return _mock_points(indicator), f"macro mock for {indicator} (no real FRED data)"

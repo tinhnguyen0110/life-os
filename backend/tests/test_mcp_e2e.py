@@ -31,7 +31,7 @@ from mcp_servers import proposals_store as agent_pstore
 
 
 @pytest.fixture
-def app_db(isolated_paths):
+def app_db(isolated_paths, monkeypatch):
     """Initialised app: wiki + wiki-proposal + agent-proposal tables exist (the loop
     reads market/finance/decision + the agent-proposal queue). File-store modules are
     lazy + fail-open on empty."""
@@ -41,6 +41,11 @@ def app_db(isolated_paths):
     wiki_store.init_wiki_tables()
     pstore.init_proposal_tables()
     agent_pstore.init_proposal_tables()
+    # FRED-MACRO: life_brief triggers a macro cold-start whose no-key CSV would hit the
+    # LIVE network — neutralize → deterministic mock (keeps the e2e loop hermetic).
+    from modules.macro import reader as macro_reader
+    monkeypatch.setattr(macro_reader.httpx, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network off in e2e")))
     return isolated_paths
 
 

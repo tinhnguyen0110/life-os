@@ -157,6 +157,9 @@ class Settings(BaseSettings):
     # series + a "macro mock (no FRED key)" warning (never blocks — mock-first).
     fred_api_key: str = Field(default="", description="FRED API key (free; empty → mock)")
     fred_base: str = "https://api.stlouisfed.org/fred"
+    # FRED-MACRO: the no-KEY public CSV endpoint (fredgraph.csv?id=<series>) — primary
+    # path so Fed/CPI are REAL with no key. CSV first → fred; fail-soft → mock.
+    fred_csv_base: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     # FRED series ids the macro module tracks: indicator key → FRED series id.
     # FEDFUNDS=Fed funds rate %, CPIAUCSL=US CPI index, DTWEXBGS=broad USD index.
     fred_series: dict[str, str] = Field(

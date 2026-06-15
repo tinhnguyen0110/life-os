@@ -26,7 +26,7 @@ from mcp_servers import read_server as rs
 
 
 @pytest.fixture
-def app_db(isolated_paths):
+def app_db(isolated_paths, monkeypatch):
     """Empty but INITIALISED app: the wiki + proposal tables exist (the reliability
     read path queries ``wiki_notes``; in the live app these tables always exist —
     this fixture reproduces that, vs a bare tmp dir with no schema). All other reads
@@ -39,6 +39,13 @@ def app_db(isolated_paths):
     wiki_store.init_wiki_tables()
     pstore.init_proposal_tables()
     agent_pstore.init_proposal_tables()  # MCP-5: the agent-proposal queue table
+    # FRED-MACRO: macro_overview/life_brief/insights trigger a macro cold-start refresh,
+    # whose no-key CSV path would otherwise hit the LIVE network (slow + flaky in the
+    # suite). Neutralize it → deterministic mock (CSV fails). A test wanting the real CSV
+    # path overrides macro.reader.httpx.get itself.
+    from modules.macro import reader as macro_reader
+    monkeypatch.setattr(macro_reader.httpx, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network off in app_db")))
     return isolated_paths
 
 
