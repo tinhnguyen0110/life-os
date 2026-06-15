@@ -88,11 +88,21 @@ def _apply_note_create(payload: dict[str, Any]) -> str:
 
 
 def _apply_journal_create(payload: dict[str, Any]) -> str:
-    from modules.journal.schema import JournalInput
+    from typing import cast
+
+    from modules.journal.schema import Action, JournalInput
     from modules.journal.service import create_entry
 
+    # WRITE-LOOP-E2E (#51): the agent's propose_journal stores ``action`` AS SENT (lowercase
+    # "buy"/"sell"), but JournalInput.action is Literal["BUY","SELL"] (uppercase only) → a
+    # raw pass-through pydantic-fails on accept and the trade never lands. Normalize at the
+    # APPLY boundary (NOT by widening the journal schema): upper-case whatever case the agent
+    # sent. Fixes already-queued AND future journal_create proposals; defensive vs any case.
+    # ``cast`` only satisfies the type-checker — pydantic still VALIDATES the Literal at
+    # runtime (a non-BUY/SELL value raises, surfacing as an honest apply_error, not a crash).
+    action = cast(Action, str(payload["action"]).upper())
     body = JournalInput(
-        action=payload["action"],
+        action=action,
         asset=payload["asset"],
         reason=payload["reason"],
         size=payload.get("size", ""),
