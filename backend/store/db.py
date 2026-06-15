@@ -205,6 +205,20 @@ def price_at_or_before(asset: str, ts: str) -> sqlite3.Row | None:
         return cur.fetchone()
 
 
+def price_days(asset: str) -> set[str]:
+    """The set of UTC calendar days ('YYYY-MM-DD') that ``asset`` already has at least
+    one price point on. Used by the backfill engine to dedup — a day already present is
+    NOT re-inserted, so backfill is idempotent (re-running fills only genuine gaps).
+    Derived from the ts TEXT prefix (ISO-8601 → first 10 chars = the date)."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT DISTINCT substr(ts, 1, 10) AS day FROM price_history WHERE asset = ?",
+            (asset,),
+        )
+        return {row["day"] for row in cur.fetchall() if row["day"]}
+
+
 def recent_runs(routine_id: str, limit: int = 50) -> list[sqlite3.Row]:
     """Most-recent run_log rows for ``routine_id`` (newest first). Alert history reads this."""
     conn = get_conn()

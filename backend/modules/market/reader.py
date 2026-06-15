@@ -145,6 +145,41 @@ def _fetch_coingecko(cg_ids: list[str]) -> dict:
     return body
 
 
+def fetch_market_chart(cg_id: str, days: int = 365) -> list[tuple[str, float]]:
+    """Fetch HISTORICAL daily prices for one CoinGecko id — free, no-key backfill source.
+
+    Calls ``/coins/{id}/market_chart?vs_currency=usd&days=N&interval=daily`` (the same
+    free CoinGecko API, no key) and returns ``[(iso_ts_utc, usd_price), ...]`` oldest→
+    newest. This is what fixes the "only 9 days of history" gap — the 5-min poller only
+    accumulates forward from when it started, so deep windows (30/200-day indicators,
+    long correlations) had no data. Backfill seeds the past.
+
+    Raises on any failure (timeout / 429 / non-200 / malformed) — the backfill engine
+    catches per-symbol and fails open (a missing backfill never crashes anything). NOT
+    TTL-cached (one-shot historical pull, not a hot path). ``days`` is clamped to
+    [1, 3650]; CoinGecko's free tier serves daily granularity for days>1.
+    """
+    days = max(1, min(int(days), 3650))
+    url = f"{settings.coingecko_base}/coins/{cg_id}/market_chart"
+    params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
+    resp = httpx.get(url, params=params, timeout=COINGECKO_TIMEOUT_S)
+    resp.raise_for_status()
+    body = resp.json()
+    if not isinstance(body, dict) or not isinstance(body.get("prices"), list):
+        raise ValueError(f"unexpected market_chart body for {cg_id!r}")
+    out: list[tuple[str, float]] = []
+    for point in body["prices"]:
+        # each point is [ms_epoch, usd_price]; skip anything malformed (defensive).
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        ms, price = point[0], point[1]
+        if not isinstance(ms, (int, float)) or not isinstance(price, (int, float)):
+            continue
+        ts_iso = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
+        out.append((ts_iso, float(price)))
+    return out
+
+
 def _fetch_gold(cg_ids: list[str]) -> dict:
     """Fetch spot-gold quote(s) for the ``gold`` asset class — REAL, free, no-key.
 

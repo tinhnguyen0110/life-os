@@ -583,3 +583,32 @@ def test_gold_ohlc_flows_through(app_client):
     body = app_client.get("/market/ohlc/XAU?hours=100000&interval=60").json()
     assert body["success"] is True
     assert len(body["data"]["candles"]) >= 1  # ticks aggregated into ≥1 bar
+
+
+# --- backfill (29A): POST /market/backfill — idempotent dedup historical seed ---
+def test_backfill_endpoint_inserts_and_is_idempotent(app_client):
+    """POST /market/backfill seeds history (mocked market_chart), and a 2nd call is a
+    no-op (dedup) — proving the endpoint is idempotent end-to-end."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    pts = [((base + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(12)]
+    with patch("modules.market.reader.fetch_market_chart", return_value=pts):
+        first = app_client.post("/market/backfill", json={"symbols": ["BTC"], "days": 12}).json()
+        second = app_client.post("/market/backfill", json={"symbols": ["BTC"], "days": 12}).json()
+    assert first["data"]["backfill"]["BTC"]["inserted"] == 12
+    assert second["data"]["backfill"]["BTC"]["inserted"] == 0   # idempotent
+    # the backfilled history is now queryable
+    pts_out = app_client.get("/market/history/BTC?hours=1000000").json()["data"]["points"]
+    assert len(pts_out) == 12
+
+
+def test_backfill_validates_days_range(app_client):
+    """days must be 1..3650 → 422 outside that range (schema-enforced)."""
+    assert app_client.post("/market/backfill", json={"days": 0}).status_code == 422
+    assert app_client.post("/market/backfill", json={"days": 99999}).status_code == 422
+
+
+def test_backfill_empty_symbols_list_is_422(app_client):
+    """An explicit but all-blank symbols list → 422 (honest, not a silent all-assets run)."""
+    assert app_client.post("/market/backfill", json={"symbols": ["  ", ""]}).status_code == 422

@@ -749,3 +749,109 @@ class TestRoutineDiscovery:
         body = r.json()
         assert "market" in body["data"]["modules"]
         assert "market-poll" in body["data"]["routines"]
+
+
+# ---------------------------------------------------------------------------
+# Section G — backfill engine (29A) + price_at point-in-time (29C)
+# ---------------------------------------------------------------------------
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+from modules.market import service as _svc  # noqa: E402
+
+
+def _daily_points(start_day: str, prices: list[float]) -> list[tuple[str, float]]:
+    """Build market_chart-shaped [(iso_ts, price)] daily points from start_day forward."""
+    base = _dt.fromisoformat(start_day + "T00:00:00+00:00")
+    return [((base + _td(days=i)).isoformat(), p) for i, p in enumerate(prices)]
+
+
+class TestBackfill:
+    """G1 — backfill: idempotent dedup, fail-open per symbol, non-cgId honest skip."""
+
+    def test_backfill_inserts_history(self, tmp_path, monkeypatch):
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        pts = _daily_points("2026-05-01", [100.0 + i for i in range(20)])
+        with patch("modules.market.reader.fetch_market_chart", return_value=pts):
+            summary = _svc.backfill(["BTC"], days=20)
+        assert summary["BTC"]["inserted"] == 20
+        # the points are now in the DB (deep history that the poller alone never had)
+        assert len(db.price_days("BTC")) == 20
+        db.close_db()
+
+    def test_backfill_is_idempotent_dedup(self, tmp_path, monkeypatch):
+        """Re-running backfill inserts 0 new rows — a day already present is skipped
+        (this is THE fix: re-running fills gaps, never duplicates)."""
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        pts = _daily_points("2026-05-01", [100.0 + i for i in range(15)])
+        with patch("modules.market.reader.fetch_market_chart", return_value=pts):
+            first = _svc.backfill(["BTC"], days=15)
+            second = _svc.backfill(["BTC"], days=15)
+        assert first["BTC"]["inserted"] == 15
+        assert second["BTC"]["inserted"] == 0       # idempotent
+        assert second["BTC"]["skipped"] == 15
+        assert len(db.price_days("BTC")) == 15      # no duplicate days
+        db.close_db()
+
+    def test_backfill_fills_only_gaps(self, tmp_path, monkeypatch):
+        """If some days already exist (e.g. from the poller), backfill inserts ONLY the
+        missing days — partial-overlap dedup, not all-or-nothing."""
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        # poller already captured 2026-05-10
+        db.record_price("BTC", 999.0, "2026-05-10T12:00:00+00:00", source="poll")
+        pts = _daily_points("2026-05-08", [200.0, 201.0, 202.0, 203.0, 204.0])  # 05-08..05-12
+        with patch("modules.market.reader.fetch_market_chart", return_value=pts):
+            summary = _svc.backfill(["BTC"], days=5)
+        assert summary["BTC"]["inserted"] == 4      # 5 fetched − 1 already present
+        assert summary["BTC"]["skipped"] == 1
+        # the pre-existing 05-10 point is untouched (still the poll value, not overwritten)
+        row = db.price_at_or_before("BTC", "2026-05-10T23:59:59+00:00")
+        assert row["price"] == 999.0 and row["source"] == "poll"
+        db.close_db()
+
+    def test_backfill_non_cgid_asset_honest_skip(self, tmp_path, monkeypatch):
+        """An etf/vn asset has no historical source → reported skipped with a reason,
+        NOT silently nothing and NOT a crash."""
+        _isolated_service(tmp_path, monkeypatch)
+        from core.config import settings
+        from store import db
+        monkeypatch.setattr(settings, "market_assets",
+                            [{"symbol": "VOO", "name": "Vanguard", "assetClass": "etf", "mock": 512.0}])
+        summary = _svc.backfill(["VOO"], days=30)
+        assert summary["VOO"]["inserted"] == 0
+        assert "no cgId" in summary["VOO"]["error"]
+        db.close_db()
+
+    def test_backfill_fail_open_per_symbol(self, tmp_path, monkeypatch):
+        """A feed error for one symbol is captured in its summary, never raised —
+        other symbols still backfill."""
+        _isolated_service(tmp_path, monkeypatch)
+        from core.config import settings
+        from store import db
+        monkeypatch.setattr(settings, "market_assets", [
+            {"symbol": "BTC", "name": "Bitcoin", "assetClass": "crypto", "cgId": "bitcoin"},
+            {"symbol": "ETH", "name": "Ethereum", "assetClass": "crypto", "cgId": "ethereum"},
+        ])
+        good = _daily_points("2026-05-01", [100.0, 101.0, 102.0])
+
+        def _flaky(cg_id, days=365):
+            if cg_id == "ethereum":
+                raise RuntimeError("429 rate limited")
+            return good
+
+        with patch("modules.market.reader.fetch_market_chart", side_effect=_flaky):
+            summary = _svc.backfill(["BTC", "ETH"], days=3)
+        assert summary["BTC"]["inserted"] == 3            # good one succeeded
+        assert "error" in summary["ETH"] and "429" in summary["ETH"]["error"]  # bad one captured
+        db.close_db()
+
+    def test_backfill_unknown_symbol_reported(self, tmp_path, monkeypatch):
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        summary = _svc.backfill(["NOTASYMBOL"], days=30)
+        assert "not a tracked asset" in summary["NOTASYMBOL"]["error"]
+        db.close_db()
+
+

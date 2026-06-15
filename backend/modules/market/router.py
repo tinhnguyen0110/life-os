@@ -19,7 +19,7 @@ from core.responses import ok
 from store import db
 
 from . import service
-from .schema import AlertRuleInput, IndicatorAlertRuleInput, WatchlistInput
+from .schema import AlertRuleInput, BackfillInput, IndicatorAlertRuleInput, WatchlistInput
 
 logger = logging.getLogger("life-os.market.router")
 
@@ -134,6 +134,21 @@ def get_relative_strength(symbol: str, vs: str = "BTC", hours: int = 720):
     recommendation). Thin data → None fields, never fabricated."""
     data, warnings = service.relative_strength(symbol.strip().upper(), vs=vs.strip().upper(), hours=hours)
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
+
+
+@router.post("/backfill")
+def post_backfill(body: BackfillInput):
+    """Backfill historical daily prices (CoinGecko market_chart) into price_history —
+    fixes the shallow ~9-day window. IDEMPOTENT + DEDUP (a day already present is not
+    re-inserted). ``symbols`` defaults to ALL cgId-backed tracked assets; ``days`` caps
+    the lookback (1..3650). Returns ``{symbol: {inserted, skipped, error?}}``."""
+    syms = None
+    if body.symbols:
+        syms = [s.strip().upper() for s in body.symbols if s and s.strip()]
+        if not syms:
+            raise HTTPException(status_code=422, detail="symbols, if given, must be non-empty")
+    summary = service.backfill(syms, days=body.days)
+    return ok(data={"backfill": summary, "days": body.days})
 
 
 @router.get("/alerts")

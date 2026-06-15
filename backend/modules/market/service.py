@@ -587,6 +587,59 @@ def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
     return [PricePoint(asset=r["asset"], price=float(r["price"]), ts=r["ts"]) for r in rows]
 
 
+def backfill(symbols: list[str] | None = None, days: int = 365) -> dict:
+    """Backfill HISTORICAL daily prices from CoinGecko market_chart — fixes the
+    "only ~9 days of history" gap (the 5-min poller only accumulates forward).
+
+    IDEMPOTENT + DEDUP: for each asset, fetch ``days`` of daily history, then insert
+    ONLY the days the asset doesn't already have a point on (``db.price_days``). Re-running
+    fills genuine gaps and never duplicates an existing day. Fail-open PER symbol: a
+    feed error for one asset is logged + summarized, never aborts the rest. Only assets
+    with a ``cgId`` (crypto + gold) can be backfilled — mock assets (etf/vn) have no
+    historical source and are reported as skipped with a reason.
+
+    ``symbols`` = which tracked assets to backfill (default: ALL with a cgId). Returns
+    ``{symbol: {inserted, skipped, error?}}`` so the caller sees exactly what happened.
+    """
+    assets = tracked_assets()
+    by_symbol = {a.get("symbol"): a for a in assets}
+    if symbols:
+        targets: list[str] = list(symbols)
+    else:
+        targets = [s for a in assets if (s := a.get("symbol"))]  # drop any symbol-less entry
+
+    summary: dict[str, dict] = {}
+    for sym in targets:
+        asset = by_symbol.get(sym)
+        if asset is None:
+            summary[sym] = {"inserted": 0, "skipped": 0, "error": "not a tracked asset"}
+            continue
+        cg_id = asset.get("cgId")
+        if not cg_id:
+            summary[sym] = {"inserted": 0, "skipped": 0,
+                            "error": f"no cgId — {asset.get('assetClass')} has no historical source"}
+            continue
+        try:
+            points = reader.fetch_market_chart(cg_id, days=days)
+        except Exception as exc:  # one asset's feed failing must not abort the rest
+            logger.warning("backfill: market_chart %r failed: %s", sym, exc)
+            summary[sym] = {"inserted": 0, "skipped": 0, "error": f"{type(exc).__name__}: {exc}"}
+            continue
+        existing_days = db.price_days(sym)
+        inserted = 0
+        skipped = 0
+        for ts_iso, price in points:
+            day = ts_iso[:10]
+            if day in existing_days:
+                skipped += 1  # dedup: this day already has a point — don't duplicate
+                continue
+            db.record_price(sym, price, ts_iso, source="backfill")
+            existing_days.add(day)  # guard against duplicate days WITHIN this fetch too
+            inserted += 1
+        summary[sym] = {"inserted": inserted, "skipped": skipped}
+    return summary
+
+
 # --------------------------------------------------------------------------- #
 # OHLC candles — HONEST: built from the close-tick series (NO fabricated bars)   #
 # --------------------------------------------------------------------------- #
