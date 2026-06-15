@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **50 tools** — 40 read · 10 write (propose).
+Totals: **51 tools** — 41 read · 10 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -22,6 +22,7 @@ Totals: **50 tools** — 40 read · 10 write (propose).
 | `finance_overview` |  | Portfolio overview: per-channel allocations, golden-path targets, total value, |
 | `finance_channel` |  | One portfolio channel's detail (holdings + allocation + sell-ladder state) |
 | `finance_simulate` |  | What-if: shape a HYPOTHETICAL allocation vs the current portfolio (HHI/drift/turnover) — read-only, no mutation |
+| `finance_analytics` | ✓ | Portfolio analytics over the live overview: actionable REBALANCE amounts (per channel, the |
 | `market_overview` |  | Live market view: quotes (+ change%), alert triggers, macro signals, alert |
 | `market_history` |  | Price-history points for an asset over the last ``hours`` (oldest→newest) |
 | `market_indicators` | ✓ | Technical indicators over a tracked asset's close series (NEUTRAL data — no |

@@ -19,12 +19,12 @@ pair and a deeper **wiki-only** pair.
 
 | Server | Module | Tools | Capability |
 |---|---|---|---|
-| **whole-app read** | `mcp_servers.read_server` | **40** | reads ALL modules — writes nothing |
+| **whole-app read** | `mcp_servers.read_server` | **41** | reads ALL modules — writes nothing |
 | **whole-app write** | `mcp_servers.write_server` | **10** | `propose_*` only — ENQUEUE pending, applies nothing |
 | **wiki read** | `modules.wiki.mcp.read_server` | **9** | deep vault read (inbox/graph/clusters/verify_citations) |
 | **wiki write** | `modules.wiki.mcp.write_server` | **6** | `propose_*` wiki only — ENQUEUE pending |
 
-**Totals: whole-app = 50 tools (40 read + 10 write).** The wiki pair (9 + 6) is a *deeper,
+**Totals: whole-app = 51 tools (41 read + 10 write).** The wiki pair (9 + 6) is a *deeper,
 vault-only* surface — it has tools the whole-app read does not (`wiki_inbox`, `wiki_graph`,
 `wiki_clusters`, `wiki_recent_ops`, `wiki_verify_citations`). The whole-app read carries the
 common wiki reads (`wiki_search`/`wiki_get`/`wiki_overview`/`wiki_backlinks`) plus everything

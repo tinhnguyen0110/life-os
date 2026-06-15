@@ -77,6 +77,10 @@ from modules.finance.service import get_channel as _fin_channel
 # market correlation/relative-strength are pure reads over the close series. NOT
 # upsert_holding/delete_holding/set_golden_path (those stay in WRITE_SYMBOLS).
 from modules.finance.service import simulate as _fin_simulate
+# FINANCE-MCP-SHAPE (#50): get_analytics is a pure-compute READ (rebalance amounts / risk-HHI
+# / returns over the live overview — mutates NOTHING). NOT set_golden_path/upsert_holding
+# (those stay in WRITE_SYMBOLS). Aliased-private so the no-write namespace/AST gate auto-holds.
+from modules.finance.service import get_analytics as _fin_analytics
 from modules.market.service import correlation as _mkt_correlation
 from modules.market.service import relative_strength as _mkt_rel_strength
 from modules.market.service import MAX_COMPARE_SYMBOLS as _MAX_CORR_SYMBOLS
@@ -278,6 +282,17 @@ def finance_simulate(allocation: dict[str, float]) -> dict[str, Any]:
         return {"error": f"negative weight(s) for {negative} — weights must be ≥0"}
     result, warnings = _fin_simulate(allocation)
     return {"result": _jsonable(result), "warnings": list(warnings or [])}
+
+
+def finance_analytics() -> dict[str, Any]:
+    """Portfolio analytics over the live overview: actionable REBALANCE amounts (per channel,
+    the |USD| to move to hit its golden-path target + buy/sell/hold), RISK metrics
+    (concentration: top-holding %, top-3 %, HHI; total drift; rebalance distance), and RETURN
+    metrics (period return + volatility, when a value series exists). ``{analytics, warnings}``.
+    PURE NEUTRAL NUMBERS — explicitly NOT advice (no buy/sell/recommend); the agent reasons.
+    Fail-open: an empty portfolio → zeroed/None metrics + warnings, never a crash. (Wraps the
+    GET /finance/analytics read path — read-only, mutates nothing.)"""
+    return _with_warnings(_fin_analytics(), "analytics")
 
 
 def _parse_symbols_mcp(symbols: str | list[str], *, min_n: int) -> tuple[list[str], str | None]:
@@ -1014,6 +1029,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "finance_channel": finance_channel,
     # NB-FINANCE-MCP: pure-compute analytics (read-only — no portfolio mutation)
     "finance_simulate": finance_simulate,
+    # FINANCE-MCP-SHAPE (#50): rebalance + risk/HHI + returns over the live overview (READ)
+    "finance_analytics": finance_analytics,
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,

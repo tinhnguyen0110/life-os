@@ -596,11 +596,24 @@ def _enriched_holdings(by_channel: dict) -> list[Holding]:
     return _fold_dust(flat)
 
 
+def _finance_warnings(holdings: list[Holding]) -> tuple[dict[str, float], dict, dict, list[str]]:
+    """FINANCE-MCP-SHAPE (#50): the SHARED golden-path + aggregate prefix that get_overview
+    and get_channel both build identically. Returns ``(targets, ladder_cfg, by_channel,
+    warnings)`` where ``warnings = gp_warnings + price_warnings`` (the golden-path baseline/
+    absence warning followed by the per-holding no-price cost-fallback warnings) — BYTE-
+    IDENTICAL to the inline ``gp_warnings + price_warnings`` it replaces. Pure dedup of the
+    two identical call-sites; it does NOT include the overview-specific okx/stable/drift/
+    unknown-channel warnings (those are appended by the caller, unchanged). simulate (gp-only,
+    no price) and get_analytics (inherits overview's warnings) are DIVERGENT and keep their
+    own assembly — not routed through here."""
+    targets, ladder_cfg, gp_warnings = get_golden_path()
+    by_channel, price_warnings = _aggregate(holdings)
+    return targets, ladder_cfg, by_channel, gp_warnings + price_warnings
+
+
 def get_overview() -> tuple[FinanceOverview, list[str]]:
     holdings = list_holdings()
-    targets, _ladder, gp_warnings = get_golden_path()
-    by_channel, price_warnings = _aggregate(holdings)
-    warnings = gp_warnings + price_warnings
+    targets, _ladder, by_channel, warnings = _finance_warnings(holdings)
 
     # OKX override: if configured, replace crypto channel value with live OKX totalUsdValue.
     # Cost basis = snapshot on first call (or user manual override via PUT /crypto-basis).
@@ -696,13 +709,13 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
 
 def get_channel(channel: str) -> tuple[dict | None, list[str]]:
     """S6 detail: a channel's holdings + ChannelAlloc + LadderState. None if unknown."""
-    targets, ladder_cfg, gp_warnings = get_golden_path()
-    ch_holdings = [h for h in list_holdings() if h.channel == channel]
+    holdings = list_holdings()
+    # FINANCE-MCP-SHAPE (#50): shared golden-path + aggregate prefix (byte-identical warnings).
+    targets, ladder_cfg, all_by_channel, warnings = _finance_warnings(holdings)
+    ch_holdings = [h for h in holdings if h.channel == channel]
     if not ch_holdings and channel not in targets:
         return None, []
 
-    all_by_channel, price_warnings = _aggregate(list_holdings())
-    warnings = gp_warnings + price_warnings
     agg = all_by_channel.get(channel, {"value": 0.0, "cost": 0.0, "holdings": []})
 
     # OKX override for crypto channel: replace value with live OKX totalUsdValue.
