@@ -126,6 +126,74 @@ def test_history_hours_param(app_client):
     assert resp.json()["data"]["points"] == []
 
 
+# --- GET /market/indicators/{symbol} (technical analysis) ---
+def _seed_prices(asset: str, prices: list[float]) -> None:
+    """Seed a price series (oldest→newest) into price_history for an asset."""
+    from datetime import datetime, timedelta, timezone
+
+    from store import db
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i, p in enumerate(prices):
+        db.record_price(asset, float(p), (base + timedelta(minutes=i)).isoformat())
+
+
+def test_indicators_untracked_symbol_is_404(app_client):
+    assert app_client.get("/market/indicators/NOTATRACKEDSYM").status_code == 404
+
+
+def test_indicators_empty_series_is_200_with_warning(app_client):
+    """Tracked asset, no series → 200, indicators empty/short-warned, never a 500."""
+    resp = app_client.get("/market/indicators/BTC?indicators=rsi")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["points"] == 0
+    assert "no price history" in (body.get("warning") or "")
+
+
+def test_indicators_rsi_all_up_is_100_over_endpoint(app_client):
+    """END-TO-END value: a strictly-rising seeded series → endpoint returns RSI 100."""
+    _seed_prices("BTC", list(range(1, 40)))  # 39 rising points
+    resp = app_client.get("/market/indicators/BTC?indicators=rsi&hours=100000")
+    assert resp.status_code == 200
+    ind = resp.json()["data"]["indicators"]
+    assert ind["rsi"]["latest"] == 100.0  # math correctness through the real endpoint
+
+
+def test_indicators_default_is_summary(app_client):
+    _seed_prices("BTC", [100.0 + i for i in range(30)])
+    body = app_client.get("/market/indicators/BTC?hours=100000").json()
+    inds = body["data"]["indicators"]
+    assert list(inds.keys()) == ["summary"]
+    # summary is the NEUTRAL signal contract — no buy/sell advice
+    assert inds["summary"]["signals_only"] is True
+    assert "buy" not in str(inds).lower() and "sell" not in str(inds).lower()
+
+
+def test_indicators_multiple_and_unknown_skipped(app_client):
+    _seed_prices("BTC", [100.0 + (i % 5) for i in range(60)])
+    body = app_client.get("/market/indicators/BTC?indicators=sma,ema,bogus&hours=100000").json()
+    inds = body["data"]["indicators"]
+    assert "sma" in inds and "ema" in inds
+    assert "unknown indicator 'bogus'" in (body.get("warning") or "")
+
+
+def test_indicators_full_attaches_series(app_client):
+    _seed_prices("BTC", [100.0 + i for i in range(30)])
+    body = app_client.get("/market/indicators/BTC?indicators=sma&full=true&hours=100000").json()
+    sma = body["data"]["indicators"]["sma"]
+    assert "series" in sma and len(sma["series"]) == 30
+
+
+def test_indicators_atr_close_only_warns(app_client):
+    """price_history is close-only → ATR runs in close-only mode + says so honestly."""
+    _seed_prices("BTC", [100.0 + i for i in range(30)])
+    body = app_client.get("/market/indicators/BTC?indicators=atr&hours=100000").json()
+    atr = body["data"]["indicators"]["atr"]
+    assert atr["latest"] is not None
+    assert "close-only" in atr["warning"]
+
+
 # --- alert rules CRUD (id-based) ---
 def test_alert_set_list_delete(app_client):
     # set → returns the created rule with a server id

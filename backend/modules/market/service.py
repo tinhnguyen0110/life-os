@@ -292,6 +292,84 @@ def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
 
 
 # --------------------------------------------------------------------------- #
+# Technical analysis — indicators over the close series (price_history)          #
+# --------------------------------------------------------------------------- #
+# Map a requested indicator name → (callable, how to project its result to JSON).
+# Each projector returns a plain dict (latest value(s) + warning); ``full=True``
+# additionally attaches the aligned series. price_history is close-only, so ATR
+# runs in its close-only mode (the result carries that as a warning).
+_TA_NAMES = ("sma", "ema", "rsi", "macd", "bollinger", "atr", "summary")
+
+
+def compute_indicators(asset: str, names: list[str], *, hours: int = 720,
+                       full: bool = False, limit: int = 5000) -> tuple[dict, list[str]]:
+    """Compute the requested technical indicators for an asset's close series.
+
+    Returns ``(data, warnings)``. ``data`` = ``{symbol, points, asOf, indicators:{...}}``.
+    Unknown indicator names are skipped + warned (never an error). An empty/short
+    series yields each indicator's own short-series warning, not a crash.
+    """
+    from . import ta
+
+    closes = [p.price for p in history(asset, hours=hours, limit=limit)]
+    warnings: list[str] = []
+    out: dict[str, object] = {}
+
+    wanted = [n.strip().lower() for n in names if n and n.strip()]
+    if not wanted:
+        wanted = ["summary"]
+
+    for name in wanted:
+        if name not in _TA_NAMES:
+            warnings.append(f"unknown indicator {name!r} — skipped (valid: {', '.join(_TA_NAMES)})")
+            continue
+        if name == "sma":
+            rs = ta.sma(closes, 20)
+            out["sma"] = {"period": rs.period, "latest": rs.latest, "warning": rs.warning,
+                          **({"series": rs.series} if full else {})}
+        elif name == "ema":
+            re_ = ta.ema(closes, 20)
+            out["ema"] = {"period": re_.period, "latest": re_.latest, "warning": re_.warning,
+                          **({"series": re_.series} if full else {})}
+        elif name == "rsi":
+            rr = ta.rsi(closes, 14)
+            out["rsi"] = {"period": rr.period, "latest": rr.latest, "warning": rr.warning,
+                          **({"series": rr.series} if full else {})}
+        elif name == "macd":
+            rm = ta.macd(closes)
+            out["macd"] = {
+                "fast": rm.fast, "slow": rm.slow, "signalPeriod": rm.signal_period,
+                "latestMacd": rm.latest_macd, "latestSignal": rm.latest_signal,
+                "latestHistogram": rm.latest_histogram, "warning": rm.warning,
+                **({"macd": rm.macd, "signal": rm.signal, "histogram": rm.histogram} if full else {}),
+            }
+        elif name == "bollinger":
+            rb = ta.bollinger(closes, 20, 2.0)
+            out["bollinger"] = {
+                "period": rb.period, "numStd": rb.num_std,
+                "latestUpper": rb.latest_upper, "latestMiddle": rb.latest_middle,
+                "latestLower": rb.latest_lower, "warning": rb.warning,
+                **({"upper": rb.upper, "middle": rb.middle, "lower": rb.lower} if full else {}),
+            }
+        elif name == "atr":
+            ra = ta.atr(closes=closes, period=14)  # close-only (price_history has no OHLC)
+            out["atr"] = {"period": ra.period, "latest": ra.latest, "warning": ra.warning,
+                          **({"series": ra.series} if full else {})}
+        elif name == "summary":
+            out["summary"] = ta.summarize(closes)
+
+    data = {
+        "symbol": asset,
+        "points": len(closes),
+        "asOf": _now().isoformat(),
+        "indicators": out,
+    }
+    if len(closes) == 0:
+        warnings.append("no price history for this asset yet — indicators are empty")
+    return data, warnings
+
+
+# --------------------------------------------------------------------------- #
 # Poll (T3 routine code path): fetch → persist → eval → record fired alerts     #
 # --------------------------------------------------------------------------- #
 def _already_hit(symbol: str, op: str) -> bool:

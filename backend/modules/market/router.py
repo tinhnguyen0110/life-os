@@ -50,6 +50,26 @@ def get_history(symbol: str, hours: int = 24):
     return ok(data={"points": [p.model_dump() for p in points]})
 
 
+@router.get("/indicators/{symbol}")
+def get_indicators(symbol: str, indicators: str = "summary", hours: int = 720,
+                   full: bool = False):
+    """Technical indicators over a TRACKED asset's close series (price_history).
+
+    ``indicators`` = comma-separated ∈ {sma,ema,rsi,macd,bollinger,atr,summary}
+    (default ``summary``). ``hours`` windows the series (default 720h ≈ 30d so the
+    longer indicators have enough points); ``full=true`` attaches the aligned series
+    (default = latest values only). Output is NEUTRAL technical data — no buy/sell
+    advice. A short/empty series → per-indicator warning, never a 500. 404 only if
+    the symbol is not in the tracked universe.
+    """
+    tracked = {a.get("symbol") for a in service.tracked_assets()}
+    if symbol not in tracked:
+        raise HTTPException(status_code=404, detail=f"asset {symbol!r} is not tracked")
+    names = indicators.split(",")
+    data, warnings = service.compute_indicators(symbol, names, hours=hours, full=full)
+    return ok(data=data, warning="; ".join(warnings) if warnings else None)
+
+
 @router.get("/alerts")
 def list_alerts():
     """All configured alert rules."""
