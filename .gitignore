@@ -29,8 +29,17 @@ yarn-error.log*
 *.db
 *.sqlite
 *.sqlite3
+*.db.bak-*
 backend/store/*.db-wal
 backend/store/*.db-shm
+
+# Dogfood / consumer-agent / repo-mining scratch artifacts — generated outputs the
+# team produces while finding gaps or mining repos; not source, not committed.
+# (Reports get turned INTO wiki notes via the md-store, not tracked as loose files.)
+mining/
+knowledge-inbox/
+PLAYBOOK_*.md
+STRATEGY_*.md
 
 # md+git store — backend/data/ is its OWN git repo (runtime markdown), not source.
 # Ignore the entire runtime tree (incl. the nested repo) but keep scaffold .gitkeep markers.
