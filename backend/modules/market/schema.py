@@ -137,15 +137,6 @@ class WatchlistInput(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=20)
 
 
-class BackfillInput(BaseModel):
-    """POST /market/backfill body. ``symbols`` (optional) = which tracked assets to
-    backfill (default ALL cgId-backed); ``days`` = lookback window, 1..3650 (default
-    365). Only crypto/gold (cgId-backed) assets have a historical source."""
-
-    symbols: list[str] | None = Field(None, description="tracked symbols; default = all cgId assets")
-    days: int = Field(365, ge=1, le=3650, description="historical lookback in days (1..3650)")
-
-
 class WatchlistItem(BaseModel):
     """One watchlist row — everything a crypto-watchlist card needs in one shot.
 

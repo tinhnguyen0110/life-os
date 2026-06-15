@@ -856,42 +856,59 @@ class TestBackfill:
 
 
 class TestPriceAt:
-    """G2 — price_at: owned point-in-time, honest None, no fabrication/interpolation."""
+    """G2 — price_at: NEAREST owned point + honest out-of-range warning, no fabrication.
 
-    def test_price_at_returns_owned_point(self, tmp_path, monkeypatch):
+    Contract (team-lead spec): closest point to ts (read from owned series, no API);
+    inside range → no warning; outside range → nearest edge + warning; no history → None."""
+
+    def test_price_at_returns_nearest_in_range(self, tmp_path, monkeypatch):
         _isolated_service(tmp_path, monkeypatch)
         from store import db
         db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
         db.record_price("BTC", 55000.0, "2026-05-05T00:00:00+00:00")
-        # as-of 05-06 → the most recent point AT OR BEFORE = the 05-05 one
-        pt = _svc.price_at("BTC", "2026-05-06T00:00:00+00:00")
-        assert pt is not None and pt.price == 55000.0
-        db.close_db()
+        # ts 05-04 is INSIDE [05-01, 05-05] and closest to the 05-05 point → returned, no warning
+        data, warnings = _svc.price_at("BTC", "2026-05-04T12:00:00+00:00")
+        assert data is not None and data["price"] == 55000.0
+        assert data["actualTs"].startswith("2026-05-05")
+        assert warnings == []  # inside the owned range → no out-of-range warning
 
-    def test_price_at_picks_at_or_before_not_future(self, tmp_path, monkeypatch):
-        """As-of a date BETWEEN two points returns the earlier one — never reaches
-        forward to a future price (no lookahead)."""
+    def test_price_at_picks_closest_by_distance(self, tmp_path, monkeypatch):
+        """ts BETWEEN two points → the one with the smaller |time distance|."""
         _isolated_service(tmp_path, monkeypatch)
         from store import db
         db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
         db.record_price("BTC", 60000.0, "2026-05-10T00:00:00+00:00")
-        pt = _svc.price_at("BTC", "2026-05-05T00:00:00+00:00")
-        assert pt is not None and pt.price == 50000.0  # the 05-01 point, NOT 05-10
-        db.close_db()
+        # 05-04 is 3d from 05-01, 6d from 05-10 → nearest is 05-01
+        data, warnings = _svc.price_at("BTC", "2026-05-04T00:00:00+00:00")
+        assert data["price"] == 50000.0 and warnings == []  # inside range, no warning
 
-    def test_price_at_none_before_any_data(self, tmp_path, monkeypatch):
-        """No point that old → honest None (NOT fabricated, NOT the nearest future)."""
+    def test_price_at_before_range_warns(self, tmp_path, monkeypatch):
+        """ts before the earliest point → nearest (earliest) edge + a BEFORE-range warning
+        (honest: not fabricated, not extrapolated)."""
         _isolated_service(tmp_path, monkeypatch)
         from store import db
         db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
-        pt = _svc.price_at("BTC", "2020-01-01T00:00:00+00:00")
-        assert pt is None
-        db.close_db()
+        db.record_price("BTC", 55000.0, "2026-05-05T00:00:00+00:00")
+        data, warnings = _svc.price_at("BTC", "2020-01-01T00:00:00+00:00")
+        assert data["price"] == 50000.0  # nearest edge
+        assert any("BEFORE the owned range" in w for w in warnings)
 
-    def test_price_at_empty_series_none(self, tmp_path, monkeypatch):
+    def test_price_at_after_range_warns(self, tmp_path, monkeypatch):
+        """A FUTURE ts (after the latest point) → nearest (latest) edge + AFTER-range warning."""
         _isolated_service(tmp_path, monkeypatch)
         from store import db
-        assert _svc.price_at("BTC", "2026-05-01T00:00:00+00:00") is None
+        db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
+        db.record_price("BTC", 55000.0, "2026-05-05T00:00:00+00:00")
+        data, warnings = _svc.price_at("BTC", "2099-01-01T00:00:00+00:00")
+        assert data["price"] == 55000.0  # nearest edge = latest
+        assert any("AFTER the owned range" in w for w in warnings)
+
+    def test_price_at_empty_series_none(self, tmp_path, monkeypatch):
+        """No history at all → (None, [warning]) — honest, never a crash."""
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        data, warnings = _svc.price_at("BTC", "2026-05-01T00:00:00+00:00")
+        assert data is None and any("no price history" in w for w in warnings)
         db.close_db()
 
 

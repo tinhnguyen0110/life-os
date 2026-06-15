@@ -585,54 +585,67 @@ def test_gold_ohlc_flows_through(app_client):
     assert len(body["data"]["candles"]) >= 1  # ticks aggregated into ≥1 bar
 
 
-# --- backfill (29A): POST /market/backfill — idempotent dedup historical seed ---
+# --- backfill (29A): POST /market/backfill?asset=&days= — idempotent dedup hist seed ---
 def test_backfill_endpoint_inserts_and_is_idempotent(app_client):
-    """POST /market/backfill seeds history (mocked market_chart), and a 2nd call is a
-    no-op (dedup) — proving the endpoint is idempotent end-to-end."""
+    """POST /market/backfill?asset=BTC seeds history (mocked market_chart), and a 2nd call
+    is a no-op (dedup) — proving the endpoint is idempotent end-to-end. Rows are tagged
+    source='coingecko-hist' (distinct from spot poll)."""
     from unittest.mock import patch
     from datetime import datetime, timedelta, timezone
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     pts = [((base + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(12)]
     with patch("modules.market.reader.fetch_market_chart", return_value=pts):
-        first = app_client.post("/market/backfill", json={"symbols": ["BTC"], "days": 12}).json()
-        second = app_client.post("/market/backfill", json={"symbols": ["BTC"], "days": 12}).json()
+        first = app_client.post("/market/backfill?asset=BTC&days=12").json()
+        second = app_client.post("/market/backfill?asset=BTC&days=12").json()
     assert first["data"]["backfill"]["BTC"]["inserted"] == 12
     assert second["data"]["backfill"]["BTC"]["inserted"] == 0   # idempotent
-    # the backfilled history is now queryable
+    # the backfilled history is now queryable + tagged as historical, not spot poll
     pts_out = app_client.get("/market/history/BTC?hours=1000000").json()["data"]["points"]
     assert len(pts_out) == 12
+    from store import db
+    assert db.latest_price("BTC")["source"] == "coingecko-hist"
 
 
 def test_backfill_validates_days_range(app_client):
-    """days must be 1..3650 → 422 outside that range (schema-enforced)."""
-    assert app_client.post("/market/backfill", json={"days": 0}).status_code == 422
-    assert app_client.post("/market/backfill", json={"days": 99999}).status_code == 422
+    """days must be 1..365 (free-tier daily) → 422 outside that range."""
+    assert app_client.post("/market/backfill?days=0").status_code == 422
+    assert app_client.post("/market/backfill?days=99999").status_code == 422
 
 
-def test_backfill_empty_symbols_list_is_422(app_client):
-    """An explicit but all-blank symbols list → 422 (honest, not a silent all-assets run)."""
-    assert app_client.post("/market/backfill", json={"symbols": ["  ", ""]}).status_code == 422
+def test_backfill_blank_asset_is_422(app_client):
+    """An explicit but blank asset → 422 (honest, not a silent all-assets run)."""
+    assert app_client.post("/market/backfill?asset=%20%20").status_code == 422
 
 
-# --- price-at (29C): GET /market/price-at/{symbol} — owned point-in-time, honest ---
-def test_price_at_endpoint_returns_owned_point(app_client):
+# --- price-at (29C): GET /market/price-at?asset=&ts= — nearest owned point, honest ---
+def test_price_at_endpoint_returns_nearest_point(app_client):
     from datetime import datetime, timezone
     from store import db
     db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
     db.record_price("BTC", 55000.0, datetime(2026, 5, 5, tzinfo=timezone.utc).isoformat())
-    d = app_client.get("/market/price-at/BTC?ts=2026-05-06T00:00:00+00:00").json()["data"]
-    assert d["point"] is not None and d["point"]["price"] == 55000.0
+    d = app_client.get("/market/price-at?asset=BTC&ts=2026-05-06T00:00:00+00:00").json()["data"]
+    # ts 05-06 is closest to the 05-05 point → that's returned, with its actualTs
+    assert d["price"] == 55000.0
+    assert d["actualTs"].startswith("2026-05-05")
 
 
-def test_price_at_endpoint_honest_null_before_data(app_client):
-    """No owned point that old → 200 {point: null} + warning, NOT a fabricated price."""
+def test_price_at_endpoint_out_of_range_warns(app_client):
+    """ts before the owned range → nearest (earliest) point + an out-of-range warning,
+    NOT a fabricated/null price."""
     from datetime import datetime, timezone
     from store import db
     db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
-    body = app_client.get("/market/price-at/BTC?ts=2020-01-01T00:00:00+00:00").json()
-    assert body["data"]["point"] is None
-    assert "no owned price point" in (body.get("warning") or "")
+    body = app_client.get("/market/price-at?asset=BTC&ts=2020-01-01T00:00:00+00:00").json()
+    assert body["data"]["price"] == 50000.0          # nearest edge, not null
+    assert "BEFORE the owned range" in (body.get("warning") or "")
+
+
+def test_price_at_endpoint_no_history_null(app_client):
+    """Tracked asset but no history at all → 200 {price: null} + warning, never 500."""
+    body = app_client.get("/market/price-at?asset=BTC&ts=2026-05-01T00:00:00+00:00").json()
+    assert body["data"]["price"] is None
+    assert "no price history" in (body.get("warning") or "")
 
 
 def test_price_at_untracked_is_404(app_client):
-    assert app_client.get("/market/price-at/NOTATRACKEDSYM?ts=2026-05-01T00:00:00+00:00").status_code == 404
+    assert app_client.get("/market/price-at?asset=NOTATRACKEDSYM&ts=2026-05-01T00:00:00+00:00").status_code == 404

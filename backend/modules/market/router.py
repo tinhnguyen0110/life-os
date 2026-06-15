@@ -11,15 +11,16 @@ routine (every 5 min: fetch → persist → eval alerts → record fired alerts)
 from __future__ import annotations
 
 import logging
+import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from core.base import BaseModule, Routine
 from core.responses import ok
 from store import db
 
 from . import service
-from .schema import AlertRuleInput, BackfillInput, IndicatorAlertRuleInput, WatchlistInput
+from .schema import AlertRuleInput, IndicatorAlertRuleInput, WatchlistInput
 
 logger = logging.getLogger("life-os.market.router")
 
@@ -136,35 +137,46 @@ def get_relative_strength(symbol: str, vs: str = "BTC", hours: int = 720):
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
 
-@router.get("/price-at/{symbol}")
-def get_price_at(symbol: str, ts: str):
-    """Point-in-time price for ``symbol`` AS OF ``ts`` (ISO-8601 UTC) — the most recent
-    OWNED price point at or before ``ts``. 404 if untracked. If we have no point that
-    old → 200 with ``{point: null}`` + a warning (HONEST: not fabricated/interpolated)."""
-    sym = symbol.strip().upper()
+@router.get("/price-at")
+def get_price_at(asset: str, ts: str):
+    """Point-in-time price for ``asset`` at ``ts`` (ISO-8601 UTC) — the OWNED price point
+    CLOSEST to ``ts`` (read from our series, no API call). 404 if untracked. Returns
+    ``{asset, requestedTs, price, actualTs}``; ``actualTs`` shows the real point used.
+    A ts OUTSIDE the owned range → the nearest edge + a warning (HONEST, not extrapolated).
+    An asset with NO history → 200 ``{price: null}`` + a warning, never a 500."""
+    sym = asset.strip().upper()
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if sym not in tracked:
         raise HTTPException(status_code=404, detail=f"asset {sym!r} is not tracked")
-    point = service.price_at(sym, ts)
-    if point is None:
-        return ok(data={"symbol": sym, "ts": ts, "point": None},
-                  warning=f"no owned price point at or before {ts} for {sym}")
-    return ok(data={"symbol": sym, "ts": ts, "point": point.model_dump()})
+    # A literal '+' in an unencoded query value decodes to a space ('+00:00' → ' 00:00').
+    # Repair the ISO-8601 tz offset so a caller that forgot to %2B-encode still works.
+    ts_norm = re.sub(r"(\d{2}:\d{2}:\d{2}(?:\.\d+)?) (\d{2}:\d{2})$", r"\1+\2", ts.strip())
+    data, warnings = service.price_at(sym, ts_norm)
+    if data is None:
+        return ok(data={"asset": sym, "requestedTs": ts, "price": None, "actualTs": None},
+                  warning="; ".join(warnings) if warnings else None)
+    return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
 
 @router.post("/backfill")
-def post_backfill(body: BackfillInput):
+def post_backfill(asset: str | None = None,
+                  days: int = Query(365, ge=1, le=365,
+                                    description="historical lookback in days (1..365 free tier)")):
     """Backfill historical daily prices (CoinGecko market_chart) into price_history —
     fixes the shallow ~9-day window. IDEMPOTENT + DEDUP (a day already present is not
-    re-inserted). ``symbols`` defaults to ALL cgId-backed tracked assets; ``days`` caps
-    the lookback (1..3650). Returns ``{symbol: {inserted, skipped, error?}}``."""
+    re-inserted; re-running creates no duplicates). ``asset`` backfills ONE tracked
+    symbol; omit it to backfill ALL cgId-backed tracked assets. ``days`` caps the
+    lookback (1..365, free-tier daily granularity). Historical rows are tagged
+    ``source='coingecko-hist'`` to distinguish them from spot-poll rows. Returns
+    ``{backfill: {symbol: {inserted, skipped, error?}}, days}``."""
     syms = None
-    if body.symbols:
-        syms = [s.strip().upper() for s in body.symbols if s and s.strip()]
-        if not syms:
-            raise HTTPException(status_code=422, detail="symbols, if given, must be non-empty")
-    summary = service.backfill(syms, days=body.days)
-    return ok(data={"backfill": summary, "days": body.days})
+    if asset is not None:
+        sym = asset.strip().upper()
+        if not sym:
+            raise HTTPException(status_code=422, detail="asset, if given, must be non-empty")
+        syms = [sym]
+    summary = service.backfill(syms, days=days)
+    return ok(data={"backfill": summary, "days": days})
 
 
 @router.get("/alerts")

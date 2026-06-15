@@ -157,9 +157,9 @@ def fetch_market_chart(cg_id: str, days: int = 365) -> list[tuple[str, float]]:
     Raises on any failure (timeout / 429 / non-200 / malformed) — the backfill engine
     catches per-symbol and fails open (a missing backfill never crashes anything). NOT
     TTL-cached (one-shot historical pull, not a hot path). ``days`` is clamped to
-    [1, 3650]; CoinGecko's free tier serves daily granularity for days>1.
+    [1, 365] (CoinGecko's free tier serves daily granularity up to a year).
     """
-    days = max(1, min(int(days), 3650))
+    days = max(1, min(int(days), 365))
     url = f"{settings.coingecko_base}/coins/{cg_id}/market_chart"
     params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
     resp = httpx.get(url, params=params, timeout=COINGECKO_TIMEOUT_S)

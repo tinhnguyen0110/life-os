@@ -205,6 +205,36 @@ def price_at_or_before(asset: str, ts: str) -> sqlite3.Row | None:
         return cur.fetchone()
 
 
+def price_range(asset: str) -> tuple[str, str] | None:
+    """The (earliest_ts, latest_ts) bounds of ``asset``'s price_history, or None if no
+    points. Used to tell the caller when a requested ts falls OUTSIDE the owned range."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT MIN(ts) AS lo, MAX(ts) AS hi FROM price_history WHERE asset = ?",
+            (asset,),
+        )
+        row = cur.fetchone()
+        if row is None or row["lo"] is None:
+            return None
+        return row["lo"], row["hi"]
+
+
+def nearest_price(asset: str, ts: str) -> sqlite3.Row | None:
+    """The price_history row for ``asset`` whose ts is CLOSEST to the requested ``ts``
+    (either side). None if the asset has no points. Used for point-in-time lookup that
+    degrades honestly when ts is outside the owned range (returns the nearest edge, and
+    the caller warns). Distance is computed on the ISO-8601 strings via julianday()."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "SELECT asset, price, currency, source, ts FROM price_history "
+            "WHERE asset = ? ORDER BY ABS(julianday(ts) - julianday(?)) ASC, id ASC LIMIT 1",
+            (asset, ts),
+        )
+        return cur.fetchone()
+
+
 def price_days(asset: str) -> set[str]:
     """The set of UTC calendar days ('YYYY-MM-DD') that ``asset`` already has at least
     one price point on. Used by the backfill engine to dedup — a day already present is

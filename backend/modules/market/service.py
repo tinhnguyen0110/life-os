@@ -587,17 +587,37 @@ def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
     return [PricePoint(asset=r["asset"], price=float(r["price"]), ts=r["ts"]) for r in rows]
 
 
-def price_at(asset: str, ts: str) -> PricePoint | None:
-    """Point-in-time price for ``asset`` AS OF ``ts`` (ISO-8601 UTC) — the most recent
-    OWNED price_history point at or before ``ts``. Returns None when we have no point
-    that old (HONEST: we do NOT fabricate or interpolate — the caller learns the series
-    doesn't cover that instant). This is the building block for "what was X worth on
-    date D" without guessing. ``ts`` is taken as given (the DB stores ISO-8601 UTC).
+def price_at(asset: str, ts: str) -> tuple[dict | None, list[str]]:
+    """Point-in-time price for ``asset`` at ``ts`` (ISO-8601 UTC) — the OWNED price_history
+    point CLOSEST to ``ts`` (read from our series; NO API call). Returns ``(data, warnings)``
+    where data = ``{asset, requestedTs, price, actualTs}`` (``actualTs`` = the real ts of the
+    point returned, so the caller sees how far off it landed). HONEST degradation:
+      - ts inside the owned range → the nearest point, no warning.
+      - ts OUTSIDE the range (before the first / after the last point, e.g. a future ts) →
+        the nearest EDGE point + a warning naming the gap (we do NOT fabricate/extrapolate).
+      - asset has NO points at all → ``(None, [warning])``.
     """
-    row = db.price_at_or_before(asset, ts)
-    if row is None:
-        return None
-    return PricePoint(asset=row["asset"], price=float(row["price"]), ts=row["ts"])
+    warnings: list[str] = []
+    rng = db.price_range(asset)
+    if rng is None:
+        return None, [f"{asset}: no price history — cannot resolve a point-in-time price"]
+    lo, hi = rng
+    row = db.nearest_price(asset, ts)
+    if row is None:  # defensive: range existed but nearest query found nothing
+        return None, [f"{asset}: no price history — cannot resolve a point-in-time price"]
+    if ts < lo:
+        warnings.append(f"requested ts {ts} is BEFORE the owned range (earliest {lo}) "
+                        f"— returning the nearest (earliest) point, not extrapolated")
+    elif ts > hi:
+        warnings.append(f"requested ts {ts} is AFTER the owned range (latest {hi}) "
+                        f"— returning the nearest (latest) point, not extrapolated")
+    data = {
+        "asset": row["asset"],
+        "requestedTs": ts,
+        "price": float(row["price"]),
+        "actualTs": row["ts"],
+    }
+    return data, warnings
 
 
 def backfill(symbols: list[str] | None = None, days: int = 365) -> dict:
@@ -646,7 +666,7 @@ def backfill(symbols: list[str] | None = None, days: int = 365) -> dict:
             if day in existing_days:
                 skipped += 1  # dedup: this day already has a point — don't duplicate
                 continue
-            db.record_price(sym, price, ts_iso, source="backfill")
+            db.record_price(sym, price, ts_iso, source="coingecko-hist")
             existing_days.add(day)  # guard against duplicate days WITHIN this fetch too
             inserted += 1
         summary[sym] = {"inserted": inserted, "skipped": skipped}
