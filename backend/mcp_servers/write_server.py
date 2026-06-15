@@ -217,11 +217,16 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
 # FastMCP server — registers each propose tool over stdio. Lazy (build_server)   #
 # so importing this module for the no-mutate test doesn't spin up a server.      #
 # --------------------------------------------------------------------------- #
-def build_server() -> Any:
-    """Construct the FastMCP write server with all propose tools registered."""
+def build_server(transport_security: Any = None) -> Any:
+    """Construct the FastMCP write server with all propose tools registered.
+
+    ``transport_security`` (default None = stdio-identical) is threaded into FastMCP so
+    main.py can mount this over streamable-http (DNS-rebinding OFF for remote/LAN clients,
+    MCP-HTTP). None keeps the stdio entrypoint behaviourally unchanged + the no-mutate
+    capability gate intact (this adds no import/symbol — just an optional pass-through)."""
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP("life-os-write")
+    mcp = FastMCP("life-os-write", transport_security=transport_security)
     for fn in TOOLS.values():
         mcp.add_tool(fn, description=fn.__doc__)
     return mcp

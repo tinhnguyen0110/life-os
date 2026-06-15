@@ -72,14 +72,67 @@ external Claude  ── read_*   ─→  reads only, writes NOTHING
 
 ## 3. Transport
 
-All four servers run over **stdio** today — the MCP client spawns `python -m <module>` as a
-child process per session and talks over stdin/stdout. This is the right fit when the client
-runs **on this same machine** (Claude Code local, a locally-spawned agent), which is the
-current setup.
+Two transports, both live. Pick by **where the client runs**.
 
-> Remote / multi-client access (**streamable-http**) is a planned follow-on — the installed SDK
-> (`mcp 1.27.2`) supports `transport="streamable-http"`, the servers don't expose an HTTP
-> entrypoint yet. When that lands, this doc gets an HTTP section; until then, stdio only.
+### 3a. stdio (local client, one process per session)
+
+The MCP client spawns `python -m <module>` as a child process per session and talks over
+stdin/stdout. This is the right fit when the client runs **on this same machine** (Claude Code
+local, a locally-spawned agent). Registered in the client's MCP config — see §4.
+
+### 3b. streamable-http (remote / multi-client) — Sprint MCP-HTTP
+
+The same 4 servers are ALSO mounted as streamable-http ASGI sub-apps on the existing FastAPI
+app (`:8686`), so a **remote or multi-client** MCP client can reach them over HTTP without
+spawning a local process. This is an ADDITIONAL transport — stdio (§3a) still works unchanged.
+
+The 4 servers stay 4 SEPARATE FastMCP instances (the read/write capability split is preserved
+at the transport layer — no cross-import), each mounted at a distinct path:
+
+| Mount path (in main.py) | Server | **Client URL** |
+|---|---|---|
+| `/mcp/read`       | whole-app read  | `http://<host>:8686/mcp/read/mcp` |
+| `/mcp/write`      | whole-app write | `http://<host>:8686/mcp/write/mcp` |
+| `/mcp/wiki-read`  | wiki read       | `http://<host>:8686/mcp/wiki-read/mcp` |
+| `/mcp/wiki-write` | wiki write      | `http://<host>:8686/mcp/wiki-write/mcp` |
+
+> **The URL has `/mcp` TWICE.** A FastMCP streamable-http app serves its tool endpoint at its
+> own internal `streamable_http_path` (default `/mcp`); mounted at `/mcp/read`, the real client
+> URL is therefore `/mcp/read/mcp`. This is SDK behaviour, not a typo — point the client at the
+> full `<mount>/mcp`.
+
+**No auth (single-user, no-auth, LAN — north-star).** The HTTP mounts are open on localhost /
+the LAN, exactly like the REST API. FastMCP's DNS-rebinding protection is turned **OFF**
+(`TransportSecuritySettings(enable_dns_rebinding_protection=False)`, set in `main.py` for the
+HTTP build only) — with it ON (the SDK default) any non-`localhost` `Host` header gets
+`421 Misdirected Request`, which would reject every remote client this transport exists to
+serve. stdio is unaffected (it never builds with that setting → `None` → SDK default).
+
+#### Verify a mount over HTTP (curl)
+
+The MCP streamable-http endpoint **requires** `Accept: application/json, text/event-stream`
+on the `initialize` POST. A JSON-only `Accept` returns **`406 Not Acceptable`** against a
+perfectly healthy server — so if a curl 406s, fix the header, don't assume the mount is broken.
+
+```bash
+# Correct: returns 200 + an `mcp-session-id` response header.
+curl -i -X POST http://127.0.0.1:8686/mcp/read/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# → HTTP/1.1 200 OK   ...   mcp-session-id: <hex>
+
+# Wrong header (JSON only) → 406 — the SDK needs text/event-stream advertised too:
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8686/mcp/read/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# → 406
+```
+
+Swap `/mcp/read/mcp` for `/mcp/write/mcp`, `/mcp/wiki-read/mcp`, or `/mcp/wiki-write/mcp` to
+check the other three. (`main.py` is not in uvicorn's `--reload-dir` allowlist, so after
+editing it, `docker compose restart backend` before testing the live container — a hot-reload
+won't pick up the mounts.)
 
 ---
 
@@ -91,12 +144,23 @@ a `command`, its `args`, and the `cwd` it runs from.
 
 ### Run requirements (per server)
 
-- `command`: `python` (the interpreter that has the `mcp` SDK installed — see §5).
+- `command`: an **ABSOLUTE path** to the interpreter that has the `mcp` SDK + app deps
+  installed — **NOT the bare string `"python"`**. The MCP client spawns the server with its
+  own `PATH`, which often does NOT resolve `python` to the env you expect → the server fails to
+  start (or starts on an interpreter missing deps). On this host:
+  `/home/watercry/anaconda3/envs/tinhnv/bin/python` (verified: imports all 4 servers + answers
+  the stdio `initialize` handshake). See §5.
 - `args`: `["-m", "<module path>"]` — the module is invoked as a package (`-m`), NOT a file
   path, because each server resolves sibling imports as a package.
 - `cwd`: **`backend/`** (the package root). On this host:
   `/home/watercry/Disk_C/Data/Tinhdev/life-os/backend`.
   Inside the prod container the cwd is `/app`.
+- `env.PYTHONPATH`: **set this to the same `backend/` path** — do NOT rely on `cwd` alone.
+  Some MCP clients (observed) do NOT honor the `cwd` field when spawning the server, so
+  `python -m mcp_servers.read_server` fails with `ModuleNotFoundError: No module named
+  'mcp_servers'`. Setting `PYTHONPATH=backend/` makes the import work regardless of the spawn
+  directory. This is the fix for the all-four-`✘ failed` symptom when a binary server in the
+  same config connects fine.
 
 ### The four entries (this host)
 
@@ -104,28 +168,48 @@ a `command`, its `args`, and the `cwd` it runs from.
 {
   "mcpServers": {
     "lifeos-read": {
-      "command": "python",
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
       "args": ["-m", "mcp_servers.read_server"],
-      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend"
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     },
     "lifeos-write": {
-      "command": "python",
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
       "args": ["-m", "mcp_servers.write_server"],
-      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend"
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     },
     "lifeos-wiki-read": {
-      "command": "python",
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
       "args": ["-m", "modules.wiki.mcp.read_server"],
-      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend"
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     },
     "lifeos-wiki-write": {
-      "command": "python",
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
       "args": ["-m", "modules.wiki.mcp.write_server"],
-      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend"
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     }
   }
 }
 ```
+
+> ⚠️ Three things make stdio connect reliably (the all-four-`✘ failed` fix):
+> 1. **ABSOLUTE interpreter path**, not bare `"python"` — the client spawns with its own PATH,
+>    which does NOT inherit a conda-activated shell's `python`. See §5.
+> 2. **`env.PYTHONPATH`** = the `backend/` path — some clients do NOT honor `cwd`, so `-m`
+>    fails with `ModuleNotFoundError: No module named 'mcp_servers'`. PYTHONPATH fixes it
+>    regardless of spawn dir. (Keep `cwd` too — harmless, helps clients that DO honor it.)
+> 3. **`"type": "stdio"`** — explicit, matches a known-good binary entry in the same file.
+>
+> **Simpler alternative: use streamable-http (§3b)** — `{"type":"http","url":"http://localhost:8686/mcp/read/mcp"}`
+> needs no interpreter / cwd / PYTHONPATH at all (the running container serves it). Prefer it
+> when the container is up.
 
 Register only the pair(s) you need (§1 "Which pair to register"). Each entry is independent —
 omit the wiki pair if you only want the whole-app surface.
@@ -134,10 +218,11 @@ omit the wiki pair if you only want the whole-app surface.
 
 ```bash
 cd /home/watercry/Disk_C/Data/Tinhdev/life-os/backend
-claude mcp add lifeos-read       -- python -m mcp_servers.read_server
-claude mcp add lifeos-write      -- python -m mcp_servers.write_server
-claude mcp add lifeos-wiki-read  -- python -m modules.wiki.mcp.read_server
-claude mcp add lifeos-wiki-write -- python -m modules.wiki.mcp.write_server
+PY=/home/watercry/anaconda3/envs/tinhnv/bin/python   # absolute — NOT bare "python"
+claude mcp add lifeos-read       -- $PY -m mcp_servers.read_server
+claude mcp add lifeos-write      -- $PY -m mcp_servers.write_server
+claude mcp add lifeos-wiki-read  -- $PY -m modules.wiki.mcp.read_server
+claude mcp add lifeos-wiki-write -- $PY -m modules.wiki.mcp.write_server
 ```
 
 ---

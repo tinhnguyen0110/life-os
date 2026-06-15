@@ -162,12 +162,16 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
 # Built lazily in build_server() so importing this module (for tests / the       #
 # no-write-capability check) does NOT require the SDK to spin up a server.       #
 # --------------------------------------------------------------------------- #
-def build_server() -> Any:
+def build_server(transport_security: Any = None) -> Any:
     """Construct the FastMCP server with all 7 read tools registered. Separated
-    from import so tests can import TOOLS without constructing the server."""
+    from import so tests can import TOOLS without constructing the server.
+
+    ``transport_security`` (default None = stdio-identical) is threaded into FastMCP so
+    main.py can mount this over streamable-http (DNS-rebinding OFF for remote/LAN clients,
+    MCP-HTTP). None keeps the stdio entrypoint + the no-write gate behaviourally unchanged."""
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP("life-os-wiki-read")
+    mcp = FastMCP("life-os-wiki-read", transport_security=transport_security)
     # Register each tool. FastMCP infers the schema from the fn signature +
     # docstring, so the wrappers' type hints + docstrings ARE the tool contract.
     mcp.add_tool(wiki_search, description=wiki_search.__doc__)
