@@ -18,8 +18,9 @@ Decide-and-log (architect Logic block, verbatim):
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import yaml
 
@@ -288,9 +289,54 @@ def _aggregate(holdings: list[Holding]) -> tuple[dict, list[str]]:
     return by_channel, warnings
 
 
-def _series() -> list[float]:
-    """Portfolio value over time — [] this build (no snapshot routine, north-star)."""
-    return []
+def _series(days: int = 365) -> list[float]:
+    """Portfolio total-value series (oldest→newest) from the daily equity snapshots.
+    Empty until ≥1 snapshot exists (POST /finance/snapshot records them)."""
+    since = (_now() - timedelta(days=max(1, days))).date().isoformat()
+    try:
+        rows = db.snapshots(since=since, limit=10000)
+    except Exception as exc:  # snapshot store unavailable → degrade to empty, never crash
+        logger.warning("portfolio snapshot read failed: %s", exc)
+        return []
+    return [float(r["total_value"]) for r in rows]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def take_snapshot() -> dict:
+    """Record TODAY's portfolio snapshot (one row per UTC day — upsert). Captures the
+    current totalValue + per-channel breakdown from get_overview(). An empty portfolio
+    snapshots totalValue=0 (still recorded — a $0 day is a real data point). Returns
+    the snapshot ``{day, ts, totalValue, byChannel}``."""
+    overview, _ = get_overview()
+    by_channel = {a.channel: a.value for a in overview.allocations}
+    ts = _now_iso()
+    day = db.record_snapshot(ts, overview.totalValue, json.dumps(by_channel))
+    return {"day": day, "ts": ts, "totalValue": overview.totalValue, "byChannel": by_channel}
+
+
+def value_history(days: int = 90) -> list[dict]:
+    """Daily equity-curve points (oldest→newest) for the last ``days``:
+    ``[{day, ts, totalValue, byChannel}]``. Empty list if no snapshots yet."""
+    since = (_now() - timedelta(days=max(1, days))).date().isoformat()
+    try:
+        rows = db.snapshots(since=since, limit=10000)
+    except Exception as exc:
+        logger.warning("value_history read failed: %s", exc)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        try:
+            by_channel = json.loads(r["by_channel"]) if r["by_channel"] else {}
+        except (json.JSONDecodeError, TypeError):
+            by_channel = {}
+        out.append({
+            "day": r["day"], "ts": r["ts"],
+            "totalValue": float(r["total_value"]), "byChannel": by_channel,
+        })
+    return out
 
 
 def _okx_crypto_value() -> tuple[float | None, str | None]:

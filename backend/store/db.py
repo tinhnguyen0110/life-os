@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS claude_usage_history (
     source        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON claude_usage_history(ts);
+
+-- Portfolio equity snapshots — one row per UTC DAY (day is the PK so re-snapshotting
+-- a day upserts: the day's value is its latest snapshot = the day's close). A daily
+-- equity curve doesn't need intra-day noise; this keeps the series clean + bounded.
+CREATE TABLE IF NOT EXISTS portfolio_snapshot (
+    day          TEXT    PRIMARY KEY,    -- 'YYYY-MM-DD' (UTC) — one row per day
+    ts           TEXT    NOT NULL,       -- full ISO-8601 UTC of the latest snapshot that day
+    total_value  REAL    NOT NULL,
+    by_channel   TEXT    NOT NULL DEFAULT '{}'  -- JSON {channel: value}
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_day ON portfolio_snapshot(day);
 """
 
 
@@ -263,3 +274,42 @@ def record_usage(ts: str, input_tokens: int = 0, output_tokens: int = 0,
         )
         conn.commit()
         return _last_id(cur)
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio equity snapshots (one row per UTC day; re-snapshot a day → upsert)   #
+# --------------------------------------------------------------------------- #
+def record_snapshot(ts: str, total_value: float, by_channel: str = "{}") -> str:
+    """Upsert a portfolio snapshot for the UTC day of ``ts``. ``ts`` is the full
+    ISO-8601 instant; the day (ts[:10]) is the PK, so re-snapshotting the same day
+    REPLACES the value (latest = day's close). Returns the day key written."""
+    day = ts[:10]
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO portfolio_snapshot(day, ts, total_value, by_channel) VALUES (?,?,?,?) "
+            "ON CONFLICT(day) DO UPDATE SET ts=excluded.ts, total_value=excluded.total_value, "
+            "by_channel=excluded.by_channel",
+            (day, ts, float(total_value), by_channel),
+        )
+        conn.commit()
+    return day
+
+
+def snapshots(since: str | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+    """Portfolio snapshot rows, oldest→newest. ``since`` (a 'YYYY-MM-DD' day or ISO
+    instant) filters to day >= since[:10]; ``limit`` caps to the most-recent N rows
+    (still returned oldest→newest)."""
+    conn = get_conn()
+    with _lock:
+        if limit is not None:
+            sql = ("SELECT day, ts, total_value, by_channel FROM portfolio_snapshot "
+                   + ("WHERE day >= ? " if since else "")
+                   + "ORDER BY day DESC LIMIT ?")
+            params: tuple = (since[:10], int(limit)) if since else (int(limit),)
+            rows = conn.execute(sql, params).fetchall()
+            return list(reversed(rows))
+        sql = ("SELECT day, ts, total_value, by_channel FROM portfolio_snapshot "
+               + ("WHERE day >= ? " if since else "")
+               + "ORDER BY day ASC")
+        return conn.execute(sql, ((since[:10],) if since else ())).fetchall()

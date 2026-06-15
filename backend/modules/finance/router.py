@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from core.base import BaseModule
 from core.responses import ok
@@ -97,6 +97,27 @@ def get_analytics():
     Empty portfolio → zeroed/None metrics + warning, never a 500."""
     analytics, warnings = service.get_analytics()
     return ok(data=analytics.model_dump(), warning="; ".join(warnings) if warnings else None)
+
+
+# NOTE: /snapshot + /history registered BEFORE /{channel} so they route here.
+@router.post("/snapshot")
+def take_snapshot():
+    """Record TODAY's portfolio equity snapshot (one row per UTC day — upsert, so a
+    second snapshot today updates the day's value). Captures totalValue + per-channel
+    breakdown from the live overview. An empty portfolio records totalValue=0 (a $0 day
+    is a real point). Returns the snapshot {day, ts, totalValue, byChannel}."""
+    snap = service.take_snapshot()
+    return ok(data=snap)
+
+
+@router.get("/history")
+def get_history(days: int = Query(90, gt=0, le=365, description="lookback window in days (1..365)")):
+    """Daily equity-curve points (oldest→newest) for the last ``days`` (default 90,
+    capped 365). Empty list + warning when no snapshots exist yet — never a 500.
+    ``days`` ≤0 or >365 → 422 (FastAPI validates the bounds)."""
+    points = service.value_history(days=days)
+    warning = "no portfolio snapshots yet — POST /finance/snapshot to start the equity curve" if not points else None
+    return ok(data={"points": points, "days": days}, warning=warning)
 
 
 @router.get("/{channel}")

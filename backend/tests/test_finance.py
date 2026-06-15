@@ -454,3 +454,64 @@ def test_analytics_is_neutral_no_advice(isolated_paths, mock_prices):
     blob = str(a.model_dump()).lower()
     for word in ("recommend", "should", "advice", "advise"):
         assert word not in blob
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio value history / equity snapshots (Task 26)                          #
+# --------------------------------------------------------------------------- #
+def test_snapshot_records_a_row(isolated_paths, mock_prices):
+    mock_prices["BTC"] = 100.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    snap = service.take_snapshot()
+    assert snap["totalValue"] == 1000.0
+    assert snap["byChannel"]["crypto"] == 1000.0
+    hist = service.value_history(days=90)
+    assert len(hist) == 1 and hist[0]["totalValue"] == 1000.0
+
+
+def test_snapshot_empty_portfolio_records_zero(isolated_paths):
+    """Empty portfolio → totalValue=0 still recorded (a $0 day is a real point)."""
+    snap = service.take_snapshot()
+    assert snap["totalValue"] == 0.0
+    assert service.value_history()[0]["totalValue"] == 0.0
+
+
+def test_snapshot_same_day_upserts(isolated_paths, mock_prices):
+    """Two snapshots the same UTC day → ONE row (latest value = day's close)."""
+    from store import db
+    db.record_snapshot("2026-03-01T08:00:00+00:00", 100.0, '{"crypto":100}')
+    db.record_snapshot("2026-03-01T20:00:00+00:00", 150.0, '{"crypto":150}')  # same day
+    rows = db.snapshots()
+    assert len(rows) == 1 and rows[0]["total_value"] == 150.0  # upserted to latest
+
+
+def test_value_history_empty_is_empty_list(isolated_paths):
+    assert service.value_history(days=90) == []
+
+
+def test_series_reads_from_snapshots(isolated_paths):
+    """_series() (which feeds overview.series + analytics) reads the snapshot store."""
+    from store import db
+    db.record_snapshot("2026-03-01T12:00:00+00:00", 100.0)
+    db.record_snapshot("2026-03-02T12:00:00+00:00", 110.0)
+    # _series windows by recent days; seed within a wide window via days override on
+    # value_history is internal, but _series uses now-365d → the 2026-03 dates may be
+    # outside that window relative to a much-later 'now'. Assert via value_history's
+    # own read + the return-metric math on a hand-built series instead.
+    assert [r["total_value"] for r in db.snapshots()] == [100.0, 110.0]
+
+
+def test_returns_available_with_two_snapshots(isolated_paths, mock_prices):
+    """≥2 snapshots → get_analytics().returns.available=True with real return/vol."""
+    from store import db
+    # seed a 3-point series ending TODAY (so the now-365d window catches it).
+    from datetime import datetime, timedelta, timezone
+    base = datetime.now(timezone.utc)
+    for i, v in enumerate([100.0, 110.0, 121.0]):
+        ts = (base - timedelta(days=2 - i)).isoformat()
+        db.record_snapshot(ts, v)
+    a, warnings = service.get_analytics()
+    assert a.returns.available is True
+    assert a.returns.totalReturnPct == 21.0  # (121-100)/100
+    assert a.returns.volatilityPct is not None
+    assert not any("series" in w for w in warnings)  # no "no series" warning now

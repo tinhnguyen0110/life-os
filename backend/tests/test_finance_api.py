@@ -163,3 +163,50 @@ def test_analytics_rebalance_amounts_end_to_end(app_client):
     assert crypto["action"] == "sell" and crypto["amount"] == 37200.0
     # concentration: single holding → 100%, HHI 1.0
     assert d["risk"]["topHoldingPct"] == 100.0 and d["risk"]["hhi"] == 1.0
+
+
+# --- POST /finance/snapshot + GET /finance/history (equity curve) ---
+def test_snapshot_endpoint_records_and_history_reads(app_client):
+    app_client.post("/finance/holdings", json={"channel": "crypto", "symbol": "BTC", "qty": 1, "avgCost": 50000})
+    snap = app_client.post("/finance/snapshot")
+    assert snap.status_code == 200
+    d = snap.json()["data"]
+    assert d["totalValue"] == 60000.0 and "day" in d and d["byChannel"]["crypto"] == 60000.0
+    # history reads it back
+    hist = app_client.get("/finance/history?days=90").json()["data"]
+    assert len(hist["points"]) == 1 and hist["points"][0]["totalValue"] == 60000.0
+
+
+def test_history_empty_is_200_with_warning(app_client):
+    resp = app_client.get("/finance/history")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"]["points"] == []
+    assert "no portfolio snapshots" in (body.get("warning") or "")
+
+
+def test_history_days_validation(app_client):
+    assert app_client.get("/finance/history?days=0").status_code == 422     # >0 required
+    assert app_client.get("/finance/history?days=999").status_code == 422   # ≤365 cap
+    assert app_client.get("/finance/history?days=30").status_code == 200    # valid
+
+
+def test_snapshot_history_win_over_channel_param(app_client):
+    """/snapshot and /history must NOT be captured by /{channel}."""
+    # /history → has 'points' key, NOT a 404 channel lookup
+    assert "points" in app_client.get("/finance/history").json()["data"]
+    # /snapshot is POST → a GET would 405, but POST routes to the snapshot handler.
+    assert app_client.post("/finance/snapshot").status_code == 200
+
+
+def test_returns_available_after_two_snapshots_via_api(app_client):
+    """End-to-end: ≥2 snapshots (seeded across days) → analytics returns.available=True."""
+    from datetime import datetime, timedelta, timezone
+
+    from store import db
+    base = datetime.now(timezone.utc)
+    db.record_snapshot((base - timedelta(days=1)).isoformat(), 100.0)
+    db.record_snapshot(base.isoformat(), 120.0)
+    returns = app_client.get("/finance/analytics").json()["data"]["returns"]
+    assert returns["available"] is True
+    assert returns["totalReturnPct"] == 20.0  # (120-100)/100
