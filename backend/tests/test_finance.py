@@ -272,17 +272,24 @@ def test_overview_with_okx_uses_basis_as_cost(isolated_paths, monkeypatch):
     monkeypatch.setattr(service, "_okx_crypto_value", lambda: (okx_val, None))
     overview, _ = service.get_overview()
     crypto = next(a for a in overview.allocations if a.channel == "crypto")
-    # First call → basis snapshotted = 10500, P&L ≈ 0
+    # First call → basis snapshotted = 10500. cost/current are the real $ figures (kept);
+    # abs/pct are SUPPRESSED because the OKX crypto channel is basisUnknown (value-only) —
+    # D3a: a value-only inflow must not read as a gain. The cost-snapshot is verified via
+    # pnl.cost (and current), not abs.
     assert crypto.value == 10500.0
     assert crypto.pnl.cost == 10500.0
-    assert crypto.pnl.abs == 0.0
-    # Second call with higher OKX value — basis stays at snapshot
+    assert crypto.pnl.current == 10500.0  # value == snapshotted basis (was abs==0)
+    assert crypto.pnl.abs is None and crypto.basisUnknown is True  # D3a suppression
+    # Second call with higher OKX value — basis stays at snapshot; current tracks value
     monkeypatch.setattr(service, "_okx_crypto_value", lambda: (11000.0, None))
     overview2, _ = service.get_overview()
     crypto2 = next(a for a in overview2.allocations if a.channel == "crypto")
     assert crypto2.value == 11000.0
-    assert crypto2.pnl.cost == 10500.0  # unchanged
-    assert crypto2.pnl.abs == 500.0  # P&L = 11000 - 10500
+    assert crypto2.pnl.cost == 10500.0   # basis unchanged (snapshot)
+    assert crypto2.pnl.current == 11000.0  # current = live value (was abs==500)
+    # abs still suppressed (basisUnknown); the real cost/current pair makes the +500
+    # self-verifiable for a consumer WITHOUT a misleading auto-computed "gain".
+    assert crypto2.pnl.abs is None
 
 
 # --------------------------------------------------------------------------- #

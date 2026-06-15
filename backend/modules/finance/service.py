@@ -62,6 +62,7 @@ STABLECOINS = frozenset({
     "USDT", "USDC", "DAI", "TUSD", "BUSD", "USDP", "FDUSD", "GUSD", "USDD", "PYUSD",
 })
 STABLE_HEAVY_PCT = 50.0  # crypto channel >this% stablecoins → honest "dry-powder-like" warning
+STABLE_UNDEPLOYED_PCT = 90.0  # D3a: crypto >this% stablecoin → drift warning reframed as undeployed-cash
 
 BASELINE_TARGETS: dict[str, float] = {"crypto": 38.0, "etf": 24.0, "vn": 18.0, "dry": 20.0}
 BASELINE_RUNGS: list[float] = [-10.0, -20.0, -30.0]
@@ -250,13 +251,14 @@ def _pnl(cost: float, current: float) -> PnL:
 
 
 def _pnl_framed(cost: float, current: float, basis_unknown: bool) -> PnL:
-    """NB4: channel-level pnl with honest framing. When basisUnknown (the channel's
-    holdings majority lack a real avgCost — e.g. OKX value-only), NULL pnl.pct so the
-    misleading "% return" doesn't show; keep cost/current/abs (real $ figures). A channel
-    with real basis → unchanged pnl (the legit manual P&L is NOT hidden)."""
+    """NB4 + D3a: channel-level pnl with honest framing. When basisUnknown (the channel's
+    holdings majority lack a real avgCost — e.g. OKX value-only, cost≈0), NULL BOTH pnl.abs
+    AND pnl.pct so the misleading gain (a value-only inflow reads as +$X / +Y%) doesn't
+    show; KEEP cost/current (the raw $ figures the FE/agent can still display + reason on).
+    A channel with real basis → unchanged pnl (the legit manual P&L is NOT hidden)."""
     pnl = _pnl(cost, current)
     if basis_unknown:
-        return pnl.model_copy(update={"pct": None})
+        return pnl.model_copy(update={"abs": None, "pct": None})
     return pnl
 
 
@@ -519,18 +521,33 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
         target = round(float(targets.get(ch, 0.0)), 2)
         drift = round(pct - target, 2)
         drift_alert = abs(drift) > DRIFT_ALERT_PCT
-        if drift_alert:
-            warnings.append(f"{ch}: allocation drift {drift:+.1f}% (target {target}%, actual {pct}%)")
-        # NB4 — honest framing (derived from this channel's holdings entries).
+        # NB4 — honest framing (derived from this channel's holdings entries). Compute the
+        # stable split BEFORE the drift warning so D3a can reframe a stablecoin-dominated
+        # crypto channel's drift as undeployed-cash (the raw drift number is unchanged on
+        # the ChannelAlloc — only the WARNING wording is reframed).
         ch_entries = by_channel.get(ch, {}).get("holdings", [])
         basis_unknown = _basis_unknown(ch_entries)
         stable_value, stable_pct = (None, None)
+        crypto_undeployed = False
         if ch == "crypto":
             stable_value, stable_pct = _stable_split(ch_entries, value)
+            crypto_undeployed = stable_pct is not None and stable_pct > STABLE_UNDEPLOYED_PCT
             if stable_pct is not None and stable_pct > STABLE_HEAVY_PCT:
                 warnings.append(
                     f"crypto channel is {stable_pct:.0f}% stablecoins "
                     f"(${stable_value:,.0f}) — dry-powder-like, not crypto exposure")
+        if drift_alert:
+            if crypto_undeployed:
+                # D3a: when crypto is >90% stablecoin, a "crypto drift" warning is
+                # misleading — the gap is UNDEPLOYED CASH sitting in the crypto channel,
+                # not over/under crypto EXPOSURE. Reframe (raw drift number unchanged).
+                warnings.append(
+                    f"crypto: {drift:+.1f}% vs target reflects ~{stable_pct:.0f}% UNDEPLOYED "
+                    f"stablecoin (cash-equivalent), not crypto exposure (target {target}%, "
+                    f"actual {pct}%)")
+            else:
+                warnings.append(
+                    f"{ch}: allocation drift {drift:+.1f}% (target {target}%, actual {pct}%)")
         allocations.append(ChannelAlloc(
             channel=ch, value=value, pct=pct, target=target, drift=drift,  # type: ignore[arg-type]
             driftAlert=drift_alert, pnl=_pnl_framed(cost, value, basis_unknown),

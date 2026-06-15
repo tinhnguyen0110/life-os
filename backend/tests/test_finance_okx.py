@@ -163,9 +163,11 @@ def test_nb4_basis_unknown_true_for_value_only_crypto(mock_okx, mock_prices, iso
     overview, _ = service.get_overview()
     crypto = next(a for a in overview.allocations if a.channel == "crypto")
     assert crypto.basisUnknown is True
-    # NB4 decision: basisUnknown → pnl.pct NULLED (no misleading "% return"); real $ kept.
+    # NB4+D3a: basisUnknown → BOTH pnl.abs AND pnl.pct NULLED (a value-only inflow must not
+    # read as a +$X / +Y% gain); cost/current (raw $) KEPT.
     assert crypto.pnl.pct is None
-    assert crypto.pnl.current is not None
+    assert crypto.pnl.abs is None
+    assert crypto.pnl.current is not None and crypto.pnl.cost is not None
 
 
 def test_nb4_basis_unknown_false_for_manual_with_cost(mock_okx, mock_prices, isolated_paths):
@@ -183,8 +185,10 @@ def test_nb4_basis_unknown_false_for_manual_with_cost(mock_okx, mock_prices, iso
     # same overview, two channels DIVERGE → the flag tracks real basis, not a constant.
     # NB4 distinguishing: the manual channel's legit pnl.pct is NOT hidden, only the
     # value-only channel's misleading % is nulled.
-    assert etf.pnl.pct is not None      # legit manual P&L SHOWN (not hidden)
-    assert crypto.pnl.pct is None       # value-only % nulled
+    # D3a distinguishing BOTH ways: real-basis etf keeps abs AND pct; value-only crypto
+    # nulls BOTH — proves the suppression keys on real basis, not a blanket null.
+    assert etf.pnl.pct is not None and etf.pnl.abs is not None   # legit manual P&L SHOWN
+    assert crypto.pnl.pct is None and crypto.pnl.abs is None     # value-only gain suppressed
 
 
 def test_nb4_stable_split_and_high_warning(mock_okx, mock_prices, isolated_paths):
@@ -245,3 +249,39 @@ def test_nb4_empty_channel_basis_unknown_false():
     alarm) + stable split (None, None) on zero value."""
     assert service._basis_unknown([]) is False
     assert service._stable_split([], 0.0) == (0.0, None)
+
+
+# --------------------------------------------------------------------------- #
+# D3a (b) — crypto drift warning reframed as undeployed-cash when stablePct>90. #
+# --------------------------------------------------------------------------- #
+def test_d3a_crypto_drift_reframed_when_stable_heavy(mock_okx, mock_prices, isolated_paths):
+    """Crypto >90% stablecoin AND drifted vs target → the drift warning is REFRAMED as
+    undeployed cash (not crypto over/under-exposure). The plain 'allocation drift' wording
+    must NOT appear for crypto; the reframed 'UNDEPLOYED stablecoin' wording must."""
+    # crypto = whole portfolio (pct≈100 vs target 38 → drift fires), 98% USDT
+    mock_okx([
+        OkxBalance(symbol="USDT", available=98000, frozen=0, total=98000, usdValue=98000.0),
+        OkxBalance(symbol="BTC", available=0.03, frozen=0, total=0.03, usdValue=2000.0),
+    ], total=100000.0)
+    _, warnings = service.get_overview()
+    crypto_warns = [w for w in warnings if w.startswith("crypto")]
+    assert any("UNDEPLOYED stablecoin" in w for w in crypto_warns), \
+        "stable-heavy crypto drift must be reframed as undeployed cash"
+    assert not any("allocation drift" in w for w in crypto_warns), \
+        "the plain drift wording must NOT be used for a stable-dominated crypto channel"
+
+
+def test_d3a_real_crypto_keeps_plain_drift_distinguishing(mock_okx, mock_prices, isolated_paths):
+    """DISTINGUISHING (the other way): a crypto channel that is mostly REAL exposure (BTC,
+    only 10% stable) but drifted → keeps the PLAIN 'allocation drift' warning, NOT the
+    undeployed-cash reframe. Proves the reframe keys on stablePct>90, not 'crypto drifted'."""
+    mock_okx([
+        OkxBalance(symbol="BTC", available=1.5, frozen=0, total=1.5, usdValue=90000.0),
+        OkxBalance(symbol="USDT", available=10000, frozen=0, total=10000, usdValue=10000.0),
+    ], total=100000.0)  # crypto ≈100% of portfolio (drift fires), only 10% stable
+    _, warnings = service.get_overview()
+    crypto_warns = [w for w in warnings if w.startswith("crypto")]
+    assert any("allocation drift" in w for w in crypto_warns), \
+        "real-exposure crypto keeps the plain drift warning"
+    assert not any("UNDEPLOYED stablecoin" in w for w in crypto_warns), \
+        "a 10%-stable crypto channel must NOT be reframed as undeployed"

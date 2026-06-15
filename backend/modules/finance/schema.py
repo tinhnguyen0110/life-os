@@ -38,8 +38,12 @@ class PnL(BaseModel):
 
     cost: float = Field(..., description="cost basis (input)")
     current: float = Field(..., description="current market value (input)")
-    abs: float = Field(..., description="current - cost")
-    pct: float | None = Field(None, description="abs/cost*100; null when cost==0 (no div-0)")
+    abs: float | None = Field(
+        None,
+        description="current - cost; null when basisUnknown (no real cost basis → a value-"
+                    "only inflow would read as a fake gain). Keep cost/current as the raw $.",
+    )
+    pct: float | None = Field(None, description="abs/cost*100; null when cost==0 (no div-0) or basisUnknown")
 
 
 class ChannelAlloc(BaseModel):
