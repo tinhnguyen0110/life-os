@@ -17,6 +17,7 @@ import { useSettings } from "@/lib/useSettings";
 import { useSafeRouter } from "@/lib/useNav";
 import { Field, TextInput, NumberInput, Select, Toggle } from "@/components/shared/Field";
 import { TweaksPanel } from "@/components/TweaksPanel";
+import { ModulesPanel } from "@/components/ModulesPanel";
 import { apiBase } from "@/lib/api";
 import type { AppConfig, AppConfigPatch } from "@/lib/types";
 
@@ -70,8 +71,9 @@ export default function SettingsPage() {
           <AutonomyPanel config={config} save={save} />
           <AccountPanel config={config} save={save} router={router} />
         </div>
-        {/* RIGHT column: integrations (honest status) + API status + appearance */}
+        {/* RIGHT column: modules registry + integrations + API status + appearance */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <ModulesPanel />
           <IntegrationsPanel />
           <ApiStatusPanel />
           <AppearancePanel />

@@ -8,11 +8,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSafePathname } from "@/lib/useNav";
-import { NAV } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
 import { getRoutines, getProjects, getMarket, getClaudeUsage } from "@/lib/api";
-import { useSidebarPrefs } from "@/lib/useSidebarPrefs";
-import { applyPrefs } from "@/lib/sidebar-prefs";
+import { useNavGroups } from "@/lib/useSidebarPrefs";
 import { SidebarCustomizer } from "./SidebarCustomizer";
 
 /** A nav item is active if pathname equals its route, or (for non-home) starts with it. */
@@ -29,13 +27,13 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // FE-1: user-customizable sidebar — hide/show + reorder modules, persisted to
-  // localStorage. SSR + first paint use the canonical NAV (ready=false → DEFAULT_PREFS)
-  // so server/client agree; the applied (filtered/reordered) list takes over after
-  // the prefs load post-mount — same hydration-safe gate as `mounted`.
-  const { prefs, ready: prefsReady } = useSidebarPrefs();
+  // FE-1: composed nav = module-registry layer (enable/disable + order whole
+  // modules) THEN route-level layer (hide/reorder individual screens), both
+  // persisted to localStorage. SSR + first paint use the canonical NAV (ready=false)
+  // so server/client agree; the applied list takes over after prefs load post-mount
+  // — same hydration-safe gate as `mounted`.
+  const { navGroups } = useNavGroups();
   const [custOpen, setCustOpen] = useState(false);
-  const navGroups = prefsReady ? applyPrefs(prefs, NAV) : NAV;
 
   // F2-M4: wire ALL 4 sidebar badges to LIVE data (was static placeholders per
   // sidebar-badges-static-placeholder — done all-together, not piecemeal). Each fetch

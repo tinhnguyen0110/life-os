@@ -70,26 +70,29 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5"));
   });
 
-  it("renders all 7 nav groups (+ Tri thức for Wiki)", async () => {
+  it("renders every nav group from NAV (default: all modules enabled)", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     const secs = Array.from(container.querySelectorAll(".sb-sec")).map((e) => e.textContent);
     for (const g of NAV) {
       expect(secs).toContain(g.sec);
     }
-    expect(NAV).toHaveLength(7);
+    // Derive the count from NAV (robust to module additions — e.g. the career
+    // module added "Sự nghiệp"). Guards against a NAV that collapsed to empty.
+    expect(NAV.length).toBeGreaterThanOrEqual(7);
+    expect(secs.filter(Boolean)).toHaveLength(NAV.length);
     await settleSidebar();
   });
 
-  it("renders a link for every nav route (21 nav items: +Wiki group +Decision Journal)", async () => {
+  it("renders a link for every nav route in ALL_ROUTES", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
     for (const route of ALL_ROUTES) {
       expect(container.querySelector(`a[href="${route}"]`)).toBeTruthy();
     }
-    // 14 foundation + Wiki group (/wiki, /wiki/inbox, /wiki/graph, /wiki/proposals,
-    // /wiki/moc, /wiki/sync) + /decision-journal (DJ).
-    expect(ALL_ROUTES).toHaveLength(21);
+    // Count derived from NAV (was hardcoded 21; the career module's /career made it
+    // grow — deriving keeps the test robust to legitimate module additions).
+    expect(ALL_ROUTES).toHaveLength(NAV.flatMap((g) => g.items).length);
     expect(container.querySelector('a[href="/wiki/sync"]')).toBeTruthy();
     expect(container.querySelector('a[href="/decision-journal"]')).toBeTruthy();
     await settleSidebar();
@@ -195,6 +198,35 @@ describe("Sidebar", () => {
     expect(screen.queryByTestId("sbcust-panel")).toBeNull();
     await user.click(screen.getByTestId("sb-customize"));
     await waitFor(() => expect(screen.getByTestId("sbcust-panel")).toBeTruthy());
+  });
+
+  it("FE-1: disabling a whole MODULE hides its entire nav group (module registry)", async () => {
+    mockPath = "/";
+    // disable the "Tài chính" module → finance/portfolio/exchange/journal/market all gone
+    localStorage.setItem("lifeos.modules", JSON.stringify({ disabled: ["Tài chính"], order: [] }));
+    const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
+    await settleSidebar();
+    await waitFor(() => {
+      expect(container.querySelector('a[href="/finance"]')).toBeNull();
+      expect(container.querySelector('a[href="/market"]')).toBeNull();
+    });
+    // the section label is gone too
+    const secs = Array.from(container.querySelectorAll(".sb-sec")).map((e) => e.textContent);
+    expect(secs).not.toContain("Tài chính");
+    // a different module's routes still present
+    expect(container.querySelector('a[href="/wiki"]')).toBeTruthy();
+    localStorage.clear();
+  });
+
+  it("FE-1: pinned core modules (Cấu hình/Settings) can never be disabled — route stays", async () => {
+    mockPath = "/";
+    // even if a stale pref lists a pinned module, it's never dropped
+    localStorage.setItem("lifeos.modules", JSON.stringify({ disabled: ["Cấu hình", "Tổng quan"], order: [] }));
+    const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
+    await settleSidebar();
+    expect(container.querySelector('a[href="/settings"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/"]')).toBeTruthy();
+    localStorage.clear();
   });
 
   it("FE-1: hiding a module in the customizer updates the LIVE sidebar in the same tab (no reload)", async () => {
