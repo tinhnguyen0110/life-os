@@ -46,6 +46,14 @@ export const NAV: NavGroup[] = [
       { route: "/exchange", label: "OKX Exchange", icon: "i-mkt", screen: "S-okx" },
       { route: "/journal", label: "Nhật ký lệnh", icon: "i-journal", screen: "S7" },
       { route: "/market", label: "Thị trường", icon: "i-mkt", screen: "S8", badge: { text: "2", cls: "r" } },
+      { route: "/macro", label: "Macro", icon: "i-fin", screen: "FE-5-macro" },
+    ],
+  },
+  {
+    sec: "Tin tức",
+    items: [
+      // label differs from the "Tin tức" section header (getByText-collision guard).
+      { route: "/news", label: "Bảng tin", icon: "i-doc", screen: "FE-5-news" },
     ],
   },
   {
@@ -101,6 +109,8 @@ export const CRUMB: Record<string, string> = {
   "/portfolio": "Danh mục",
   "/journal": "Nhật ký lệnh",
   "/market": "Thị trường & Cảnh báo",
+  "/macro": "Macro",
+  "/news": "Tin tức",
   "/exchange": "OKX Exchange",
   "/claude-usage": "Claude Usage",
   "/notes": "Ghi chú",

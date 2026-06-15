@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import { NAV, CRUMB, ALL_ROUTES } from "../nav";
 
 describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no AI)", () => {
-  it("has exactly 8 groups in SPEC §1 order (+ Tri thức for Wiki, + Sự nghiệp for Career)", () => {
+  it("has exactly 9 groups in SPEC §1 order (+ Tin tức for News, + Tri thức for Wiki, + Sự nghiệp for Career)", () => {
     expect(NAV.map((g) => g.sec)).toEqual([
       "Tổng quan",
       "Dự án",
       "Tài chính",
+      "Tin tức",
       "Hằng ngày",
       "Tri thức",
       "Sự nghiệp",
@@ -33,7 +34,9 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("A1c");
     expect(screens).toContain("DJ");
     expect(screens).toContain("CAR");
-    expect(unique.size).toBe(22);
+    expect(screens).toContain("FE-5-macro");
+    expect(screens).toContain("FE-5-news");
+    expect(unique.size).toBe(24);
   });
 
   it("every nav route has a breadcrumb entry", () => {
