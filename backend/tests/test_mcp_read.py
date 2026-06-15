@@ -57,6 +57,7 @@ NULLARY_TOOLS = [
     "exchange_overview",
     "app_settings",
     "reliability_report",
+    "macro_overview",
     "life_brief",
     "market_watchlist",
     "market_summary",
@@ -78,6 +79,7 @@ ENVELOPE_KEY = {
     "exchange_overview": "exchange",
     "app_settings": "settings",
     "reliability_report": "report",
+    "macro_overview": "macro",
     "life_brief": "brief",
     "market_watchlist": "items",
     "market_summary": "watchlist",
@@ -110,6 +112,7 @@ def test_arg_tools_return_jsonable_dict(app_db):
         rs.market_history("BTC", hours=24, limit=10),
         rs.market_indicators("BTC", indicators="rsi,sma", hours=720),
         rs.market_ohlc("BTC", hours=24, interval=60),
+        rs.macro_history("cpi", days=400),
         rs.brief_history(limit=5),
         rs.activity_feed(routine="x", status="ok", range="today"),
     ):
@@ -165,6 +168,49 @@ def test_market_summary_is_neutral_data(app_db):
     flat = json.dumps(out).lower()
     for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":"):
         assert banned not in flat, f"market_summary leaked a non-neutral term: {banned}"
+
+
+# --------------------------------------------------------------------------- #
+# Macro tools (MACRO-2) — Fed/CPI/DXY context, READ-ONLY + neutral, mock-honest  #
+# --------------------------------------------------------------------------- #
+def test_macro_overview_shape_and_indicators(app_db):
+    """macro_overview returns every tracked indicator + a descriptive trend.
+    {macro, warnings}; cold-start auto-primes so values are present."""
+    out = rs.macro_overview()
+    assert set(out) >= {"macro", "warnings"}
+    inds = out["macro"]["indicators"]
+    assert {i["indicator"] for i in inds} == {"fed_funds_rate", "cpi", "dxy"}
+    for i in inds:
+        assert i["trend"] in ("up", "down", "flat")
+    json.dumps(out)
+
+
+def test_macro_overview_mock_is_honest(app_db, monkeypatch):
+    """No FRED key → tool still returns values, tagged source='mock' + a warning, so
+    the agent knows it's a placeholder, not live data."""
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "fred_api_key", "")
+    out = rs.macro_overview()
+    assert out["macro"]["source"] == "mock"
+    assert any("mock" in w.lower() for w in out["warnings"])
+
+
+def test_macro_overview_is_neutral_no_forecast(app_db):
+    """The macro context must DESCRIBE, never PREDICT — no forecast/advice term leaks."""
+    flat = json.dumps(rs.macro_overview()).lower()
+    for banned in ("forecast", "will cut", "will rise", "predict", "expect",
+                   "recommend", "should buy", "should sell"):
+        assert banned not in flat, f"macro_overview leaked a forecast/advice term: {banned}"
+
+
+def test_macro_history_shape_and_unknown(app_db):
+    out = rs.macro_history("cpi", days=400)
+    assert out["found"] is True
+    assert out["history"]["indicator"] == "cpi"
+    assert isinstance(out["history"]["points"], list)
+    # unknown indicator → honest found:False, not a crash
+    assert rs.macro_history("not-an-indicator") == {"found": False, "indicator": "not-an-indicator"}
 
 
 # --------------------------------------------------------------------------- #
@@ -416,6 +462,10 @@ WRITE_SYMBOLS = [
     # proposal STATUS but must NOT import any of these (the agent can't write/decide
     # its own proposal via the read-server; accept/reject is human-only at REST).
     "mark_decided", "set_applied_ref", "append_audit", "accept", "reject",
+    # MACRO-2: the macro module's WRITE surface — the read-server reads macro context
+    # but must NOT import refresh/record_point/init_macro_tables (the agent can't write
+    # the macro series).
+    "refresh", "record_point", "init_macro_tables",
 ]
 
 
@@ -477,4 +527,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 26
+    assert len(rs.TOOLS) == 28

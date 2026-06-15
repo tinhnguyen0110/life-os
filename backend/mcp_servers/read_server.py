@@ -34,6 +34,10 @@ the bound names are obviously private wrappers:
   - settings:         get_config                      (read; set_config NOT imported)
   - reliability:      run_suite                       (READ-ONLY suite — verifies
                       against an existing note, never writes)
+  - macro:            get_overview, get_history        (Fed/CPI/DXY context, READ
+                      paths only — NOT refresh / record_point / init_macro_tables,
+                      which stay in WRITE_SYMBOLS. NEUTRAL: descriptive trend, no
+                      forecast; mock honestly tagged source='mock'.)
   - agent proposals:  get_proposal, list_proposals, count_by_status (MCP-5 — the
                       agent READS the disposition of its OWN proposals to learn from
                       accept/reject. ONLY these 3 read fns are imported from
@@ -92,6 +96,11 @@ from modules.activity.service import get_run as _activity_run
 from modules.exchange.service import get_overview as _exch_overview
 from modules.settings.service import get_config as _settings_get
 from modules.reliability.service import run_suite as _reliability_suite
+# MACRO-2: macro context (Fed/CPI/DXY) READ paths — get_overview/get_history only.
+# NOT refresh / record_point / init_macro_tables (those stay in WRITE_SYMBOLS). The
+# agent reads the macro backdrop; it cannot write the macro series.
+from modules.macro.service import get_overview as _macro_overview
+from modules.macro.service import get_history as _macro_history
 # MCP-5: the agent reads the DISPOSITION of its own proposals (status/applied_ref) so it
 # can learn from accept/reject — READ paths only. We import the SPECIFIC read fns (NOT
 # the proposals_store module), so enqueue / mark_decided / set_applied_ref / append_audit
@@ -297,6 +306,26 @@ def reliability_report() -> dict[str, Any]:
     READ-ONLY (verifies against an existing note; never writes). Empty vault → the
     grounding check is reported skipped (honest)."""
     return {"report": _jsonable(_reliability_suite())}
+
+
+def macro_overview() -> dict[str, Any]:
+    """Macro economic context: latest Fed funds rate / US CPI / DXY dollar index + a
+    DESCRIPTIVE trend (up/down/flat vs the prior observation). ``{macro, warnings}``.
+    NEUTRAL — observed data, NO forecast; the agent reasons about portfolio impact. A
+    mock source (no FRED key) still returns values, tagged source='mock' + a warning so
+    the agent knows it's a placeholder, not live. (Wraps GET /macro/overview.)"""
+    overview, warnings = _macro_overview()
+    return {"macro": _jsonable(overview), "warnings": list(warnings or [])}
+
+
+def macro_history(indicator: str, days: int = 365) -> dict[str, Any]:
+    """One macro indicator's time-series over the last ``days`` (oldest→newest).
+    ``indicator`` ∈ {fed_funds_rate, cpi, dxy}. Unknown indicator → ``{found: False}``
+    (honest, not a crash). ``{found, history}``. (Wraps GET /macro/history.)"""
+    hist = _macro_history(indicator, days=int(days))
+    if hist is None:
+        return {"found": False, "indicator": indicator}
+    return {"found": True, "history": _jsonable(hist)}
 
 
 # --------------------------------------------------------------------------- #
@@ -603,6 +632,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "exchange_overview": exchange_overview,
     "app_settings": app_settings,
     "reliability_report": reliability_report,
+    "macro_overview": macro_overview,
+    "macro_history": macro_history,
     "life_brief": life_brief,
     "check_proposal_status": check_proposal_status,
     "list_my_proposals": list_my_proposals,

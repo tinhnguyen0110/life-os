@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **30 tools** — 26 read · 4 write (propose).
+Totals: **32 tools** — 28 read · 4 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -40,6 +40,8 @@ Totals: **30 tools** — 26 read · 4 write (propose).
 | `exchange_overview` |  | OKX exchange overview: balances + open positions snapshot. ``{exchange, |
 | `app_settings` |  | The app config (thresholds, toggles, usage cap …) the agent should respect |
 | `reliability_report` |  | The reliability suite report: grounding-eval + fail-closed gates. ``{report}`` |
+| `macro_overview` | ✓ | Macro economic context: latest Fed funds rate / US CPI / DXY dollar index + a |
+| `macro_history` |  | One macro indicator's time-series over the last ``days`` (oldest→newest) |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
