@@ -16,7 +16,7 @@ from core.base import BaseModule
 from core.responses import ok
 
 from . import service
-from .schema import CryptoBasisInput, GoldenPathInput, HoldingInput
+from .schema import CryptoBasisInput, GoldenPathInput, HoldingInput, SimulateInput
 
 logger = logging.getLogger("life-os.finance.router")
 
@@ -97,6 +97,33 @@ def get_analytics():
     Empty portfolio → zeroed/None metrics + warning, never a 500."""
     analytics, warnings = service.get_analytics()
     return ok(data=analytics.model_dump(), warning="; ".join(warnings) if warnings else None)
+
+
+# NOTE: registered BEFORE the /{channel} catch-all (POST anyway, but keep it explicit).
+@router.post("/simulate")
+def simulate(body: SimulateInput):
+    """What-if: shape a HYPOTHETICAL allocation ({channel: weight}) and compare it to the
+    CURRENT portfolio — HHI / concentration / drift-vs-golden-path / turnover, plus the
+    HHI delta and per-channel delta-vs-current. Weights are normalized to 100% (pass %s
+    or $s). PURE NUMBERS for the user to judge — NOT advice.
+
+    Validation (422): empty allocation · any negative weight · any unknown channel key
+    (must be one of crypto/etf/vn/dry). A zero-sum allocation is accepted but yields a
+    None HHI + warning (can't normalize), never a 500."""
+    alloc = body.allocation
+    if not alloc:
+        raise HTTPException(status_code=422, detail="allocation must have at least one channel")
+    valid = {"crypto", "etf", "vn", "dry"}
+    unknown = [ch for ch in alloc if ch not in valid]
+    if unknown:
+        raise HTTPException(status_code=422,
+                            detail=f"unknown channel(s) {unknown}; valid: {sorted(valid)}")
+    negative = [ch for ch, w in alloc.items() if w < 0]
+    if negative:
+        raise HTTPException(status_code=422,
+                            detail=f"negative weight(s) for {negative} — weights must be ≥0")
+    result, warnings = service.simulate(alloc)
+    return ok(data=result.model_dump(), warning="; ".join(warnings) if warnings else None)
 
 
 # NOTE: /snapshot + /history registered BEFORE /{channel} so they route here.

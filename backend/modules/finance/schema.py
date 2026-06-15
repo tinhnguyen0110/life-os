@@ -148,6 +148,54 @@ class PortfolioAnalytics(BaseModel):
     asOf: str
 
 
+# --------------------------------------------------------------------------- #
+# Scenario / what-if simulate (POST /finance/simulate)                          #
+# --------------------------------------------------------------------------- #
+class SimulateInput(BaseModel):
+    """POST /finance/simulate body. ``allocation`` = a HYPOTHETICAL channel→weight map
+    ({crypto: 60, etf: 20, ...}) — the values are treated as relative WEIGHTS and
+    normalized to 100% (so the user may pass percentages OR dollar amounts; either
+    way the shape is what's analyzed). At least one channel required; negative weights
+    rejected (422 at the route). Unknown channel keys rejected (422)."""
+
+    allocation: dict[str, float] = Field(
+        ..., description="hypothetical {channel: weight} — normalized to 100%")
+
+
+class ChannelShape(BaseModel):
+    """One channel's weight in a (current or hypothetical) allocation + its delta."""
+
+    channel: Channel
+    pct: float = Field(..., description="% of the allocation (normalized to 100)")
+    targetPct: float = Field(0.0, description="golden-path target for this channel (0 if none)")
+    drift: float = Field(..., description="pct - targetPct (signed)")
+    deltaVsCurrentPct: float | None = Field(
+        None, description="this allocation's pct minus the CURRENT portfolio's pct (None if no current)")
+
+
+class AllocationShape(BaseModel):
+    """The risk-shape of one allocation (the hypothetical OR the current), NEUTRAL."""
+
+    hhi: float | None = Field(None, description="Σ(channel weight²); 1=all in one channel, lower=spread")
+    concentrationTopPct: float | None = Field(None, description="largest channel weight %")
+    concentrationTopChannel: str | None = None
+    totalAbsDrift: float = Field(0.0, description="Σ|channel drift vs target| (pp)")
+    rebalanceDistance: float = Field(0.0, description="½·Σ|drift| = min turnover % to hit targets")
+    channels: list[ChannelShape] = Field(default_factory=list)
+
+
+class SimulateResult(BaseModel):
+    """POST /finance/simulate — the hypothetical allocation's shape side-by-side with the
+    current portfolio's shape, plus the HHI delta. PURE NUMBERS for the user to judge —
+    explicitly NOT advice (no buy/sell/recommend)."""
+
+    hypothetical: AllocationShape
+    current: AllocationShape
+    hhiDelta: float | None = Field(None, description="hypothetical.hhi - current.hhi (None if either missing)")
+    normalized: bool = Field(False, description="True if input weights didn't sum to 100 and were normalized")
+    asOf: str
+
+
 class GoldenPathInput(BaseModel):
     """Body to set the golden-path: target % per channel + per-channel ladder."""
 

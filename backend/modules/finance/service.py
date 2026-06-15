@@ -29,8 +29,10 @@ from modules.market import service as market_service
 from store import db, md_store
 
 from .schema import (
+    AllocationShape,
     Change,
     ChannelAlloc,
+    ChannelShape,
     ConcentrationItem,
     CryptoBasisInput,
     FinanceOverview,
@@ -43,6 +45,7 @@ from .schema import (
     RebalanceAction,
     ReturnMetrics,
     RiskMetrics,
+    SimulateResult,
 )
 
 logger = logging.getLogger("life-os.finance.service")
@@ -556,3 +559,106 @@ def get_analytics() -> tuple[PortfolioAnalytics, list[str]]:
         asOf=_now_iso(),
     )
     return analytics, warnings
+
+
+# --------------------------------------------------------------------------- #
+# Scenario / what-if simulate — shape a HYPOTHETICAL allocation, NEUTRAL         #
+# --------------------------------------------------------------------------- #
+def _shape_allocation(weights_pct: dict[str, float], targets: dict[str, float],
+                      current_pct: dict[str, float] | None) -> AllocationShape:
+    """Build the risk-shape of a channel→pct allocation (sums to ~100). HHI = Σ(weight²)
+    over CHANNELS; concentration = the largest channel; drift = pct - target; turnover =
+    ½Σ|drift|. ``current_pct`` (if given) yields a per-channel delta vs the live portfolio.
+    All NEUTRAL numbers. Channels with 0% are still listed (so the shape is complete)."""
+    # union of channels present in the allocation, the targets, and current (complete view)
+    chans = set(weights_pct) | set(targets) | set(current_pct or {})
+    channels: list[ChannelShape] = []
+    for ch in sorted(chans):
+        if ch not in CHANNELS:
+            continue
+        pct = round(weights_pct.get(ch, 0.0), 4)
+        target = round(float(targets.get(ch, 0.0)), 2)
+        drift = round(pct - target, 4)
+        delta: float | None = None
+        if current_pct is not None:
+            delta = round(pct - round(current_pct.get(ch, 0.0), 4), 4)
+        channels.append(ChannelShape(
+            channel=ch, pct=pct, targetPct=target, drift=drift,  # type: ignore[arg-type]
+            deltaVsCurrentPct=delta,
+        ))
+
+    nonzero = [c for c in channels if c.pct > 0]
+    hhi: float | None = None
+    top_pct: float | None = None
+    top_chan: str | None = None
+    if nonzero:
+        # HHI over channel weights as FRACTIONS (0..1); 1 = everything in one channel.
+        hhi = round(sum((c.pct / 100.0) ** 2 for c in nonzero), 4)
+        top = max(nonzero, key=lambda c: c.pct)
+        top_pct, top_chan = round(top.pct, 2), top.channel
+    total_abs_drift = round(sum(abs(c.drift) for c in channels), 2)
+    return AllocationShape(
+        hhi=hhi, concentrationTopPct=top_pct, concentrationTopChannel=top_chan,
+        totalAbsDrift=total_abs_drift, rebalanceDistance=round(total_abs_drift / 2.0, 2),
+        channels=channels,
+    )
+
+
+def _current_channel_pct() -> tuple[dict[str, float], float, list[str]]:
+    """The live portfolio's channel→pct weights (and totalValue). Empty portfolio →
+    all-zero pct + total 0 (honest, never a div-by-zero)."""
+    overview, warnings = get_overview()
+    total = overview.totalValue
+    pct: dict[str, float] = {}
+    for a in overview.allocations:
+        pct[a.channel] = round(a.value / total * 100.0, 4) if total > 0 else 0.0
+    return pct, total, warnings
+
+
+def simulate(allocation: dict[str, float]) -> tuple[SimulateResult, list[str]]:
+    """Shape a HYPOTHETICAL allocation and compare it to the current portfolio.
+
+    ``allocation`` = {channel: weight}; weights are NORMALIZED to 100% (so the caller
+    may pass %s or $s). Returns ``(SimulateResult, warnings)`` with the hypothetical's
+    risk-shape (HHI / concentration / drift-vs-golden-path / turnover), the current
+    portfolio's shape for comparison, the HHI delta, and per-channel delta-vs-current.
+
+    PURE NUMBERS — explicitly NOT advice. Caller (router) enforces: non-empty, no
+    negative weights, known channels. A zero-sum allocation → honest warning + None HHI
+    (can't normalize), never a crash. Re-normalization is flagged (``normalized``)."""
+    targets, _ladder, gp_warnings = get_golden_path()
+    warnings: list[str] = list(gp_warnings)
+
+    total_weight = sum(allocation.values())
+    normalized = False
+    if total_weight <= 0:
+        warnings.append("allocation weights sum to 0 — cannot normalize; shape is empty")
+        weights_pct: dict[str, float] = {ch: 0.0 for ch in allocation}
+    else:
+        weights_pct = {ch: w / total_weight * 100.0 for ch, w in allocation.items()}
+        # flag if the RAW input didn't already sum to ~100 (we normalized it)
+        if abs(total_weight - 100.0) > 0.01:
+            normalized = True
+            warnings.append(
+                f"input weights summed to {round(total_weight, 2)} (not 100) — "
+                f"normalized to 100% before analysis")
+
+    current_pct, current_total, ov_warnings = _current_channel_pct()
+    warnings += [w for w in ov_warnings if w not in warnings]
+    have_current = current_total > 0
+
+    hypo_shape = _shape_allocation(weights_pct, targets, current_pct if have_current else None)
+    cur_shape = _shape_allocation(current_pct, targets, None) if have_current else \
+        _shape_allocation({}, targets, None)
+    if not have_current:
+        warnings.append("no current holdings — delta-vs-current is unavailable (empty portfolio)")
+
+    hhi_delta: float | None = None
+    if hypo_shape.hhi is not None and cur_shape.hhi is not None:
+        hhi_delta = round(hypo_shape.hhi - cur_shape.hhi, 4)
+
+    result = SimulateResult(
+        hypothetical=hypo_shape, current=cur_shape, hhiDelta=hhi_delta,
+        normalized=normalized, asOf=_now_iso(),
+    )
+    return result, warnings

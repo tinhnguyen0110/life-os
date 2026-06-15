@@ -515,3 +515,81 @@ def test_returns_available_with_two_snapshots(isolated_paths, mock_prices):
     assert a.returns.totalReturnPct == 21.0  # (121-100)/100
     assert a.returns.volatilityPct is not None
     assert not any("series" in w for w in warnings)  # no "no series" warning now
+
+
+# --------------------------------------------------------------------------- #
+# Scenario / what-if simulate (Task 30) — HHI math pinned, NEUTRAL              #
+# --------------------------------------------------------------------------- #
+def test_simulate_hhi_handcalc_concentrated(isolated_paths):
+    """{crypto:60, etf:20, vn:20} → weights .6/.2/.2 → HHI = .36+.04+.04 = 0.44.
+    Top channel crypto 60%. Sums to 100 → not normalized."""
+    r, _ = service.simulate({"crypto": 60, "etf": 20, "vn": 20})
+    assert r.hypothetical.hhi == 0.44
+    assert r.hypothetical.concentrationTopChannel == "crypto"
+    assert r.hypothetical.concentrationTopPct == 60.0
+    assert r.normalized is False
+
+
+def test_simulate_hhi_handcalc_balanced(isolated_paths):
+    """Even 25/25/25/25 → HHI = 4·.25² = 0.25 (the most-diversified 4-channel shape)."""
+    r, _ = service.simulate({"crypto": 25, "etf": 25, "vn": 25, "dry": 25})
+    assert r.hypothetical.hhi == 0.25
+
+
+def test_simulate_normalizes_dollar_amounts(isolated_paths):
+    """Dollar amounts 6000/2000/2000 normalize to the SAME shape as 60/20/20 (HHI 0.44),
+    and the result is flagged normalized=True with a warning."""
+    r, warnings = service.simulate({"crypto": 6000, "etf": 2000, "vn": 2000})
+    assert r.hypothetical.hhi == 0.44   # identical shape to the % version
+    assert r.normalized is True
+    assert any("normalized" in w.lower() for w in warnings)
+
+
+def test_simulate_drift_vs_golden_path(isolated_paths):
+    """drift = hypothetical pct − golden-path target. Baseline crypto target 38; a 60%
+    crypto allocation → drift +22. Σ|drift| and turnover (½Σ) are derived honestly."""
+    r, _ = service.simulate({"crypto": 60, "etf": 20, "vn": 20, "dry": 0})
+    crypto = next(c for c in r.hypothetical.channels if c.channel == "crypto")
+    assert crypto.targetPct == 38.0 and crypto.drift == 22.0  # 60 - 38
+    # totalAbsDrift = |60-38|+|20-24|+|20-18|+|0-20| = 22+4+2+20 = 48; turnover 24.
+    assert r.hypothetical.totalAbsDrift == 48.0
+    assert r.hypothetical.rebalanceDistance == 24.0
+
+
+def test_simulate_delta_vs_current(isolated_paths, mock_prices):
+    """The result compares the hypothetical to the CURRENT portfolio: per-channel
+    deltaVsCurrentPct + the HHI delta. Current = 100% crypto (HHI 1.0); hypothetical
+    60/20/20 (HHI 0.44) → hhiDelta = 0.44 − 1.0 = −0.56 (more diversified)."""
+    mock_prices["BTC"] = 100.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=100, avgCost=90))
+    r, _ = service.simulate({"crypto": 60, "etf": 20, "vn": 20})
+    assert r.current.hhi == 1.0            # current is all crypto
+    assert r.hhiDelta == -0.56            # 0.44 - 1.0
+    crypto = next(c for c in r.hypothetical.channels if c.channel == "crypto")
+    assert crypto.deltaVsCurrentPct == -40.0  # 60% hypothetical − 100% current
+
+
+def test_simulate_empty_portfolio_delta_unavailable(isolated_paths):
+    """No holdings → current shape has None HHI, hhiDelta None, a warning — never a crash."""
+    r, warnings = service.simulate({"crypto": 50, "etf": 50})
+    assert r.hypothetical.hhi == 0.5      # .5²+.5²
+    assert r.current.hhi is None          # empty portfolio
+    assert r.hhiDelta is None             # can't delta against nothing
+    assert any("current" in w.lower() or "empty" in w.lower() for w in warnings)
+
+
+def test_simulate_zero_sum_allocation_honest(isolated_paths):
+    """All-zero weights can't be normalized → None HHI + warning, NOT a div-by-zero."""
+    r, warnings = service.simulate({"crypto": 0, "etf": 0})
+    assert r.hypothetical.hhi is None
+    assert any("sum to 0" in w or "cannot normalize" in w for w in warnings)
+
+
+def test_simulate_is_neutral_no_advice(isolated_paths, mock_prices):
+    """The simulate payload is PURE NUMBERS — no buy/sell/recommend/should/advice."""
+    mock_prices["BTC"] = 100.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    r, _ = service.simulate({"crypto": 40, "etf": 30, "vn": 20, "dry": 10})
+    blob = str(r.model_dump()).lower()
+    for word in ("recommend", "should", "buy", "sell", "advice", "advise"):
+        assert word not in blob

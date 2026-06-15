@@ -210,3 +210,61 @@ def test_returns_available_after_two_snapshots_via_api(app_client):
     returns = app_client.get("/finance/analytics").json()["data"]["returns"]
     assert returns["available"] is True
     assert returns["totalReturnPct"] == 20.0  # (120-100)/100
+
+
+# --- POST /finance/simulate (what-if scenario) ---
+def test_simulate_endpoint_shape_and_hhi(app_client):
+    """End-to-end: a hypothetical 60/20/20 allocation → HHI 0.44, current+delta present."""
+    body = app_client.post("/finance/simulate",
+                           json={"allocation": {"crypto": 60, "etf": 20, "vn": 20}}).json()
+    assert body["success"] is True
+    d = body["data"]
+    for k in ("hypothetical", "current", "hhiDelta", "normalized", "asOf"):
+        assert k in d
+    assert d["hypothetical"]["hhi"] == 0.44
+    assert d["hypothetical"]["concentrationTopChannel"] == "crypto"
+
+
+def test_simulate_compares_against_current(app_client):
+    """With a current all-crypto portfolio, simulate shows current HHI 1.0 + the delta."""
+    app_client.post("/finance/holdings", json={"channel": "crypto", "symbol": "BTC", "qty": 1, "avgCost": 50000})
+    d = app_client.post("/finance/simulate",
+                        json={"allocation": {"crypto": 60, "etf": 20, "vn": 20}}).json()["data"]
+    assert d["current"]["hhi"] == 1.0       # current is 100% crypto
+    assert d["hhiDelta"] == -0.56           # 0.44 - 1.0 (hypothetical more diversified)
+
+
+def test_simulate_empty_allocation_422(app_client):
+    assert app_client.post("/finance/simulate", json={"allocation": {}}).status_code == 422
+
+
+def test_simulate_negative_weight_422(app_client):
+    assert app_client.post("/finance/simulate",
+                           json={"allocation": {"crypto": 60, "etf": -20}}).status_code == 422
+
+
+def test_simulate_unknown_channel_422(app_client):
+    assert app_client.post("/finance/simulate",
+                           json={"allocation": {"crypto": 50, "bogus": 50}}).status_code == 422
+
+
+def test_simulate_normalizes_and_flags(app_client):
+    """Weights that don't sum to 100 are normalized → normalized=True + warning."""
+    body = app_client.post("/finance/simulate",
+                           json={"allocation": {"crypto": 6000, "etf": 4000}}).json()
+    assert body["data"]["normalized"] is True
+    assert "normalized" in (body.get("warning") or "").lower()
+    assert body["data"]["hypothetical"]["hhi"] == 0.52  # .6²+.4² = .36+.16
+
+
+def test_simulate_wins_over_channel_param(app_client):
+    """POST /finance/simulate routes to the simulate handler, not /{channel} (which is GET)."""
+    r = app_client.post("/finance/simulate", json={"allocation": {"crypto": 100}})
+    assert r.status_code == 200 and "hypothetical" in r.json()["data"]
+
+
+def test_simulate_endpoint_neutral_no_advice(app_client):
+    blob = str(app_client.post("/finance/simulate",
+               json={"allocation": {"crypto": 40, "etf": 30, "vn": 20, "dry": 10}}).json()).lower()
+    for word in ("recommend", "should", "buy", "sell", "advice"):
+        assert word not in blob
