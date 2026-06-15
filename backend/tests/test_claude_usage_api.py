@@ -77,9 +77,14 @@ def test_get_usage_envelope(app_client):
     assert d["byModel"][0]["costUSD"] == 5.0  # 1M opus-4-7 input @ 5/1M (NEW 4.5+ tier)
 
 
-def test_get_usage_pct_self_describing(app_client):
+def test_get_usage_pct_is_quota_window_not_used_cap(app_client):
+    # NG1: pct is the quota-window % (pct5h/weekly) or None — NEVER used/cap. So it's
+    # either None (no snapshot) or a sane 0-100, but NOT the used/cap ratio.
     d = app_client.get("/claude-usage").json()["data"]
-    assert d["pct"] == round(d["used"] / d["cap"] * 100, 1)  # checkable from payload
+    assert d["pct"] is None or (0.0 <= d["pct"] <= 100.0)
+    if d["used"] > d["cap"]:
+        # the old bug would headline >100% here; now it's None or ≤100.
+        assert d["pct"] is None or d["pct"] <= 100.0
 
 
 # --- fail-open empty mode (200, not 500) when NO token source at all ---
@@ -220,5 +225,6 @@ def test_get_usage_pct_zero_when_no_tokens(app_client):
     assert resp.status_code == 200
     d = resp.json()["data"]
     assert d["used"] == 0
-    assert d["pct"] == 0.0
+    # NG1: pct is the quota-window % — no snapshot here → None (honest), not 0.0/used·cap.
+    assert d["pct"] is None
     assert d["source"] == "none"

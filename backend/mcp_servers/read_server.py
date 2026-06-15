@@ -398,11 +398,16 @@ def wiki_backlinks(note_id: int) -> dict[str, Any]:
 def check_proposal_status(proposal_id: int) -> dict[str, Any]:
     """One proposal's disposition by id: status (pending|accepted|rejected),
     appliedRef (the entry id an accept created), applyError (why an accept couldn't
-    apply), decidedBy + decided (who ratified, when). Unknown id → ``{found: False}``
-    (honest, not a crash). READ-ONLY."""
-    p = _proposal_get(int(proposal_id))
+    apply), decidedBy + decided (who ratified, when). Unknown / malformed id →
+    ``{found: False}`` (honest, not a crash/traceback — NG4). READ-ONLY."""
+    # NG4: a non-int id (e.g. "nope123") must not leak a raw ValueError to the agent.
+    try:
+        pid = int(proposal_id)
+    except (ValueError, TypeError):
+        return {"found": False, "proposalId": proposal_id}
+    p = _proposal_get(pid)
     if p is None:
-        return {"found": False, "proposalId": int(proposal_id)}
+        return {"found": False, "proposalId": pid}
     return {
         "found": True,
         "proposalId": p["id"],

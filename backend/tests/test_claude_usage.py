@@ -145,18 +145,21 @@ def test_get_usage_handcalc(stats_file, isolated_paths):
     # model (top-level) = highest total; tie 2M each → first after sort
     assert u.model in ("claude-opus-4-7", "claude-sonnet-4-6")
     assert u.source == "stats-cache"
-    # cap default 200_000, pct = round(200/200000*100,1) = 0.1
+    # cap default 200_000. NG1: pct is the QUOTA-window % (pct5h/weekly), NOT used/cap.
+    # No quota snapshot in this fixture → pct is honest-None (never the used/cap garbage).
     assert u.cap == 200_000
-    assert u.pct == round(200 / 200_000 * 100, 1)
+    assert u.pct is None
 
 
-def test_pct_carries_used_and_cap(stats_file, isolated_paths):
-    """pct is verifiable from used + cap on the payload (self-describing)."""
+def test_NG1_pct_is_none_without_quota_snapshot(stats_file, isolated_paths):
+    """NG1 (source fix): pct is the quota-window % (pct5h/weekly), NOT used/cap. With
+    no quota snapshot, pct is None (honest) — NEVER the absurd used/cap ratio that
+    leaked ~4500% to every consumer."""
     stats_file({"lastComputedDate": _iso(0),
                 "dailyModelTokens": [{"date": _iso(0), "tokensByModel": {"claude-opus-4-7": 50_000}}],
                 "modelUsage": {}})
     u = service.get_usage()
-    assert u.pct == round(u.used / u.cap * 100, 1)  # checkable from the same payload
+    assert u.pct is None  # no snapshot → None, not 25.0 (used/cap), not 4500
 
 
 def test_stale_flag_when_lastcomputed_old(stats_file, isolated_paths):
@@ -227,8 +230,11 @@ def test_cap_zero_no_div_by_zero(stats_file, monkeypatch, isolated_paths):
                 "dailyModelTokens": [{"date": _iso(0), "tokensByModel": {"claude-opus-4-7": 100}}],
                 "modelUsage": {}})
     u = service.get_usage()
-    assert u.pct == 0.0  # guarded, no ZeroDivisionError
-    assert u.remaining == 0
+    # NG1: pct no longer divides by cap (it's pct5h/weelky/None) → no ZeroDivisionError
+    # regardless of cap; with no snapshot here, pct is None.
+    assert u.pct is None
+    # used(100) > cap(0) → remaining is honest-None (token quota unknown), not 0.
+    assert u.remaining is None
 
 
 # --------------------------------------------------------------------------- #
@@ -291,11 +297,12 @@ def test_set_override_cap_and_stubs(stats_file, isolated_paths):
     stats_file({"lastComputedDate": _iso(0),
                 "dailyModelTokens": [{"date": _iso(0), "tokensByModel": {"claude-opus-4-7": 100}}],
                 "modelUsage": {}})
-    u = service.set_override(ManualOverride(cap=500, resetIn="3h 12m", weekly=80_000))
+    u = service.set_override(ManualOverride(cap=500, resetIn="3h 12m", weekly=80))
     assert u.cap == 500
     assert u.resetIn == "3h 12m"  # stub now set via override
-    assert u.weekly == 80_000
-    assert u.pct == round(100 / 500 * 100, 1)
+    assert u.weekly == 80
+    # NG1: pct now derives from the weekly window % (no pct5h snapshot here), NOT used/cap.
+    assert u.pct == 80.0
     # persisted: a fresh get_usage reflects it
     assert service.get_usage().cap == 500
 
@@ -350,6 +357,23 @@ def test_quota_snapshot_live_fields(stats_file, quota_file, isolated_paths):
     assert u.ctxPct == 54.0
     assert u.resetIn == "1h 15m"     # 5h reset countdown from resets_at
     assert u.resetWeek == "3h 20m"
+    # NG1: pct = the quota-window % = pct5h (preferred), NOT used/cap.
+    assert u.pct == 6.0
+
+
+def test_NG1_pct_falls_back_to_weekly_when_no_pct5h(stats_file, quota_file, isolated_paths):
+    """NG1: pct5h absent but weekly present → pct = weekly (still a sane window %),
+    never used/cap."""
+    stats_file({"lastComputedDate": _iso(0),
+                "dailyModelTokens": [{"date": _iso(0), "tokensByModel": {"claude-opus-4-7": 9_000_000}}],
+                "modelUsage": {}})
+    quota_file({  # NO five_hour → pct5h None; seven_day present → weekly drives pct
+        "seven_day": {"used_percentage": 71, "resets_at": _epoch_in(200)},
+    })
+    u = service.get_usage()
+    assert u.pct5h is None and u.weekly == 71
+    assert u.pct == 71.0           # falls back to weekly, NOT used/cap (~4500%)
+    assert u.pct <= 100.0
 
 
 def test_quota_reset_minutes_only(stats_file, quota_file, isolated_paths):

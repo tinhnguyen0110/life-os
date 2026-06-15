@@ -441,6 +441,23 @@ def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
     assert "error" not in brief["macro"] and "error" not in brief["wiki"]
 
 
+def test_NG1_life_brief_claude_pct_sane_cross_consumer(app_db):
+    """NG1 cross-consumer proof: life_brief.brief.claude.pct must be ≤100 or None —
+    NEVER the ~4500% used/cap overflow (the SYNTH leak the source-fix closes). This is
+    the surface that leaked it; fixing claude_usage at the source auto-corrects it."""
+    pct = rs.life_brief()["brief"]["claude"].get("pct")
+    assert pct is None or pct <= 100.0
+
+
+def test_NG4_check_proposal_status_bad_id_is_found_false(app_db):
+    """NG4: a non-int / malformed proposal id → {found:false}, NOT a raw ValueError
+    traceback leaked to the agent."""
+    out = rs.check_proposal_status("nope123")  # type: ignore[arg-type]
+    assert out["found"] is False
+    # a valid-but-absent int id is still honest found:false
+    assert rs.check_proposal_status(999999)["found"] is False
+
+
 def test_R2G1_life_brief_still_neutral_with_new_sections(app_db):
     """The 3 new sections must not leak advice/sentiment (macro=descriptive, news=
     source-cited headlines, wiki=stats) — the brief stays DATA-only."""

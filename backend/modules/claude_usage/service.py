@@ -290,9 +290,24 @@ def get_usage(window: str = "5h") -> ClaudeUsage:
         avg_per_day = round(sum(d.tokens for d in series) / len(series)) if series else 0
         peak = max(series, key=lambda d: d.tokens) if series else _zero_day()
         used = today  # active window default = today's total
-        pct = round(used / cap * 100, 1) if cap > 0 else 0.0
+        # NG1 (source fix): pct is the QUOTA-WINDOW used %, NOT used/cap. cap is a
+        # context-WINDOW allowance (200k), used is today's TOKEN count (~8.9M) → used/cap
+        # reads ~4500% garbage that leaked to EVERY consumer (raw tool / life_brief /
+        # daily_brief). Derive from the sane snapshot window: pct5h, else weekly, else
+        # None. Clamped 0-100. NEVER used/cap. (weekly is the resolved field above —
+        # NOT pctWeek, which is only the internal dict key; SYNTH lesson.)
+        pct: float | None
+        if q["pct5h"] is not None:
+            pct = round(min(max(float(q["pct5h"]), 0.0), 100.0), 1)
+        elif weekly is not None:
+            pct = round(min(max(float(weekly), 0.0), 100.0), 1)
+        else:
+            pct = None
+        # remaining off the broken used/cap is meaningless (used >> cap → always 0);
+        # null it when used exceeds cap (honest — we don't know the real token quota).
+        remaining = max(cap - used, 0) if used <= cap else None
         return ClaudeUsage(
-            model=model, used=used, cap=cap, pct=pct, remaining=max(cap - used, 0),
+            model=model, used=used, cap=cap, pct=pct, remaining=remaining,
             resetIn=reset_in, weekly=weekly, pct5h=q["pct5h"], resetWeek=q["resetWeek"],
             ctxPct=q["ctxPct"], ctxUsed=q["ctxUsed"], ctxMax=q["ctxMax"], ctxModel=q["ctxModel"],
             quotaSource=quota_source, series=series, today=today,
