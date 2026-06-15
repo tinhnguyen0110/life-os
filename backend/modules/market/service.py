@@ -587,6 +587,19 @@ def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
     return [PricePoint(asset=r["asset"], price=float(r["price"]), ts=r["ts"]) for r in rows]
 
 
+def price_at(asset: str, ts: str) -> PricePoint | None:
+    """Point-in-time price for ``asset`` AS OF ``ts`` (ISO-8601 UTC) — the most recent
+    OWNED price_history point at or before ``ts``. Returns None when we have no point
+    that old (HONEST: we do NOT fabricate or interpolate — the caller learns the series
+    doesn't cover that instant). This is the building block for "what was X worth on
+    date D" without guessing. ``ts`` is taken as given (the DB stores ISO-8601 UTC).
+    """
+    row = db.price_at_or_before(asset, ts)
+    if row is None:
+        return None
+    return PricePoint(asset=row["asset"], price=float(row["price"]), ts=row["ts"])
+
+
 def backfill(symbols: list[str] | None = None, days: int = 365) -> dict:
     """Backfill HISTORICAL daily prices from CoinGecko market_chart — fixes the
     "only ~9 days of history" gap (the 5-min poller only accumulates forward).

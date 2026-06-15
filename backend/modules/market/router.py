@@ -136,6 +136,22 @@ def get_relative_strength(symbol: str, vs: str = "BTC", hours: int = 720):
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
 
+@router.get("/price-at/{symbol}")
+def get_price_at(symbol: str, ts: str):
+    """Point-in-time price for ``symbol`` AS OF ``ts`` (ISO-8601 UTC) — the most recent
+    OWNED price point at or before ``ts``. 404 if untracked. If we have no point that
+    old → 200 with ``{point: null}`` + a warning (HONEST: not fabricated/interpolated)."""
+    sym = symbol.strip().upper()
+    tracked = {a.get("symbol") for a in service.tracked_assets()}
+    if sym not in tracked:
+        raise HTTPException(status_code=404, detail=f"asset {sym!r} is not tracked")
+    point = service.price_at(sym, ts)
+    if point is None:
+        return ok(data={"symbol": sym, "ts": ts, "point": None},
+                  warning=f"no owned price point at or before {ts} for {sym}")
+    return ok(data={"symbol": sym, "ts": ts, "point": point.model_dump()})
+
+
 @router.post("/backfill")
 def post_backfill(body: BackfillInput):
     """Backfill historical daily prices (CoinGecko market_chart) into price_history —

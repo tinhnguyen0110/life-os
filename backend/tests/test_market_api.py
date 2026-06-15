@@ -612,3 +612,27 @@ def test_backfill_validates_days_range(app_client):
 def test_backfill_empty_symbols_list_is_422(app_client):
     """An explicit but all-blank symbols list → 422 (honest, not a silent all-assets run)."""
     assert app_client.post("/market/backfill", json={"symbols": ["  ", ""]}).status_code == 422
+
+
+# --- price-at (29C): GET /market/price-at/{symbol} — owned point-in-time, honest ---
+def test_price_at_endpoint_returns_owned_point(app_client):
+    from datetime import datetime, timezone
+    from store import db
+    db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
+    db.record_price("BTC", 55000.0, datetime(2026, 5, 5, tzinfo=timezone.utc).isoformat())
+    d = app_client.get("/market/price-at/BTC?ts=2026-05-06T00:00:00+00:00").json()["data"]
+    assert d["point"] is not None and d["point"]["price"] == 55000.0
+
+
+def test_price_at_endpoint_honest_null_before_data(app_client):
+    """No owned point that old → 200 {point: null} + warning, NOT a fabricated price."""
+    from datetime import datetime, timezone
+    from store import db
+    db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
+    body = app_client.get("/market/price-at/BTC?ts=2020-01-01T00:00:00+00:00").json()
+    assert body["data"]["point"] is None
+    assert "no owned price point" in (body.get("warning") or "")
+
+
+def test_price_at_untracked_is_404(app_client):
+    assert app_client.get("/market/price-at/NOTATRACKEDSYM?ts=2026-05-01T00:00:00+00:00").status_code == 404

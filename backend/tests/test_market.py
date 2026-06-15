@@ -855,3 +855,43 @@ class TestBackfill:
         db.close_db()
 
 
+class TestPriceAt:
+    """G2 — price_at: owned point-in-time, honest None, no fabrication/interpolation."""
+
+    def test_price_at_returns_owned_point(self, tmp_path, monkeypatch):
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
+        db.record_price("BTC", 55000.0, "2026-05-05T00:00:00+00:00")
+        # as-of 05-06 → the most recent point AT OR BEFORE = the 05-05 one
+        pt = _svc.price_at("BTC", "2026-05-06T00:00:00+00:00")
+        assert pt is not None and pt.price == 55000.0
+        db.close_db()
+
+    def test_price_at_picks_at_or_before_not_future(self, tmp_path, monkeypatch):
+        """As-of a date BETWEEN two points returns the earlier one — never reaches
+        forward to a future price (no lookahead)."""
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
+        db.record_price("BTC", 60000.0, "2026-05-10T00:00:00+00:00")
+        pt = _svc.price_at("BTC", "2026-05-05T00:00:00+00:00")
+        assert pt is not None and pt.price == 50000.0  # the 05-01 point, NOT 05-10
+        db.close_db()
+
+    def test_price_at_none_before_any_data(self, tmp_path, monkeypatch):
+        """No point that old → honest None (NOT fabricated, NOT the nearest future)."""
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        db.record_price("BTC", 50000.0, "2026-05-01T00:00:00+00:00")
+        pt = _svc.price_at("BTC", "2020-01-01T00:00:00+00:00")
+        assert pt is None
+        db.close_db()
+
+    def test_price_at_empty_series_none(self, tmp_path, monkeypatch):
+        _isolated_service(tmp_path, monkeypatch)
+        from store import db
+        assert _svc.price_at("BTC", "2026-05-01T00:00:00+00:00") is None
+        db.close_db()
+
+
