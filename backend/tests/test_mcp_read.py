@@ -48,9 +48,10 @@ def mock_okx_for_insights(monkeypatch):
     undeployed-capital insight has real cross-domain data to fire on."""
     from modules.finance import service as fin
     from modules.exchange.schema import ExchangeOverview, OkxBalance
+    # 95% USDT (> the 90% undeployed threshold; mirrors the live ~97.7% reality)
     snap = ExchangeOverview(configured=True, totalUsdValue=10000.0, balances=[
-        OkxBalance(symbol="USDT", available=9000, frozen=0, total=9000, usdValue=9000.0),
-        OkxBalance(symbol="BTC", available=0.016, frozen=0, total=0.016, usdValue=1000.0),
+        OkxBalance(symbol="USDT", available=9500, frozen=0, total=9500, usdValue=9500.0),
+        OkxBalance(symbol="BTC", available=0.008, frozen=0, total=0.008, usdValue=500.0),
     ])
     monkeypatch.setattr(fin.exchange_service, "get_overview", lambda: (snap, None))
 
@@ -285,74 +286,101 @@ def test_insights_shape_and_honest_empty(monkeypatch, app_db):
     monkeypatch.setattr(rs, "_mkt_tracked", lambda: [])
     monkeypatch.setattr(rs, "_wiki_search", lambda *a, **k: [])
     out = rs.insights()
-    assert out == {"insights": []}
+    assert out["insights"] == []
+    assert out["note"] == "nothing notable across modules right now"  # honest-empty, not fabricated
+    assert "asOf" in out and out["sources"] == []
+
+
+def test_insights_shape_frozen(app_db):
+    """FROZEN shape: {insights:[{insight,severity,evidence,sources}], asOf, sources, note?}."""
+    out = rs.insights()
+    assert {"insights", "asOf", "sources"} <= set(out)
+    for i in out["insights"]:
+        assert {"insight", "severity", "evidence", "sources"} <= set(i)
+        assert i["severity"] in ("high", "medium", "low")
+        assert isinstance(i["insight"], str) and i["insight"]
+        assert i["evidence"], "every insight carries non-empty evidence (anti-hallucination)"
+        assert i["sources"], "every insight names its source tool(s)"
 
 
 def test_insights_each_is_neutral_no_advice_verb(app_db):
-    """Every insight is a NEUTRAL observation — no buy/sell/advice/recommendation verb
-    leaks (insights describe a pattern; the agent decides)."""
-    flat = json.dumps(rs.insights()).lower()
-    for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":",
-                   "you should", "we recommend"):
-        assert banned not in flat, f"insights leaked a non-neutral term: {banned}"
+    """NEUTRAL (HARD): no advice verb (should/buy/sell/rebalance/move/consider/recommend)
+    in ANY emitted insight string — they're composition + evidence statements."""
+    out = rs.insights()
+    for i in out["insights"]:
+        s = i["insight"].lower()
+        for verb in ("should", "buy", "sell", "rebalance", "move ", "consider", "recommend"):
+            assert verb not in s, f"insight leaked an advice verb {verb!r}: {i['insight']}"
 
 
 def test_insights_undeployed_capital_fires_on_stablecoin_heavy(mock_okx_for_insights, app_db):
-    """undeployed-capital fires when crypto-channel stablecoins + dry powder exceed 30%
-    of the portfolio (NB4 stableValue feeds it)."""
+    """undeployed-capital FIRES (high) when the crypto channel is >90% stablecoin; evidence
+    carries stablePct + dryPowder; source finance_overview."""
     out = rs.insights()
-    ids = {i["id"] for i in out["insights"]}
-    assert "undeployed-capital" in ids
-    ins = next(i for i in out["insights"] if i["id"] == "undeployed-capital")
-    assert ins["sources"] == ["finance"]
-    assert ins["evidence"]["pct"] > 30.0
+    ins = next((i for i in out["insights"] if "stablecoin" in i["insight"]), None)
+    assert ins is not None, "undeployed-capital should fire on a 90%-stablecoin crypto channel"
+    assert ins["severity"] == "high"
+    assert ins["sources"] == ["finance_overview"]
+    assert ins["evidence"]["stablePct"] > 90.0 and "dryPowder" in ins["evidence"]
+
+
+def test_insights_undeployed_does_not_fire_when_healthy(monkeypatch, app_db):
+    """ANTI-BLANKET (distinguishing): a HEALTHY crypto channel (stablePct 20) → undeployed
+    does NOT fire. Proves it keys on the REAL >90% condition, not blanket text."""
+    from types import SimpleNamespace
+    healthy = SimpleNamespace(channel="crypto", stablePct=20.0, target=20.0, pct=20.0)
+    ov = SimpleNamespace(allocations=[healthy], dryPowder=0.0, totalValue=10000.0)
+    monkeypatch.setattr(rs, "_fin_overview", lambda: (ov, []))
+    assert rs._insight_undeployed_capital() is None
 
 
 def test_insights_all_crypto_overbought_distinguishing(monkeypatch, app_db):
-    """DISTINGUISHING: fires ONLY when ALL tracked crypto are overbought. With a mix
-    (one neutral) it must NOT fire — proves it's an AND over the set, not 'any overbought'."""
+    """DISTINGUISHING: fires ONLY when ALL tracked crypto are overbought. One neutral → NO
+    fire (AND over the set, not 'any overbought')."""
     crypto = [{"symbol": "BTC", "assetClass": "crypto"},
               {"symbol": "ETH", "assetClass": "crypto"}]
     monkeypatch.setattr(rs, "_mkt_tracked", lambda: crypto)
 
     def _ind(sym, names, hours=720, full=False):
-        sig = "overbought" if sym == "BTC" else "neutral"  # ETH neutral → rule must NOT fire
+        sig = "overbought" if sym == "BTC" else "neutral"  # ETH neutral → must NOT fire
         return {"indicators": {"summary": {"signals": {"rsi": sig}, "latest": {"rsi": 50}}}}, []
     monkeypatch.setattr(rs, "_mkt_indicators", _ind)
-    assert "all-crypto-overbought" not in {i["id"] for i in rs.insights()["insights"]}
+    assert rs._insight_all_crypto_overbought() is None
 
-    # now ALL overbought → fires
+    # now ALL overbought → fires (medium, source market_indicators, evidence perAsset)
     monkeypatch.setattr(rs, "_mkt_indicators",
                         lambda s, n, hours=720, full=False:
                         ({"indicators": {"summary": {"signals": {"rsi": "overbought"},
                                                      "latest": {"rsi": 80}}}}, []))
-    fired = {i["id"] for i in rs.insights()["insights"]}
-    assert "all-crypto-overbought" in fired
+    ins = rs._insight_all_crypto_overbought()
+    assert ins is not None and ins["severity"] == "medium"
+    assert ins["sources"] == ["market_indicators"]
+    assert set(ins["evidence"]["perAsset"]) == {"BTC", "ETH"}
 
 
 def test_insights_fail_soft_one_bad_rule_doesnt_break(monkeypatch, app_db):
-    """A rule that raises → captured in warnings, the others still run (fail-soft)."""
+    """A rule that raises → tagged in sources as an error, the others still run (fail-soft)."""
     def _boom():
         raise RuntimeError("rule blew up")
     monkeypatch.setattr(rs, "_INSIGHT_RULES", [_boom, rs._insight_stalled_projects])
     out = rs.insights()
     assert "insights" in out  # didn't crash
-    assert any("rule blew up" in w for w in out.get("warnings", []))
+    assert any("error" in s for s in out["sources"])
 
 
-def test_insights_severity_ranked(monkeypatch, app_db):
-    """warn insights sort before info."""
+def test_insights_severity_ranked_high_to_low(monkeypatch, app_db):
+    """high insights sort before medium before low."""
     monkeypatch.setattr(rs, "_INSIGHT_RULES", [
-        lambda: {"id": "i1", "severity": "info", "title": "t", "evidence": {}, "sources": []},
-        lambda: {"id": "w1", "severity": "warn", "title": "t", "evidence": {}, "sources": []},
+        lambda: {"insight": "lo", "severity": "low", "evidence": {"x": 1}, "sources": ["a"]},
+        lambda: {"insight": "hi", "severity": "high", "evidence": {"x": 1}, "sources": ["a"]},
+        lambda: {"insight": "md", "severity": "medium", "evidence": {"x": 1}, "sources": ["a"]},
     ])
     out = rs.insights()["insights"]
-    assert [i["severity"] for i in out] == ["warn", "info"]
+    assert [i["severity"] for i in out] == ["high", "medium", "low"]
 
 
 def test_insights_read_only_no_disk_mutation(mock_okx_for_insights, app_db):
-    """READ-ONLY: calling insights() mutates no finance/wiki/projects store. (The rules
-    only read; assert the holdings store is byte+mtime unchanged across a call.)"""
+    """READ-ONLY: calling insights() mutates no finance store (byte+mtime unchanged)."""
     from core.config import settings
     from modules.finance import service as fin
     from modules.finance.schema import HoldingInput

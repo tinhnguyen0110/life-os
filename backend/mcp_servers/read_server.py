@@ -848,114 +848,115 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
 # Rules over REAL data only — a rule whose source is a stub/empty simply doesn't  #
 # fire (the Fear&Greed rule was DROPPED — its mock source isn't real data).       #
 # --------------------------------------------------------------------------- #
-_SEVERITY_RANK = {"warn": 0, "info": 1}
-_DRY_HEAVY_PCT = 30.0          # undeployed-capital fires above this % effectively-uninvested
-_STALLED_PROJECT_DAYS = 30     # a stall/dead project idle ≥ this many days
+# Severity rank for ordering (high → medium → low) — the dispatch's frozen severities.
+_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+_STABLE_UNDEPLOYED_PCT = 90.0  # crypto channel >this% stablecoin → undeployed (cash-equivalent)
+_FRAMEWORK_DEPLOYED_PCT = 1.0  # a target channel deployed BELOW this % = effectively un-executed
+_STALLED_PROJECT_DAYS = 30     # a project idle ≥ this many days
+
+
+def _insights_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _insight_undeployed_capital() -> dict[str, Any] | None:
-    """Fires when a large share of the portfolio is effectively UNDEPLOYED — the explicit
-    'dry' channel PLUS crypto-channel stablecoins (cash-equivalent, NB4 stablePct). NEUTRAL
-    observation of capital sitting in cash-likes; no 'deploy it' advice."""
+    """Fires when the crypto channel is >90% stablecoin (cash-equivalent) — i.e. capital is
+    parked in stables, not deployed to crypto exposure vs its target. NEUTRAL observation of
+    a composition fact (NB4 stablePct); no 'deploy it' advice."""
     ov, _ = _fin_overview()
-    total = ov.totalValue
-    if total <= 0:
-        return None
     crypto = next((a for a in ov.allocations if a.channel == "crypto"), None)
-    stable_value = float(getattr(crypto, "stableValue", None) or 0.0) if crypto else 0.0
-    undeployed = round(ov.dryPowder + stable_value, 2)
-    pct = round(undeployed / total * 100.0, 1)
-    if pct <= _DRY_HEAVY_PCT:
+    if crypto is None:
+        return None
+    stable_pct = getattr(crypto, "stablePct", None)
+    if stable_pct is None or stable_pct <= _STABLE_UNDEPLOYED_PCT:
         return None
     return {
-        "id": "undeployed-capital",
-        "title": f"{pct}% of the portfolio (${undeployed:,.0f}) is undeployed — dry powder "
-                 f"+ crypto-channel stablecoins (cash-equivalent)",
-        "severity": "info",
-        "evidence": {"undeployedValue": undeployed, "totalValue": total, "pct": pct,
-                     "dryPowder": ov.dryPowder, "stableValue": stable_value},
-        "sources": ["finance"],
+        "insight": f"crypto channel is {stable_pct:.0f}% stablecoin (cash-equivalent) — "
+                   f"undeployed vs target, not crypto exposure",
+        "severity": "high",
+        "evidence": {"stablePct": stable_pct, "dryPowder": ov.dryPowder,
+                     "cryptoTarget": getattr(crypto, "target", None)},
+        "sources": ["finance_overview"],
     }
 
 
 def _insight_all_crypto_overbought() -> dict[str, Any] | None:
-    """Fires when EVERY tracked crypto asset (≥2) reads technically overbought (RSI≥70 →
-    the neutral summary rsi_signal). NEUTRAL technical observation — NOT 'sell'."""
+    """Fires when ≥2 tracked crypto assets are ALL technically overbought (RSI≥70 → the
+    neutral summary rsi_signal). One overbought asset ≠ 'all' — doesn't fire. NEUTRAL
+    technical observation — NOT 'sell'."""
     crypto = [a for a in _mkt_tracked() if a.get("assetClass") == "crypto" and a.get("symbol")]
     if len(crypto) < 2:
         return None
-    per: list[dict[str, Any]] = []
+    per_asset: dict[str, Any] = {}
+    all_overbought = True
     for a in crypto:
         sym = a["symbol"]
         ind, _ = _mkt_indicators(sym, ["summary"], hours=720, full=False)
         summary = (ind.get("indicators", {}) or {}).get("summary", {}) if isinstance(ind, dict) else {}
         sig = (summary.get("signals", {}) or {}).get("rsi")
-        rsi_val = (summary.get("latest", {}) or {}).get("rsi")
-        per.append({"symbol": sym, "rsiSignal": sig, "rsi": rsi_val})
-    # only fires if EVERY crypto has a known signal AND all are overbought
-    if not per or any(p["rsiSignal"] is None for p in per):
-        return None
-    if not all(p["rsiSignal"] == "overbought" for p in per):
+        per_asset[sym] = (summary.get("latest", {}) or {}).get("rsi")
+        if sig != "overbought":
+            all_overbought = False
+    if not all_overbought:
         return None
     return {
-        "id": "all-crypto-overbought",
-        "title": f"all {len(per)} tracked crypto are technically overbought (RSI≥70)",
-        "severity": "warn",
-        "evidence": {"assets": per},
-        "sources": ["market"],
+        "insight": f"all {len(crypto)} tracked crypto overbought (RSI≥70)",
+        "severity": "medium",
+        "evidence": {"perAsset": per_asset},
+        "sources": ["market_indicators"],
     }
 
 
 def _insight_framework_vs_execution() -> dict[str, Any] | None:
-    """Cross-domain: the vault has INVESTING-FRAMEWORK notes BUT the portfolio is largely
-    cash-equivalent (crypto channel mostly stablecoin / basisUnknown) — i.e. a framework
-    is written but not yet reflected in deployed positions. NEUTRAL observation of the gap
-    between recorded thinking and current allocation; no 'go execute' advice."""
-    hits = _wiki_search("investment framework", limit=10)
-    framework = [h for h in hits if any(
-        kw in str(h.get("title", "")).lower() for kw in ("framework", "invest", "allocation", "portfolio")
-    )]
-    if not framework:
-        return None
+    """Cross-domain JOIN: the vault has an investment/strategy framework note AND a target
+    channel (etf/vn) sits ~0% deployed → a written framework not yet reflected in positions.
+    Fires ONLY if BOTH halves are real (a real note AND a real under-deployed target) — the
+    JOIN is the insight; never fabricate either half. NEUTRAL observation of the gap."""
+    hits = _wiki_search("investment framework strategy", limit=10)
+    note = next((h for h in hits if any(
+        kw in str(h.get("title", "")).lower()
+        for kw in ("framework", "invest", "strategy", "allocation", "portfolio")
+    )), None)
+    if note is None:
+        return None  # no real framework note → no JOIN
     ov, _ = _fin_overview()
-    crypto = next((a for a in ov.allocations if a.channel == "crypto"), None)
-    stable_pct = getattr(crypto, "stablePct", None) if crypto else None
-    if stable_pct is None or stable_pct < 50.0:
-        return None  # portfolio is actually deployed → no gap to observe
-    return {
-        "id": "wiki-framework-vs-finance-execution",
-        "title": f"{len(framework)} investing-framework note(s) on record, but the crypto "
-                 f"channel is {stable_pct:.0f}% stablecoin (cash-equivalent) — framework "
-                 f"not yet reflected in deployed positions",
-        "severity": "info",
-        "evidence": {
-            "frameworkNotes": [{"id": h["id"], "title": h["title"]} for h in framework[:5]],
-            "cryptoStablePct": stable_pct,
-        },
-        "sources": ["wiki", "finance"],
-    }
+    # a target channel (etf/vn) with a real target but ~0% deployed
+    for a in ov.allocations:
+        if a.channel in ("etf", "vn") and a.target > 0 and a.pct <= _FRAMEWORK_DEPLOYED_PCT:
+            return {
+                "insight": f"framework note #{note['id']} '{note['title']}' on record, "
+                           f"but finance shows {a.pct:.0f}% deployed to {a.channel} "
+                           f"(target {a.target:.0f}%)",
+                "severity": "medium",
+                "evidence": {"noteId": note["id"], "noteTitle": note["title"],
+                             "channel": a.channel, "deployedPct": a.pct, "targetPct": a.target},
+                "sources": ["wiki_search", "finance_overview"],
+            }
+    return None  # framework note exists but no under-deployed target → no gap to observe
 
 
 def _insight_stalled_projects() -> dict[str, Any] | None:
-    """Fires when ≥1 tracked project is stall/dead AND idle ≥30 days. NEUTRAL observation
-    of which projects haven't moved; no 'revive or kill' advice."""
+    """Fires per project idle > 30 days (health stall/dead). NEUTRAL observation of which
+    projects haven't moved; no 'revive or kill' advice. Returns the single most-stalled
+    (one low-severity insight; evidence carries the count)."""
     statuses, _ = _proj_list()
-    stalled = [
-        {"id": s.id, "name": s.name, "health": s.health, "lastDays": s.lastDays,
-         "progress": s.progress}
+    stalled: list[dict[str, Any]] = [
+        {"projectId": s.id, "name": s.name, "idleDays": int(s.lastDays or 0)}
         for s in statuses
         if s.health in ("stall", "dead") and (s.lastDays or 0) >= _STALLED_PROJECT_DAYS
     ]
     if not stalled:
         return None
-    stalled.sort(key=lambda p: -int(p["lastDays"] or 0))
+    stalled.sort(key=lambda p: -int(p["idleDays"]))  # idleDays is int (set via int() above)
+    top = stalled[0]
     return {
-        "id": "stalled-project",
-        "title": f"{len(stalled)} project(s) stalled ≥{_STALLED_PROJECT_DAYS}d "
-                 f"(longest: {stalled[0]['name']} @ {stalled[0]['lastDays']}d)",
-        "severity": "warn",
-        "evidence": {"projects": stalled},
-        "sources": ["projects"],
+        "insight": f"project '{top['name']}' idle {top['idleDays']}d"
+                   + (f" (+{len(stalled) - 1} more stalled ≥{_STALLED_PROJECT_DAYS}d)"
+                      if len(stalled) > 1 else ""),
+        "severity": "low",
+        "evidence": {"projectId": top["projectId"], "idleDays": top["idleDays"],
+                     "stalledCount": len(stalled), "stalled": stalled},
+        "sources": ["projects_list"],
     }
 
 
@@ -968,29 +969,41 @@ _INSIGHT_RULES: list[Callable[[], dict[str, Any] | None]] = [
 
 
 def insights() -> dict[str, Any]:
-    """Cross-domain INSIGHTS: neutral OBSERVATIONS connecting finance / market / wiki /
-    projects that no single-module read surfaces (e.g. 'framework written but portfolio
-    still cash'). Each insight: ``{id, title, severity, evidence, sources}``. The agent
-    reads these as grounded starting points and does its OWN reasoning — they are NEUTRAL
-    observations, NOT advice (no buy/sell/do verb). Honest-empty: nothing fires → ``{insights: []}``.
+    """Cross-domain INSIGHTS: neutral, evidence-grounded OBSERVATIONS connecting finance /
+    market / wiki / projects that no single-module read surfaces (e.g. 'framework written but
+    a target channel still ~0% deployed'). Each insight: ``{insight: str, severity:
+    high|medium|low, evidence: {real numbers it derived from}, sources: [tool names]}``.
 
-    Severity-ranked (warn before info). Each rule is fail-soft: a down/empty source means
-    that rule simply doesn't fire (it never breaks the others). Rules run over REAL data
-    only — the Fear&Greed rule was DROPPED because its source is a stub mock (no fabricated
-    signal). READ-ONLY: observes the live read paths, writes nothing."""
+    The agent reads these as grounded starting points and does its OWN reasoning — they are
+    NEUTRAL composition/evidence statements, NOT advice (no should/buy/sell/rebalance/move/
+    consider/recommend verb). Severity-ranked high→low. Each rule is fail-soft (a down/empty
+    source → that rule simply doesn't fire, never breaks the others; an erroring rule is
+    tagged in ``sources`` as an error and skipped).
+
+    Rules run over REAL data ONLY — the Fear&Greed rule was DROPPED because F&G is a stub
+    mock (citing it would fabricate evidence, the opposite of this tool's spine).
+
+    Honest-empty: nothing fires → ``{insights: [], note: "...", asOf, sources: []}`` (NOT a
+    fabricated insight). READ-ONLY: observes the live read paths, writes nothing.
+    ``{insights, asOf, sources, note?}``."""
     found: list[dict[str, Any]] = []
-    warnings: list[str] = []
+    sources_touched: set[str] = set()
     for rule in _INSIGHT_RULES:
         try:
             ins = rule()
             if ins is not None:
                 found.append(ins)
-        except Exception as exc:  # noqa: BLE001 — one bad rule must not break the set
-            warnings.append(f"{rule.__name__}: {type(exc).__name__}: {exc}")
-    found.sort(key=lambda i: _SEVERITY_RANK.get(i.get("severity", "info"), 9))
-    out: dict[str, Any] = {"insights": _jsonable(found)}
-    if warnings:
-        out["warnings"] = warnings
+                sources_touched.update(ins.get("sources", []))
+        except Exception as exc:  # noqa: BLE001 — one bad rule must not break the composer
+            sources_touched.add(f"{rule.__name__}:error:{type(exc).__name__}")
+    found.sort(key=lambda i: _SEVERITY_RANK.get(i.get("severity", "low"), 9))
+    out: dict[str, Any] = {
+        "insights": _jsonable(found),
+        "asOf": _insights_now(),
+        "sources": sorted(sources_touched),
+    }
+    if not found:
+        out["note"] = "nothing notable across modules right now"
     return out
 
 

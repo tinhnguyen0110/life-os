@@ -54,7 +54,7 @@ Totals: **50 tools** — 40 read · 10 write (propose).
 | `wiki_proposal_status` |  | One WIKI proposal's disposition by id (the wiki_proposals queue — separate from agent_proposals) |
 | `wiki_list_proposals` |  | The agent's WIKI proposals (newest-first) with their current disposition — the wiki review queue |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
-| `insights` | ✓ | Cross-domain NEUTRAL observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
+| `insights` | ✓ | Cross-domain NEUTRAL evidence-grounded observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
 | `proposal_stats` |  | Counts of the agent's proposals by status (pending/accepted/rejected) so the |
