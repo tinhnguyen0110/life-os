@@ -63,6 +63,13 @@ STABLECOINS = frozenset({
 })
 STABLE_HEAVY_PCT = 50.0  # crypto channel >this% stablecoins → honest "dry-powder-like" warning
 STABLE_UNDEPLOYED_PCT = 90.0  # D3a: crypto >this% stablecoin → drift warning reframed as undeployed-cash
+# FINANCE-CORRECTNESS (Task #49, team-lead decided): a holding worth 0<usdValue<$1 is DUST —
+# folded into ONE per-channel ·dust summary entry for DISPLAY (value preserved, still counts
+# toward channel + total). A DISPLAY threshold, not a value cut. null-usdValue is NOT dust
+# (unknown ≠ small — stays visible). The "·" prefix is collision-proof (no real ticker starts
+# with it), so a real token can never be mistaken for the dust summary line.
+DUST_USD_THRESHOLD = 1.00
+DUST_SYMBOL = "·dust"
 
 BASELINE_TARGETS: dict[str, float] = {"crypto": 38.0, "etf": 24.0, "vn": 18.0, "dry": 20.0}
 BASELINE_RUNGS: list[float] = [-10.0, -20.0, -30.0]
@@ -121,7 +128,7 @@ def _write_holdings(holdings: list[Holding]) -> None:
 def upsert_holding(body: HoldingInput) -> Holding:
     """Add or replace (by symbol) a holding. Returns it."""
     holdings = [h for h in list_holdings() if h.symbol != body.symbol]
-    holding = Holding(
+    holding = Holding(  # type: ignore[call-arg]  # FINANCE-CORRECTNESS #49 enrichment fields default (no pydantic mypy plugin in env → it can't see Field() defaults)
         channel=body.channel, symbol=body.symbol, qty=body.qty,
         avgCost=body.avgCost, source=body.source, asOf=_now_iso(),
     )
@@ -244,6 +251,24 @@ def _price_of(symbol: str, avg_cost: float) -> tuple[float, str, str | None]:
     return avg_cost, "cost-fallback", f"{symbol}: no market price — using avgCost"
 
 
+def _change_pct_of(symbol: str, price: float, *, priced: bool) -> float | None:
+    """FINANCE-CORRECTNESS (#49): per-holding 24h %, via market.derive_change_pct — the
+    SAME path the watchlist uses (one consistent feed). The feed is TTL-cached, so the
+    quote re-fetch here is served from cache within the request (no double network hit).
+
+    ``priced`` = the price came from a REAL market quote. When False (cost-fallback price,
+    or an OKX value-only coin) there is no live quote to fall back on AND price is an
+    estimate, so changePct is honest-NULL (a series may still exist from our own history,
+    but without a real current quote the % would mix an estimated price with a real old
+    price — misleading; keep it null). When True, derive from our series with the quote's
+    own 24h change as the feed fallback."""
+    if not priced:
+        return None
+    quote = market_service.get_quote(symbol)
+    feed_fallback = quote.changePct if quote is not None else None
+    return market_service.derive_change_pct(symbol, price, feed_fallback)
+
+
 def _pnl(cost: float, current: float) -> PnL:
     abs_ = round(current - cost, 2)
     pct = round(abs_ / cost * 100.0, 2) if cost > 0 else None
@@ -305,12 +330,17 @@ def _aggregate(holdings: list[Holding]) -> tuple[dict, list[str]]:
             warnings.append(warn)
         value = round(price * h.qty, 2)
         cost = round(avg_cost * h.qty, 2)
+        # FINANCE-CORRECTNESS (#49): a real quote → changePct from the market feed; a
+        # cost-fallback price (source="cost-fallback") has no live quote → changePct null.
+        priced = source != "cost-fallback"
+        change_pct = _change_pct_of(h.symbol, price, priced=priced)
         ch = by_channel.setdefault(h.channel, {"value": 0.0, "cost": 0.0, "holdings": []})
         ch["value"] = round(ch["value"] + value, 2)
         ch["cost"] = round(ch["cost"] + cost, 2)
         ch["holdings"].append({
             "holding": h.model_dump(), "price": price, "source": source,
             "value": value, "pnl": _pnl(cost, value).model_dump(),
+            "changePct": change_pct,
         })
     return by_channel, warnings
 
@@ -450,20 +480,120 @@ def _okx_crypto_holdings() -> list[dict] | None:
         if b.total <= 0:
             continue  # not actually held → skip
         valued = b.usdValue is not None
-        value = round(float(b.usdValue), 2) if valued else 0.0
+        value = round(float(b.usdValue), 2) if b.usdValue is not None else 0.0
         # display price = value/qty when valued; None when unvalued (don't assume a price).
         price = round(value / b.total, 6) if (valued and b.total) else None
-        holding = Holding(channel="crypto", symbol=b.symbol, qty=b.total,
+        holding = Holding(channel="crypto", symbol=b.symbol, qty=b.total,  # type: ignore[call-arg]  # see #49 note above
                           avgCost=None, source="okx", asOf=now)
+        # FINANCE-CORRECTNESS (#49): a valued OKX coin gets a real 24h changePct from our
+        # series (the symbol is tradeable); an unvalued coin (price None) → null changePct.
+        change_pct = (_change_pct_of(b.symbol, price, priced=True)
+                      if (valued and price is not None) else None)
         entries.append({
             "holding": holding.model_dump(), "price": price, "source": "okx",
             "value": value,
             "pnl": None,  # honest-null: no per-coin cost basis (OKX-FINANCE decision)
+            "changePct": change_pct,
         })
     if not entries:
         return None
     entries.sort(key=lambda e: e["value"], reverse=True)  # most-valuable first
     return entries
+
+
+def _holding_from_entry(entry: dict) -> Holding:
+    """FINANCE-CORRECTNESS (#49): build an ENRICHED flat Holding from an aggregate entry
+    (the `{holding, price, value, changePct, source, ...}` shape `_aggregate`/
+    `_okx_crypto_holdings` produce). Surfaces the already-computed price/usdValue/changePct
+    onto the Holding — NEVER re-prices (the consistency invariant: this usdValue is the same
+    number that summed to the channel value).
+
+    UNPRICEABLE → honest-NULL price+usdValue (missing price ≠ zero worth, so it stays VISIBLE,
+    never folded as dust). Two unpriceable shapes:
+      - OKX value-only coin with no usdValue: price None, value 0.
+      - manual cost-fallback (NO market quote) with NO real basis (avgCost 0 → price 0.0):
+        a 0.0 "price" here is the ABSENCE of a price coinciding with a zero basis, NOT a real
+        ~$0 valuation — treat it as unpriceable so it doesn't masquerade as priced sub-cent
+        dust. A cost-fallback WITH a real avgCost keeps usdValue=avgCost×qty (honest estimate).
+    A REAL quote whose value rounds to ~$0.00 is NOT unpriceable — it IS ~$0 worth (priced
+    sub-cent → dust-eligible)."""
+    base = dict(entry.get("holding") or {})
+    price = entry.get("price")
+    value = entry.get("value")
+    source = entry.get("source")
+    # Unpriceable: no usable price at all. (a) OKX no-value (price None); (b) cost-fallback
+    # whose price is 0 (no quote AND no basis) — a 0 there is "no price", not a $0 valuation.
+    unpriceable = (price is None) or (source == "cost-fallback" and not price)
+    if unpriceable:
+        price = None
+        usd_value = None
+    else:
+        usd_value = value
+    base.update({
+        "price": price,
+        "usdValue": usd_value,
+        "changePct": entry.get("changePct"),
+        "isDust": False,
+        "count": None,
+    })
+    return Holding(**base)
+
+
+def _is_dust(h: Holding) -> bool:
+    """FINANCE-CORRECTNESS (#49) dust predicate (team-lead RULING, decide-and-log): a holding
+    is dust when it is PRICED (price not None) AND has a known usdValue (not None) BELOW $1 —
+    INCLUDING usdValue that rounds to 0.0 (a sub-cent coin OKX still prices, e.g. ETH/LINK/DOGE
+    1e-7 qty — the consumer-agent's literal complaint). A null-price OR null-usdValue coin is
+    UNKNOWN, not small → NOT dust (stays visible — lock d). `< threshold` is STRICT: usdValue
+    exactly $1.00 is NOT dust (≥ threshold stays visible)."""
+    return (h.price is not None and h.usdValue is not None
+            and h.usdValue < DUST_USD_THRESHOLD)
+
+
+def _fold_dust(holdings: list[Holding]) -> list[Holding]:
+    """FINANCE-CORRECTNESS (#49): per channel, collapse the priced-sub-$1 holdings (see
+    _is_dust) into ONE ·dust summary entry (isDust, count, usdValue=sum) so dust doesn't
+    clutter the list. Keeps DISPLAY order otherwise. NOT folded: usdValue ≥ $1 (individual)
+    and any null-price/null-usdValue holding (unknown ≠ small — stays visible). 0 dust in a
+    channel → no dust entry. The fold is DISPLAY-only — totalValue/channel value were already
+    computed from the full set."""
+    by_channel: dict[str, list[Holding]] = {}
+    for h in holdings:
+        by_channel.setdefault(h.channel, []).append(h)
+    out: list[Holding] = []
+    for channel, hs in by_channel.items():
+        kept: list[Holding] = []
+        dust: list[Holding] = []
+        for h in hs:
+            if _is_dust(h):
+                dust.append(h)
+            else:
+                kept.append(h)  # ≥$1, or null-price/null-usdValue (unknown) → stays individual
+        out.extend(kept)
+        if dust:
+            dust_value = round(sum(float(h.usdValue or 0.0) for h in dust), 2)
+            out.append(Holding(
+                channel=channel,  # type: ignore[arg-type]  # came off a valid Holding
+                symbol=DUST_SYMBOL, qty=0, avgCost=None, source="dust-fold", asOf=None,
+                price=None, usdValue=dust_value, changePct=None,
+                isDust=True, count=len(dust),
+            ))
+    return out
+
+
+def _enriched_holdings(by_channel: dict) -> list[Holding]:
+    """FINANCE-CORRECTNESS (#49): the flat FinanceOverview.holdings, enriched + dust-folded.
+    Built from the per-channel aggregate entries (which carry the already-computed price/
+    value/changePct) — so the per-holding usdValue is consistent with the channel value, by
+    construction. Unknown stored channels (not in CHANNELS) are skipped (same resilience as
+    the allocations loop)."""
+    flat: list[Holding] = []
+    for ch in sorted(by_channel):
+        if ch not in CHANNELS:
+            continue  # stale/unknown stored channel — skipped (mirrors allocations loop)
+        for entry in by_channel[ch].get("holdings", []):
+            flat.append(_holding_from_entry(entry))
+    return _fold_dust(flat)
 
 
 def get_overview() -> tuple[FinanceOverview, list[str]]:
@@ -491,12 +621,6 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
             "cost": crypto_cost,                 # aggregate cost (snapshot) — unchanged
             "holdings": crypto_holdings,         # NOW per-coin (value-only) from OKX
         }
-        # G2 (flat list too): the FinanceOverview.holdings flat list was EMPTY for
-        # crypto. Replace its crypto entries with the OKX per-coin Holdings (value-only),
-        # keep manual non-crypto. No double-count (OKX = crypto source of truth).
-        if okx_holdings is not None:
-            holdings = ([Holding(**e["holding"]) for e in okx_holdings]
-                        + [h for h in holdings if h.channel != "crypto"])
     if okx_warn:
         warnings.append(okx_warn)
 
@@ -557,7 +681,11 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
     overview = FinanceOverview(
         totalValue=total_value,
         change=Change(abs=0.0, pct=None) if total_value else None,
-        holdings=holdings,
+        # FINANCE-CORRECTNESS (#49): the flat holdings list is now ENRICHED (per-holding
+        # price/usdValue/changePct surfaced from the aggregate entries) + dust-folded. Built
+        # from by_channel (which already has the OKX override applied), so usdValue is
+        # consistent with each ChannelAlloc.value by construction.
+        holdings=_enriched_holdings(by_channel),
         allocations=allocations,
         pnlTotal=_pnl(total_cost, total_value),
         dryPowder=dry_powder,

@@ -19,7 +19,15 @@ Channel = Literal["crypto", "etf", "vn", "dry"]  # dry = "Dry powder" (SPEC §S5
 
 
 class Holding(BaseModel):
-    """One position. RAW inputs (qty, avgCost) + provenance (source, asOf)."""
+    """One position. RAW inputs (qty, avgCost) + provenance (source, asOf).
+
+    FINANCE-CORRECTNESS (Task #49): additive enrichment so the agent/FE can read a
+    token's worth from the payload. ``price``/``usdValue``/``changePct`` are SURFACED
+    from the same per-holding numbers ``_aggregate`` already computes (NOT re-priced) —
+    the per-holding usdValue sums to the channel's ``ChannelAlloc.value`` (consistency
+    invariant). Sub-$1 holdings fold into ONE per-channel ``·dust`` summary entry
+    (``isDust=True``, ``count`` set) so the list isn't cluttered by dust — the dust's
+    usdValue still counts toward the channel + total (fold is DISPLAY-only)."""
 
     channel: Channel
     symbol: str = Field(..., min_length=1)
@@ -31,6 +39,37 @@ class Holding(BaseModel):
     avgCost: float | None = Field(None, ge=0, description="avg cost per unit; None = no per-coin basis (OKX value-only)")
     source: str = Field("manual", description="provenance: manual | import | okx | ...")
     asOf: str | None = Field(None, description="ISO-8601 UTC last edited")
+    # FINANCE-CORRECTNESS (Task #49) — additive per-holding enrichment, all nullable.
+    price: float | None = Field(
+        None,
+        description="current unit price (USD). From the live market quote; the avgCost "
+                    "estimate when no quote (source=cost-fallback); None when unpriceable "
+                    "(OKX value-only coin with no usdValue). NULL on a ·dust summary entry "
+                    "(a sum-of-many has no single price).",
+    )
+    usdValue: float | None = Field(
+        None,
+        description="current market value (USD) = price×qty, the SAME number that sums to "
+                    "this channel's ChannelAlloc.value (consistency invariant). avgCost×qty "
+                    "when no quote (honest estimate). None when unpriceable (missing price ≠ "
+                    "zero worth). On a ·dust entry: the SUM of the folded holdings' usdValue.",
+    )
+    changePct: float | None = Field(
+        None,
+        description="24h % change, derived via market.derive_change_pct (the same one feed "
+                    "the watchlist uses). None when there is no price series for the symbol. "
+                    "NULL on a ·dust summary entry.",
+    )
+    isDust: bool = Field(
+        False,
+        description="True ONLY on a per-channel ·dust summary entry (collapses the channel's "
+                    "0<usdValue<$1 holdings into one line). A real holding is always False.",
+    )
+    count: int | None = Field(
+        None,
+        description="# of holdings folded into a ·dust summary entry; set ONLY on a dust "
+                    "entry (None on every real holding).",
+    )
 
 
 class PnL(BaseModel):
