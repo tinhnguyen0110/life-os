@@ -60,11 +60,25 @@ CREATE TABLE IF NOT EXISTS agent_proposals (
     correlation_id  TEXT,                          -- groups one agent session
     created         TEXT    NOT NULL,              -- ISO-8601 UTC
     decided         TEXT,                          -- set on accept/reject (human)
-    decided_by      TEXT                           -- who ratified (human)
+    decided_by      TEXT,                          -- who ratified (human)
+    applied_ref     TEXT,                          -- id of the entry the apply created (accept)
+    apply_error     TEXT                           -- why an accept could not apply (e.g. no handler)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_proposals_status ON agent_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_agent_proposals_module ON agent_proposals(module);
 CREATE INDEX IF NOT EXISTS idx_agent_proposals_corr ON agent_proposals(correlation_id);
+
+-- Immutable decision audit: one row per accept/reject (WHO did WHAT, WHEN). Never
+-- updated/deleted — forensic trail for the human dispose action.
+CREATE TABLE IF NOT EXISTS agent_proposals_audit (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id     INTEGER NOT NULL,
+    action          TEXT    NOT NULL,              -- accept | reject
+    decided_by      TEXT    NOT NULL,
+    detail          TEXT,                          -- applied_ref / apply_error / note
+    ts              TEXT    NOT NULL               -- ISO-8601 UTC
+);
+CREATE INDEX IF NOT EXISTS idx_agent_proposals_audit_pid ON agent_proposals_audit(proposal_id);
 """
 
 
@@ -94,6 +108,15 @@ def _loads(text: str | None) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
+def _col(row: sqlite3.Row, name: str) -> Any:
+    """Defensive column access: a row from an older schema (pre-applied_ref) lacks the
+    new columns — return None rather than raising IndexError."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     """Map an agent_proposals row → a response dict (camelCase, payload parsed back)."""
     return {
@@ -108,6 +131,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "created": row["created"],
         "decided": row["decided"],
         "decidedBy": row["decided_by"],
+        "appliedRef": _col(row, "applied_ref"),
+        "applyError": _col(row, "apply_error"),
     }
 
 
@@ -182,23 +207,88 @@ def count_by_status() -> dict[str, int]:
     return {r["status"]: r["c"] for r in rows}
 
 
-def mark_decided(proposal_id: int, *, status: str, decided: str,
-                 decided_by: str) -> dict[str, Any] | None:
-    """HUMAN-only: flip a pending proposal to accepted/rejected + record who/when. Does
-    NOT apply (write the target module) — applying an accepted proposal is future
-    human-side work, deliberately not built here so the agent path can't reach it.
-    Returns the updated row, or None if the id is unknown."""
+def mark_decided(proposal_id: int, *, status: str, decided: str, decided_by: str,
+                 applied_ref: str | None = None,
+                 apply_error: str | None = None) -> tuple[bool, dict[str, Any] | None]:
+    """HUMAN-only: ATOMICALLY flip a PENDING proposal to accepted/rejected + record
+    who/when (+ applied_ref/apply_error on accept). Returns ``(transitioned, row)``:
+
+      - ``transitioned`` is True ONLY if THIS call moved the row off 'pending'. The
+        UPDATE is guarded ``WHERE status='pending'`` so a 2nd call on an already-decided
+        proposal updates 0 rows → ``transitioned=False``. This is the IDEMPOTENCY
+        pivot: the apply layer applies the target-module write ONLY when transitioned
+        is True, so accepting twice never applies twice.
+      - ``row`` is the current proposal dict (post-update), or None if the id is unknown.
+
+    Does NOT itself write the target module — the SERVICE layer applies (calls the real
+    module create) and passes the resulting ``applied_ref`` back in. Keeping the
+    apply OUT of the store keeps the store db-only (the agent path can't reach a module
+    write through it)."""
     if status not in ("accepted", "rejected"):
         raise ValueError("status must be 'accepted' or 'rejected'")
     conn = db.get_conn()
     with _lock:
-        conn.execute(
-            "UPDATE agent_proposals SET status = ?, decided = ?, decided_by = ? "
-            "WHERE id = ? AND status = 'pending'",
-            (status, decided, decided_by, int(proposal_id)),
+        cur = conn.execute(
+            "UPDATE agent_proposals SET status = ?, decided = ?, decided_by = ?, "
+            "applied_ref = ?, apply_error = ? WHERE id = ? AND status = 'pending'",
+            (status, decided, decided_by, applied_ref, apply_error, int(proposal_id)),
         )
         conn.commit()
+        transitioned = cur.rowcount > 0
         row = conn.execute(
             "SELECT * FROM agent_proposals WHERE id = ?", (int(proposal_id),)
         ).fetchone()
-    return _row_to_dict(row) if row else None
+    return transitioned, (_row_to_dict(row) if row else None)
+
+
+def set_applied_ref(proposal_id: int, *, applied_ref: str | None = None,
+                    apply_error: str | None = None) -> None:
+    """Persist the apply result onto an already-accepted row (used when the service
+    applies AFTER the status transition). Append-style: only sets the given field."""
+    conn = db.get_conn()
+    with _lock:
+        if applied_ref is not None:
+            conn.execute("UPDATE agent_proposals SET applied_ref = ? WHERE id = ?",
+                         (applied_ref, int(proposal_id)))
+        if apply_error is not None:
+            conn.execute("UPDATE agent_proposals SET apply_error = ? WHERE id = ?",
+                         (apply_error, int(proposal_id)))
+        conn.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Decision audit — one immutable row per accept/reject (WHO did WHAT, WHEN)      #
+# --------------------------------------------------------------------------- #
+def append_audit(*, proposal_id: int, action: str, decided_by: str,
+                 detail: str | None, ts: str) -> None:
+    """Append one decision-audit row. Never updated/deleted (forensic trail)."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO agent_proposals_audit (proposal_id, action, decided_by, detail, ts) "
+            "VALUES (?,?,?,?,?)",
+            (int(proposal_id), action, decided_by, detail, ts),
+        )
+        conn.commit()
+
+
+def list_audit(proposal_id: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    """Decision-audit rows newest-first, optionally for one proposal."""
+    conn = db.get_conn()
+    with _lock:
+        if proposal_id is None:
+            rows = conn.execute(
+                "SELECT * FROM agent_proposals_audit ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM agent_proposals_audit WHERE proposal_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (int(proposal_id), int(limit)),
+            ).fetchall()
+    return [
+        {"id": r["id"], "proposalId": r["proposal_id"], "action": r["action"],
+         "decidedBy": r["decided_by"], "detail": r["detail"], "ts": r["ts"]}
+        for r in rows
+    ]

@@ -137,13 +137,20 @@ def test_mark_decided_flips_status_without_applying(queue_db):
 
     p = ws.propose_decision("d", 50, "dom", "r")
     before, _ = dsvc.list_entries()
-    updated = ps.mark_decided(p["id"], status="accepted",
-                              decided="2026-06-15T00:00:00+00:00", decided_by="user")
+    # mark_decided returns (transitioned, row); the STORE flip never applies — the
+    # apply layer (proposals_service.accept) is what calls the module create.
+    transitioned, updated = ps.mark_decided(
+        p["id"], status="accepted", decided="2026-06-15T00:00:00+00:00", decided_by="user")
+    assert transitioned is True
     assert updated is not None and updated["status"] == "accepted"
     assert updated["decidedBy"] == "user"
-    # accepting does NOT itself write the target module (apply is future human work)
+    # the store flip does NOT itself write the target module
     after, _ = dsvc.list_entries()
     assert after.count == before.count
+    # IDEMPOTENT pivot: a 2nd flip does not transition (already decided)
+    transitioned2, _ = ps.mark_decided(
+        p["id"], status="accepted", decided="t", decided_by="user")
+    assert transitioned2 is False
 
 
 def test_mark_decided_rejects_bad_status(queue_db):
