@@ -640,6 +640,29 @@ def _brief_decisions() -> dict[str, Any]:
     }
 
 
+def _brief_macro() -> dict[str, Any]:
+    """Neutral macro snapshot (R2-G1): latest Fed funds rate / US CPI / DXY + a
+    DESCRIPTIVE trend. From modules/macro (get_overview → (data, warnings)). NEUTRAL —
+    observed data, NO forecast. Honest on a mock source (tagged source='mock')."""
+    overview, warnings = _macro_overview()
+    return {"macro": _jsonable(overview), "warnings": list(warnings or [])}
+
+
+def _brief_news() -> dict[str, Any]:
+    """Neutral news snapshot (R2-G1): a source-cited digest of the captured headlines
+    (each cites its url). From modules/news (digest). NEUTRAL — lists what's captured,
+    NO sentiment. Honest-empty when nothing captured (never invents a headline)."""
+    return {"digest": _jsonable(_news_digest(None, limit=5))}
+
+
+def _brief_wiki() -> dict[str, Any]:
+    """Neutral wiki snapshot (R2-G1): vault overview (stats / inbox / orphans /
+    recentActivity). From modules/wiki (reader.overview → (data, warning)). Honest-
+    empty vault → pctWithLink None + a warning, never a crash."""
+    data, warning = _wiki_overview()
+    return {"overview": _jsonable(data), "warning": warning}
+
+
 def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str, Any]:
     """THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the
     user's life composed from the per-module read paths, so an external agent gets the
@@ -653,6 +676,9 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
       - ``projects``  (projects): health counts + the IDLE set (slow/stall/dead)
       - ``claude``    (claude_usage): today's tokens / cap / used% / remaining / reset
       - ``decisions`` (decision_journal): OPEN decisions awaiting an outcome
+      - ``macro``     (macro): Fed funds / CPI / DXY + descriptive trend (R2-G1)
+      - ``news``      (news): source-cited digest of captured headlines (R2-G1)
+      - ``wiki``      (wiki): vault overview — stats / inbox / orphans (R2-G1)
 
     NEUTRAL: aggregates DATA only — NO advice, NO buy/sell signal, NO prioritisation.
     The agent reads this and decides. An empty / unconfigured app still returns a
@@ -665,6 +691,9 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
             "projects": _section("projects", _brief_projects),
             "claude": _section("claude_usage", _brief_claude),
             "decisions": _section("decision_journal", _brief_decisions),
+            "macro": _section("macro", _brief_macro),
+            "news": _section("news", _brief_news),
+            "wiki": _section("wiki", _brief_wiki),
         }
     }
 

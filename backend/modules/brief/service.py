@@ -102,11 +102,27 @@ def _quota_pct(claude) -> float | None:
     we do NOT read + clamp the raw ``pct`` (= round(used/cap*100), where cap is a
     too-small token-window guess → reads absurd like 3316%). Clamping would HIDE the
     symptom and leave the raw field for the next consumer to re-hit; wiring to pct5h
-    fixes it at the source (same lesson as the M4 sidebar-badge field bug). If pct5h
-    is absent (claude down / no snapshot) → None (the existing None-handling kicks in;
-    we never fall back to the broken raw pct)."""
+    fixes it at the source (same lesson as the M4 sidebar-badge field bug).
+
+    R2-G2 — fallback chain: ``pct5h`` (5h window, preferred) → ``weekly`` (the 7-day
+    quota %, still a real 0-100 from the snapshot) → None. So when the 5h snapshot is
+    absent but the weekly one is present, the brief still surfaces a SANE quota %
+    instead of going dark. Never the broken raw ``pct``. None only when BOTH window
+    %s are absent (claude down / no snapshot) → the existing None-handling kicks in.
+
+    NOTE: the dispatch said ``pctWeek`` — but on the ClaudeUsage model the brief
+    consumes, the 7-day % field is named ``weekly`` (``pctWeek`` is only the internal
+    quota-snapshot DICT key in claude_usage/service.py, mapped to ``weekly=`` on the
+    model). Reading ``pctWeek`` off the model would be a no-op (always None). So we
+    read the REAL field ``weekly`` (the G7/M4 phantom-field lesson — wire to the field
+    that actually exists)."""
     pct5h = getattr(claude, "pct5h", None)
-    return float(pct5h) if pct5h is not None else None
+    if pct5h is not None:
+        return float(pct5h)
+    weekly = getattr(claude, "weekly", None)
+    if weekly is not None:
+        return float(weekly)
+    return None
 
 
 def _claude_priority(claude) -> Priority | None:

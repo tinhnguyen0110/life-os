@@ -369,6 +369,10 @@ BRIEF_SECTIONS = {
     "projects": "projects",
     "claude": "claude_usage",
     "decisions": "decision_journal",
+    # R2-G1: life_brief now folds in macro + news + wiki context.
+    "macro": "macro",
+    "news": "news",
+    "wiki": "wiki",
 }
 
 
@@ -412,6 +416,38 @@ def test_life_brief_section_failsoft_keeps_brief(app_db, monkeypatch):
     # the broken section reports an error but keeps its source tag
     assert "error" in brief["portfolio"]
     assert brief["portfolio"]["source"] == "finance"
+
+
+def test_R2G1_life_brief_includes_macro_news_wiki(app_db):
+    """R2-G1: life_brief folds in the 3 new context sections, each present + content-
+    shaped on a clean app (honest, not errored)."""
+    brief = rs.life_brief()["brief"]
+    assert {"macro", "news", "wiki"} <= set(brief)
+    # macro: descriptive indicators (NEUTRAL data)
+    assert "macro" in brief["macro"] and "error" not in brief["macro"]
+    # news: a source-cited digest, honest-empty ok
+    assert "digest" in brief["news"] and "error" not in brief["news"]
+    # wiki: vault overview
+    assert "overview" in brief["wiki"] and "error" not in brief["wiki"]
+
+
+def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
+    """Each new section is fail-soft: a down source → {error} for THAT section, the
+    rest of the brief still assembles (no 500)."""
+    monkeypatch.setattr(rs, "_brief_news", lambda: (_ for _ in ()).throw(RuntimeError("news down")))
+    brief = rs.life_brief()["brief"]
+    assert "error" in brief["news"] and brief["news"]["source"] == "news"
+    # the others unaffected
+    assert "error" not in brief["macro"] and "error" not in brief["wiki"]
+
+
+def test_R2G1_life_brief_still_neutral_with_new_sections(app_db):
+    """The 3 new sections must not leak advice/sentiment (macro=descriptive, news=
+    source-cited headlines, wiki=stats) — the brief stays DATA-only."""
+    brief = rs.life_brief()["brief"]
+    flat = json.dumps({k: brief[k] for k in ("macro", "news", "wiki")}, ensure_ascii=False).lower()
+    for banned in ("buy", "sell", "bullish", "bearish", "recommend", "forecast", "khuyến nghị"):
+        assert banned not in flat, f"a new brief section leaked a sentiment/advice term: {banned}"
     # the rest are unaffected
     for section in ("market", "projects", "claude", "decisions"):
         assert "error" not in brief[section], f"{section} should be unaffected"

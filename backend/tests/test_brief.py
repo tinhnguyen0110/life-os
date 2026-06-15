@@ -50,8 +50,8 @@ class _Claude:
     # "N% quota" via pct=N still drives the band (its intent) on the correct field.
     # The G6-specific tests pass pct5h explicitly (incl. None / a value ≠ pct) to
     # exercise the divergence.
-    def __init__(self, pct, stale=False, asOf="2026-06-06", pct5h="__default__"):
-        self.pct = pct; self.stale = stale; self.asOf = asOf
+    def __init__(self, pct, stale=False, asOf="2026-06-06", pct5h="__default__", weekly=None):
+        self.pct = pct; self.stale = stale; self.asOf = asOf; self.weekly = weekly
         self.pct5h = pct if pct5h == "__default__" else pct5h
 
 
@@ -179,7 +179,28 @@ def test_G6_pct5h_drives_the_band_urgent_only_if_pct5h_high():
 def test_G6_no_pct5h_is_silent_not_urgent():
     # claude down / no snapshot (pct5h None) → no quota priority (not a false urgent
     # off the broken raw pct).
-    assert service._claude_priority(_Claude(pct=3316.0, pct5h=None)) is None
+    assert service._claude_priority(_Claude(pct=3316.0, pct5h=None, weekly=None)) is None
+
+
+# --- R2-G2: quota % fallback chain pct5h → weekly → None -------------------- #
+def test_R2G2_pct5h_preferred_over_weekly():
+    assert service._quota_pct(_Claude(pct=3316.0, pct5h=71.0, weekly=40)) == 71.0
+
+
+def test_R2G2_falls_back_to_weekly_when_no_pct5h():
+    # no 5h snapshot but a weekly % present → use weekly (sane), not dark, not raw pct.
+    assert service._quota_pct(_Claude(pct=3316.0, pct5h=None, weekly=55)) == 55.0
+
+
+def test_R2G2_none_when_both_window_pcts_absent():
+    # both pct5h + weekly absent → None (never the broken raw pct).
+    assert service._quota_pct(_Claude(pct=3316.0, pct5h=None, weekly=None)) is None
+
+
+def test_R2G2_weekly_drives_band_when_no_pct5h():
+    # weekly=92 (no pct5h) → urgent band fires off the weekly window %.
+    p = service._claude_priority(_Claude(pct=3316.0, pct5h=None, weekly=92))
+    assert p is not None and p.severity == "urgent" and "3316" not in p.text
 
 
 def test_claude_none_silent():
