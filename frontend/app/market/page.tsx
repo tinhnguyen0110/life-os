@@ -11,6 +11,7 @@ import { useMarket } from "@/lib/useMarket";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { MarketChart } from "@/components/MarketChart";
+import { MarketOverview } from "@/components/MarketOverview";
 import { relativeTime } from "@/lib/format";
 import { apiBase, ApiError } from "@/lib/api";
 import { Icon } from "@/lib/icons";
@@ -201,6 +202,10 @@ export default function MarketPage() {
 
       {/* FE-2: price chart for the selected symbol (click a Mã to switch). */}
       <MarketChart symbol={chartSymbol} />
+
+      {/* FE-4: multi-symbol overview — compare table + correlation heatmap +
+          relative-strength, over all tracked symbols. */}
+      {quotes.length > 0 && <MarketOverview symbols={quotes.map((q) => q.symbol)} />}
 
       <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
         {/* Quotes (price table) */}
