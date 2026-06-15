@@ -24,8 +24,12 @@ class Holding(BaseModel):
     channel: Channel
     symbol: str = Field(..., min_length=1)
     qty: float = Field(..., ge=0)
-    avgCost: float = Field(..., ge=0, description="average cost per unit")
-    source: str = Field("manual", description="provenance: manual | import | ...")
+    # OKX-FINANCE (G2): avgCost is OPTIONAL — an OKX per-coin balance is VALUE-ONLY
+    # (OKX unified-account exposes no per-coin cost basis), so it carries avgCost=None
+    # and its per-coin P&L is honest-null. A manual holding still sets a real avgCost.
+    # None NEVER fabricates a 0-cost (which would read as +∞% gain — honest-mirror).
+    avgCost: float | None = Field(None, ge=0, description="avg cost per unit; None = no per-coin basis (OKX value-only)")
+    source: str = Field("manual", description="provenance: manual | import | okx | ...")
     asOf: str | None = Field(None, description="ISO-8601 UTC last edited")
 
 

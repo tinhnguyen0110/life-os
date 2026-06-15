@@ -277,11 +277,15 @@ def _aggregate(holdings: list[Holding]) -> tuple[dict, list[str]]:
     warnings: list[str] = []
     by_channel: dict[str, dict] = {}
     for h in holdings:
-        price, source, warn = _price_of(h.symbol, h.avgCost)
+        # OKX-FINANCE: avgCost may be None (value-only holding) — use 0.0 as the
+        # price fail-open fallback (no fabricated cost) and compute cost=0 → the pnl
+        # is honest-null (PnL.pct None when cost==0), never a fake +∞% gain.
+        avg_cost = h.avgCost if h.avgCost is not None else 0.0
+        price, source, warn = _price_of(h.symbol, avg_cost)
         if warn:
             warnings.append(warn)
         value = round(price * h.qty, 2)
-        cost = round(h.avgCost * h.qty, 2)
+        cost = round(avg_cost * h.qty, 2)
         ch = by_channel.setdefault(h.channel, {"value": 0.0, "cost": 0.0, "holdings": []})
         ch["value"] = round(ch["value"] + value, 2)
         ch["cost"] = round(ch["cost"] + cost, 2)
@@ -357,6 +361,48 @@ def _okx_crypto_value() -> tuple[float | None, str | None]:
     return None, None
 
 
+def _okx_crypto_holdings() -> list[dict] | None:
+    """OKX-FINANCE (G2) — OKX per-coin balances as VALUE-ONLY crypto holdings.
+
+    Returns the channel-``holdings`` entry list (same shape ``_aggregate`` builds:
+    ``{holding, price, source, value, pnl}``) for the crypto channel, where each entry
+    is value-only: ``holding.avgCost=None``, ``pnl=None`` (honest-null per-coin P&L —
+    OKX exposes no per-coin cost basis; fabricating one would lie). ``value`` = the
+    coin's usdValue; ``price`` = usdValue/qty (derived display price, NOT a cost).
+
+    Returns None (NOT []) when OKX is unconfigured / down / has no balances → the
+    caller keeps the MANUAL crypto holdings (fail-soft; finance never breaks on OKX).
+    A coin with no usdValue is skipped (can't value it). USDT/stablecoins are included
+    (they're real crypto-channel value). Newest provenance asOf = the snapshot time.
+    """
+    try:
+        snap, _ = exchange_service.get_overview()
+    except Exception as exc:  # noqa: BLE001 — fail-soft: OKX down → manual holdings
+        logger.warning("OKX balances read failed (fail-soft to manual): %s", exc)
+        return None
+    if not snap.configured or not snap.balances:
+        return None
+
+    now = _now_iso()
+    entries: list[dict] = []
+    for b in snap.balances:
+        if b.usdValue is None or b.total <= 0:
+            continue  # can't value it / no position → skip (don't fabricate)
+        value = round(float(b.usdValue), 2)
+        price = round(value / b.total, 6) if b.total else 0.0  # display price, not cost
+        holding = Holding(channel="crypto", symbol=b.symbol, qty=b.total,
+                          avgCost=None, source="okx", asOf=now)
+        entries.append({
+            "holding": holding.model_dump(), "price": price, "source": "okx",
+            "value": value,
+            "pnl": None,  # honest-null: no per-coin cost basis (OKX-FINANCE decision)
+        })
+    if not entries:
+        return None
+    entries.sort(key=lambda e: e["value"], reverse=True)  # most-valuable first
+    return entries
+
+
 def get_overview() -> tuple[FinanceOverview, list[str]]:
     holdings = list_holdings()
     targets, _ladder, gp_warnings = get_golden_path()
@@ -369,12 +415,25 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
     okx_value, okx_warn = _okx_crypto_value()
     if okx_value is not None:
         crypto_cost = _ensure_crypto_basis(okx_value)
-        crypto_holdings = by_channel.get("crypto", {}).get("holdings", [])
+        # OKX-FINANCE (G2): replace the (manual, usually empty) crypto holdings with the
+        # OKX per-coin balances — value-only, honest-null per-coin P&L. NO double-count:
+        # OKX is the source of truth for the crypto channel; manual etf/vn/dry holdings
+        # (in other channels of by_channel) are untouched. If OKX per-coin read fails-soft
+        # (None), keep the manual crypto holdings (the prior behavior).
+        okx_holdings = _okx_crypto_holdings()
+        crypto_holdings = (okx_holdings if okx_holdings is not None
+                           else by_channel.get("crypto", {}).get("holdings", []))
         by_channel["crypto"] = {
-            "value": round(okx_value, 2),
-            "cost": crypto_cost,
-            "holdings": crypto_holdings,
+            "value": round(okx_value, 2),       # aggregate value (OKX total) — unchanged
+            "cost": crypto_cost,                 # aggregate cost (snapshot) — unchanged
+            "holdings": crypto_holdings,         # NOW per-coin (value-only) from OKX
         }
+        # G2 (flat list too): the FinanceOverview.holdings flat list was EMPTY for
+        # crypto. Replace its crypto entries with the OKX per-coin Holdings (value-only),
+        # keep manual non-crypto. No double-count (OKX = crypto source of truth).
+        if okx_holdings is not None:
+            holdings = ([Holding(**e["holding"]) for e in okx_holdings]
+                        + [h for h in holdings if h.channel != "crypto"])
     if okx_warn:
         warnings.append(okx_warn)
 
@@ -438,6 +497,11 @@ def get_channel(channel: str) -> tuple[dict | None, list[str]]:
             agg = dict(agg)  # don't mutate all_by_channel
             agg["value"] = round(okx_value, 2)
             agg["cost"] = crypto_cost
+            # OKX-FINANCE (G2): per-coin holdings = OKX value-only (honest-null P&L),
+            # replacing manual crypto. Fail-soft (None → keep manual). Same as overview.
+            okx_holdings = _okx_crypto_holdings()
+            if okx_holdings is not None:
+                agg["holdings"] = okx_holdings
             all_by_channel = dict(all_by_channel)
             all_by_channel["crypto"] = agg
         if okx_warn:
