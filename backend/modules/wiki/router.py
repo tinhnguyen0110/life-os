@@ -70,9 +70,16 @@ def inbox():
 
 
 @router.get("/graph")
-def graph(note: int, depth: int = 2):
-    """Ego-graph 1–2 hop around ``note`` (C3): ``{center, nodes, edges, clusters}``.
-    404 if the center note is absent. ``clusters: []`` in W1c (AI clustering = M4)."""
+def graph(note: int | None = None, depth: int = 2):
+    """Wiki graph: ``{center, nodes, edges, clusters}``.
+
+    - NO ``note`` → GLOBAL whole-vault graph (the DEFAULT, Obsidian-style): every note +
+      every resolved edge + all clusters; ``center: null``. Honest-empty on a fresh vault.
+    - ``?note=X`` → ego-graph 1–2 hop around X (unchanged); 404 if X is absent. ``depth``
+      is ego-only.
+    """
+    if note is None:
+        return ok(data=reader.global_graph())
     g = reader.ego_graph(note, depth)
     if g is None:
         raise HTTPException(status_code=404, detail=f"wiki note {note} not found")

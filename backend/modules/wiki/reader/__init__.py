@@ -34,8 +34,8 @@ from .reindex import reindex_note
 # backlinks + search + unlinked mentions.
 from .backlinks import backlinks, search, unlinked_mentions
 
-# ego-graph + cluster detection.
-from .graph import detect_clusters, ego_graph
+# ego-graph + global (whole-vault) graph + cluster detection.
+from .graph import detect_clusters, ego_graph, global_graph
 
 # overview + inbox.
 from .overview import inbox, overview
@@ -47,7 +47,7 @@ __all__ = [
     "recent_ops",
     "reindex_note",
     "backlinks", "search", "unlinked_mentions",
-    "ego_graph", "detect_clusters",
+    "ego_graph", "global_graph", "detect_clusters",
     "overview", "inbox",
     "folder_tree", "mocs",
 ]

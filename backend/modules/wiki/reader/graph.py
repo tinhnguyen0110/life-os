@@ -109,6 +109,41 @@ def detect_clusters() -> list[dict[str, Any]]:
     return clusters
 
 
+def global_graph() -> dict[str, Any]:
+    """Whole-vault graph (GLOBAL-GRAPH T1) — the DEFAULT /wiki/graph view (Obsidian-style),
+    SAME shape as ``ego_graph`` but every note + every resolved edge, no center.
+
+    Returns ``{center: None, nodes:[{id,title,status,degree}], edges:[{source,target,
+    type,isResolved}], clusters:[...]}``:
+      - ``nodes`` = ALL notes (``all_notes()``) with their degree.
+      - ``edges`` = ALL resolved edges (``edges_among`` over the full node set — same
+        {type,isResolved} shape ego uses; an isolated note simply has no edge).
+      - ``clusters`` = ``detect_clusters()`` FULL list (not ego-restricted) so the FE can
+        color-group (Obsidian "Groups").
+      - ``center`` = None (global has no focus node).
+
+    Honest-empty: 0 notes → ``{center:None, nodes:[], edges:[], clusters:[]}``.
+
+    PERF SEAM (NOT built — ~21 notes now): if ``count_notes()`` ever exceeds a cap
+    (~2000), this MAY return a ``warning`` + a top-N-by-degree subgraph instead of the
+    full vault. The existing ">5k = Phase 2" note still holds; this is the earlier seam.
+    """
+    rows = wiki_store.all_notes()
+    nodes = [
+        {"id": int(r["id"]), "title": r["title"], "status": r["status"],
+         "degree": wiki_store.degree(int(r["id"]))}
+        for r in rows
+    ]
+    all_ids = {int(r["id"]) for r in rows}
+    edges = [
+        {"source": e["source_id"], "target": e["target_id"],
+         "type": e["type"], "isResolved": bool(e["is_resolved"])}
+        for e in wiki_store.edges_among(all_ids)
+    ]
+    return {"center": None, "nodes": nodes, "edges": edges,
+            "clusters": detect_clusters()}
+
+
 def ego_graph(note_id: int, depth: int = 2) -> dict[str, Any] | None:
     """Ego-graph 1–2 hop around ``note_id`` (C3). BFS over RESOLVED edges (both
     directions) to ``depth`` hops. Returns ``{center, nodes:[{id,title,status,
