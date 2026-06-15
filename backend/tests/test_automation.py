@@ -165,6 +165,58 @@ def test_morning_pull_records_summary(monkeypatch, tmp_path, isolated_paths):
 
 
 # --------------------------------------------------------------------------- #
+# D2 — morning_pull captures a finance snapshot (fail-soft add-on) so the equity #
+# curve fills day-by-day. 3 distinguishing cases.                                #
+# --------------------------------------------------------------------------- #
+def test_d2_morning_pull_captures_snapshot(monkeypatch, isolated_paths):
+    """Capture works: after morning_pull(), value_history() gained today's row."""
+    from modules.finance import service as fin
+    monkeypatch.setattr(proj.settings, "project_repos", {})
+    monkeypatch.setattr("modules.market.service.settings.market_assets", [])
+    assert fin.value_history() == []          # baseline: no snapshots
+    auto.morning_pull()
+    hist = fin.value_history()
+    assert len(hist) == 1                      # today's row landed
+
+
+def test_d2_snapshot_idempotent_run_twice_one_today_row(monkeypatch, isolated_paths):
+    """Idempotent upsert: morning_pull() TWICE same UTC day → still exactly ONE today-row
+    (take_snapshot upserts per day — no dup)."""
+    import datetime as _dt
+    from modules.finance import service as fin
+    monkeypatch.setattr(proj.settings, "project_repos", {})
+    monkeypatch.setattr("modules.market.service.settings.market_assets", [])
+    auto.morning_pull()
+    auto.morning_pull()                        # second run, same UTC day
+    today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    today_rows = [h for h in fin.value_history() if h["day"] == today]
+    assert len(today_rows) == 1                # upsert, not append
+
+
+def test_d2_snapshot_failure_is_fail_soft_pull_completes(monkeypatch, isolated_paths):
+    """THE discipline: a snapshot RAISE must NOT ABORT the pull. Mock take_snapshot to
+    raise → morning_pull still COMPLETES + returns, the finance READ part + other parts
+    are intact, the failure is NOTED. The add-on warn folds into the status tier EXACTLY
+    like the existing brief add-on (status=warn, NOT error, NOT a propagated raise) —
+    the pull WORK is not lost. (Matches the brief-add-on precedent at service.py:212.)"""
+    from modules.finance import service as fin
+    monkeypatch.setattr(proj.settings, "project_repos", {})
+    monkeypatch.setattr("modules.market.service.settings.market_assets", [])
+
+    def _boom():
+        raise RuntimeError("snapshot store down")
+    monkeypatch.setattr(fin, "take_snapshot", _boom)
+
+    status, detail = auto.morning_pull()
+    # pull COMPLETED (the raise did NOT propagate/abort) — that's the fail-soft contract
+    assert detail.startswith("Morning pull:")
+    assert "snapshot ERR" in detail             # the failure is visible
+    assert "finance $" in detail                # the finance READ part is intact (pull worked)
+    # add-on warn folds into the tier like the brief add-on; never 'error', never a raise
+    assert status == "warn"
+
+
+# --------------------------------------------------------------------------- #
 # toggle persistence + list + run                                               #
 # --------------------------------------------------------------------------- #
 def test_set_enabled_persists(isolated_paths):

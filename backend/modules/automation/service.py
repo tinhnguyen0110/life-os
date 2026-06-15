@@ -207,9 +207,25 @@ def morning_pull() -> tuple[str, str]:
         parts.append(f"brief ERR ({type(exc).__name__})")
         brief_status = "warn"
 
-    # If the PULL succeeded, the routine is ok even if the brief add-on warned; if the
-    # pull itself warned, that stands.
-    status = pull_status if pull_status == "warn" else brief_status
+    # D2: capture today's finance snapshot so the equity curve fills day-by-day
+    # (take_snapshot was built but never scheduled — built-but-not-wired). SAME fail-soft
+    # add-on discipline as the brief: a snapshot failure is NOTED (visible) but must NOT
+    # downgrade a successful pull. take_snapshot upserts ONE row per UTC day, so calling
+    # it daily (or twice) is idempotent — no dup. Forward-only (no backfill).
+    snapshot_status = "ok"
+    try:
+        from modules.finance import service as fin
+        snap = fin.take_snapshot()
+        parts.append(f"snapshot ${snap['totalValue']:,.0f}")
+    except Exception as exc:
+        logger.error("morning-pull: snapshot failed (pull still ok): %s", exc)
+        parts.append(f"snapshot ERR ({type(exc).__name__})")
+        snapshot_status = "warn"
+
+    # If the PULL succeeded, the routine is ok even if an ADD-ON (brief/snapshot) warned;
+    # if the pull itself warned, that stands. The add-on tier is the worst of the add-ons.
+    addon_status = "warn" if "warn" in (brief_status, snapshot_status) else "ok"
+    status = pull_status if pull_status == "warn" else addon_status
     return status, "Morning pull: " + ", ".join(parts)
 
 
