@@ -376,3 +376,104 @@ def test_relative_strength_underperform_is_down():
 def test_relative_strength_insufficient_overlap():
     rs = ta.relative_strength([100], [100, 200])
     assert rs["latestRatio"] is None and "need ≥2" in rs["warning"]
+
+
+# --------------------------------------------------------------------------- #
+# outlier guard — sanitize_series (robust, generic, no hardcoded price)         #
+# --------------------------------------------------------------------------- #
+def test_sanitize_drops_stray_low_point_among_real_prices():
+    # the ACTUAL bug: a $0.5 seed row inside a ~$60k BTC series. Generic MAD/ratio
+    # math must drop it (it's ~120,000× below the median) — NOT hardcoded to $0.5.
+    raw = [60000, 61000, 0.5, 62000, 61500, 60500, 63000, 62500]
+    kept, warn = ta.sanitize_series(raw)
+    assert 0.5 not in kept
+    assert kept == [60000, 61000, 62000, 61500, 60500, 63000, 62500]
+    assert warn is not None and "filtered 1" in warn
+
+
+def test_sanitize_stray_point_fixes_pct_change():
+    # before filtering, _pct_change over [0.5, ..., 63000] would be a ~12,600,000%
+    # explosion; after the guard the change is the honest ~5% the real prices moved.
+    raw = [0.5, 60000, 61000, 62000, 61500, 63000]
+    kept, _ = ta.sanitize_series(raw)
+    change = ta._pct_change(kept)
+    assert change is not None and abs(change) < 100.0  # sane, not 12 million %
+
+
+def test_sanitize_drops_stray_high_point():
+    # a single absurd HIGH spike (fat-finger 100×) is also removed (ratio ≥ 8×).
+    raw = [100, 102, 99, 101, 9_000_000, 103, 98, 100]
+    kept, warn = ta.sanitize_series(raw)
+    assert 9_000_000 not in kept and "filtered 1" in warn
+
+
+def test_sanitize_clean_series_unchanged_no_false_positive():
+    # a normal, even quite volatile, series (no point an order of magnitude off the
+    # median) must be returned UNCHANGED with no warning — zero false positives.
+    raw = [100, 130, 90, 145, 80, 150, 70, 160, 110, 95]
+    kept, warn = ta.sanitize_series(raw)
+    assert kept == [float(x) for x in raw] and warn is None
+
+
+def test_sanitize_trending_2x_series_not_flagged():
+    # a coin that legitimately doubles over the window: ratio to median ≈ 2 (< 8),
+    # so NOTHING is filtered (we only catch order-of-magnitude artifacts, not trends).
+    raw = [100, 110, 120, 135, 150, 165, 180, 195, 200]
+    kept, warn = ta.sanitize_series(raw)
+    assert kept == [float(x) for x in raw] and warn is None
+
+
+def test_sanitize_flat_series_not_flagged():
+    # every point equals the median (MAD 0, ratio 1) → never an outlier.
+    kept, warn = ta.sanitize_series([500, 500, 500, 500, 500])
+    assert kept == [500.0, 500.0, 500.0, 500.0, 500.0] and warn is None
+
+
+def test_sanitize_near_flat_with_tiny_wobble_not_gutted():
+    # MAD is tiny here, but no point is an order of magnitude off → ratio floor keeps
+    # them all (the bug we guard against: MAD-only would wrongly drop the 501).
+    kept, warn = ta.sanitize_series([500, 500, 500, 501, 500, 500])
+    assert kept == [500.0, 500.0, 500.0, 501.0, 500.0, 500.0] and warn is None
+
+
+def test_sanitize_short_series_kept_as_is():
+    # <4 points → can't robustly estimate median/MAD → return cleaned, no filtering.
+    kept, warn = ta.sanitize_series([0.5, 60000, 61000])
+    assert kept == [0.5, 60000.0, 61000.0] and warn is None
+
+
+def test_sanitize_nonpositive_price_dropped():
+    # a 0 or negative price is never a valid crypto close → always removed.
+    kept, warn = ta.sanitize_series([60000, 61000, 0, 62000, 61500, -5, 63000])
+    assert 0 not in kept and -5 not in kept
+    assert "filtered 2" in warn
+
+
+def test_sanitize_too_few_positives_kept_as_is():
+    # can't robustly log-scale fewer than 4 positive prices → keep cleaned, no claim
+    # (don't guess on data we can't characterize). All-non-positive lands here.
+    kept, warn = ta.sanitize_series([0, -1, -2, 0])
+    assert kept == [0.0, -1.0, -2.0, 0.0] and warn is None
+
+
+def test_sanitize_never_guts_series_to_empty():
+    # INVARIANT: for any non-empty input with ≥1 valid point, the guard never returns
+    # [] (gutting all data). Spot-check across mixed pathological shapes — the result
+    # always retains at least one point (filter is additive-safe, never destructive).
+    for raw in (
+        [0.5, 0.5, 0.5, 0.5],            # all identical tiny (flat → none flagged)
+        [60000, 0.5, 0.5, 0.5],          # majority tiny, one big
+        [1e-9, 1e-9, 1e9, 1e9],          # two far-apart clusters
+        [100, 100, 100, 0.0001],         # one micro outlier
+    ):
+        kept, _ = ta.sanitize_series(raw)
+        assert len(kept) >= 1, f"sanitize gutted {raw} to empty"
+
+
+def test_sanitize_then_correlation_robust_to_stray():
+    # two series that co-move, but one has a stray $0.5 → after sanitize, both align
+    # to their real points and correlate cleanly (the stray doesn't poison the matrix).
+    a = ta.sanitize_series([100, 110, 0.5, 120, 130, 140, 150])[0]
+    b = ta.sanitize_series([200, 220, 240, 260, 280, 300])[0]
+    r = ta.pearson(a, b)
+    assert r is not None and r > 0.9  # still strongly positive, not wrecked

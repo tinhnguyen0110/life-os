@@ -507,3 +507,41 @@ def test_multi_symbol_endpoints_are_neutral_no_advice(app_client):
             + str(app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000").json())).lower()
     for word in ("recommend", "should", "buy", "sell", "advice"):
         assert word not in blob
+
+
+# --- outlier guard (Task 28): stray seed points filtered at READ time, DB intact ---
+def test_compare_filters_stray_seed_point_changepct_sane(app_client):
+    """END-TO-END the real bug: a $0.5 seed row at the start of a ~$60k BTC series
+    must NOT blow up changePct. The guard filters it at read time → honest ~5%, and
+    the endpoint surfaces an honest 'filtered N anomalous' warning. DB is untouched."""
+    _seed_prices("BTC", [0.5, 60000.0, 61000.0, 62000.0, 61500.0, 63000.0])
+    body = app_client.get("/market/compare?symbols=BTC&hours=100000").json()
+    row = {r["symbol"]: r for r in body["data"]["comparison"]}["BTC"]
+    # without the guard this would be ~12,600,000%; with it, the real ~5% move.
+    assert row["changePct"] is not None and abs(row["changePct"]) < 100.0
+    assert row["points"] == 5  # the $0.5 point was dropped (6 → 5)
+    assert "filtered" in (body.get("warning") or "").lower()
+    # DB NOT mutated — the raw history still has all 6 points (we filter on read only).
+    raw = app_client.get("/market/history/BTC?hours=100000").json()["data"]["points"]
+    assert len(raw) == 6
+    assert any(abs(p["price"] - 0.5) < 1e-9 for p in raw)
+
+
+def test_correlation_robust_to_stray_point(app_client):
+    """Two co-moving series, one polluted with a stray $0.5 → after the read-time
+    guard both align to real points and still correlate strongly (not wrecked)."""
+    _seed_prices("BTC", [100.0, 110.0, 0.5, 120.0, 130.0, 140.0, 150.0])
+    _seed_prices("ETH", [200.0, 220.0, 240.0, 260.0, 280.0, 300.0, 320.0])
+    d = app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000").json()["data"]
+    r = d["matrix"]["BTC"]["ETH"]
+    assert r is not None and r > 0.9  # stray didn't poison the correlation
+
+
+def test_compare_clean_series_no_false_positive_warning(app_client):
+    """A clean (non-anomalous) series must produce NO 'filtered' warning — the guard
+    only fires on genuine order-of-magnitude artifacts, never on normal data."""
+    _seed_prices("BTC", [100.0 + i for i in range(40)])
+    body = app_client.get("/market/compare?symbols=BTC&hours=100000").json()
+    assert "filtered" not in (body.get("warning") or "").lower()
+    row = {r["symbol"]: r for r in body["data"]["comparison"]}["BTC"]
+    assert row["points"] == 40  # nothing dropped

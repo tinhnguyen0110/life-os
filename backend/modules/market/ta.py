@@ -114,6 +114,96 @@ def _round(x: Optional[float], nd: int = 6) -> Optional[float]:
     return None if x is None else round(x, nd)
 
 
+def _median(xs: list[float]) -> float:
+    """Median of a NON-EMPTY list (caller guarantees len ≥ 1)."""
+    s = sorted(xs)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
+# --------------------------------------------------------------------------- #
+# outlier guard — robust filter for stray/corrupt price points (Sprint 28)      #
+# --------------------------------------------------------------------------- #
+# Live price_history can carry seed/test artifacts (e.g. a $0.5 row in a series
+# whose real prices are ~$60,000) that make changePct / correlation explode. We do
+# NOT mutate the DB — instead the analytics READ path filters these points before
+# computing. The test is ROBUST + GENERIC (no hardcoded price/coin):
+#   - work in LOG space (prices are positive + multiplicatively distributed, so a
+#     $0.5 among $60k is ~11.7 log-units from the median while a coin doubling is
+#     only 0.69 — log space separates "wrong by orders of magnitude" from "moved").
+#   - flag a point whose log-distance from the median exceeds ``k`` robust MADs
+#     (median-absolute-deviation, the breakdown-robust spread estimate).
+#   - a RATIO FLOOR (``min_ratio``) guarantees we only ever drop points that are
+#     also at least an order of magnitude off the median (≥ ~10× or ≤ ~1/10). This
+#     is what prevents false positives on a low-volatility series whose MAD is tiny:
+#     a 5% wobble is many MADs out numerically but nowhere near 10× the median, so
+#     it is KEPT. Only genuine order-of-magnitude artifacts get removed.
+# A flat series (MAD 0) is never flagged (every point equals the median → ratio 1).
+OUTLIER_MAD_K = 6.0       # log-distance must exceed this many MADs to be a candidate
+OUTLIER_MIN_RATIO = 8.0   # AND be ≥8× or ≤1/8 the median — guards against false positives
+
+
+def sanitize_series(values: list, *, k: float = OUTLIER_MAD_K,
+                    min_ratio: float = OUTLIER_MIN_RATIO) -> tuple[list[float], Optional[str]]:
+    """Drop None/NaN (via _clean) THEN remove gross price outliers, robustly + generically.
+
+    A point is an outlier ONLY if BOTH hold (so we never over-filter):
+      1) its log-distance from the median exceeds ``k`` robust MADs, AND
+      2) it is ≥ ``min_ratio``× or ≤ 1/``min_ratio`` the median price.
+    Condition (2) is an absolute order-of-magnitude floor — a clean or merely
+    volatile series (no point an order of magnitude off the median) is returned
+    UNCHANGED (no false positives). A flat series is never flagged. Non-positive
+    prices (≤0) can't be log-scaled and are always treated as outliers (a real
+    crypto price is > 0). Returns ``(kept, warning)`` — warning names how many
+    points were filtered (None if none were)."""
+    clean, _ = _clean(values)
+    n = len(clean)
+    if n < 4:
+        # too few points to robustly estimate a median/MAD — keep as-is (the
+        # downstream math already degrades honestly to None on thin series).
+        return clean, None
+
+    positives = [v for v in clean if v > 0]
+    if len(positives) < 4:
+        return clean, None  # can't log-scale enough points → don't guess
+    logs = [math.log(v) for v in positives]
+    med_log = _median(logs)
+    abs_dev = [abs(lg - med_log) for lg in logs]
+    mad = _median(abs_dev)
+    med_price = math.exp(med_log)
+
+    kept: list[float] = []
+    dropped = 0
+    for v in clean:
+        if v <= 0:
+            dropped += 1  # non-positive price is never a valid crypto close
+            continue
+        ratio = v / med_price if med_price > 0 else 1.0
+        order_of_mag_off = ratio >= min_ratio or ratio <= 1.0 / min_ratio
+        if mad > 0:
+            log_dist = abs(math.log(v) - med_log)
+            mad_off = log_dist > k * mad
+        else:
+            # MAD 0 = the bulk of points are identical; only flag a point that is
+            # ALSO an order of magnitude off (so a near-flat series isn't gutted).
+            mad_off = order_of_mag_off
+        if mad_off and order_of_mag_off:
+            dropped += 1
+            continue
+        kept.append(v)
+
+    if dropped == 0:
+        return clean, None
+    # never return fewer than is useful by accident — if everything got dropped
+    # (pathological), fall back to the cleaned series + a warning instead of [].
+    if not kept:
+        return clean, (f"detected {dropped} anomalous point(s) but all points "
+                       "looked anomalous — kept series unfiltered for safety")
+    return kept, (f"filtered {dropped} anomalous price point(s) "
+                  f"(≫/≪ {min_ratio:g}× the median ~{round(med_price, 2)}) before computing")
+
+
 # --------------------------------------------------------------------------- #
 # SMA                                                                           #
 # --------------------------------------------------------------------------- #

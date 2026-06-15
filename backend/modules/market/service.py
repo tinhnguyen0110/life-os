@@ -732,15 +732,24 @@ MAX_COMPARE_SYMBOLS = 10  # cap so a request stays bounded (N² for correlation)
 
 
 def _series_for(symbols: list[str], hours: int) -> tuple[dict[str, list[float]], list[str]]:
-    """Fetch the close series for each symbol. Returns ``(series_by_symbol, warnings)``.
-    A symbol with no series yields []; warned (the math then degrades honestly)."""
+    """Fetch + SANITIZE the close series for each symbol. Returns ``(series_by_symbol,
+    warnings)``. The series is robustly de-outliered (ta.sanitize_series — drops stray
+    seed/test points orders of magnitude off the median) BEFORE the analytics math, so
+    a $0.5 artifact among $60k closes can't blow up changePct/correlation. The DB is
+    NOT mutated — this is read-time filtering only. A symbol with no series yields [];
+    a filtered symbol carries an honest per-symbol warning (how many points dropped)."""
+    from . import ta
+
     series: dict[str, list[float]] = {}
     warnings: list[str] = []
     for sym in symbols:
-        closes = [p.price for p in history(sym, hours=hours, limit=10000)]
-        series[sym] = closes
-        if not closes:
+        raw = [p.price for p in history(sym, hours=hours, limit=10000)]
+        cleaned, warn = ta.sanitize_series(raw)
+        series[sym] = cleaned
+        if not raw:
             warnings.append(f"{sym}: no price history")
+        elif warn:
+            warnings.append(f"{sym}: {warn}")
     return series, warnings
 
 
@@ -783,13 +792,19 @@ def relative_strength(symbol: str, vs: str = "BTC", hours: int = 720) -> tuple[d
     recommendation). Returns ``(data, warnings)``; None fields when data is thin."""
     from . import ta
 
-    sym_series = [p.price for p in history(symbol, hours=hours, limit=10000)]
-    bench_series = [p.price for p in history(vs, hours=hours, limit=10000)]
+    raw_sym = [p.price for p in history(symbol, hours=hours, limit=10000)]
+    raw_bench = [p.price for p in history(vs, hours=hours, limit=10000)]
     warnings: list[str] = []
-    if not sym_series:
+    sym_series, sym_warn = ta.sanitize_series(raw_sym)
+    bench_series, bench_warn = ta.sanitize_series(raw_bench)
+    if not raw_sym:
         warnings.append(f"{symbol}: no price history")
-    if not bench_series:
+    elif sym_warn:
+        warnings.append(f"{symbol}: {sym_warn}")
+    if not raw_bench:
         warnings.append(f"benchmark {vs}: no price history")
+    elif bench_warn:
+        warnings.append(f"benchmark {vs}: {bench_warn}")
     rs = ta.relative_strength(sym_series, bench_series)
     data = {"symbol": symbol, "benchmark": vs, "window_hours": hours,
             "asOf": _now().isoformat(), **rs}
