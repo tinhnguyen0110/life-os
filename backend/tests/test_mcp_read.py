@@ -60,6 +60,7 @@ NULLARY_TOOLS = [
     "life_brief",
     "market_watchlist",
     "market_summary",
+    "list_tools_catalog",
 ]
 
 # Documented top-level envelope key per nullary tool.
@@ -80,6 +81,7 @@ ENVELOPE_KEY = {
     "life_brief": "brief",
     "market_watchlist": "items",
     "market_summary": "watchlist",
+    "list_tools_catalog": "tools",
 }
 
 
@@ -335,6 +337,63 @@ def test_feedback_loop_rejected_visible_to_agent(app_db):
 
 
 # --------------------------------------------------------------------------- #
+# Tool catalog (MCP-8) — discoverable, DERIVED from the live registries          #
+# --------------------------------------------------------------------------- #
+def test_catalog_count_matches_real_servers(app_db):
+    """The catalog must list EXACTLY the tools the servers expose — no more, no less.
+    Derived from the live registries, so it cannot drift (the anti-hardcode guard)."""
+    from mcp_servers import write_server as ws
+
+    cat = rs.list_tools_catalog()
+    assert cat["counts"]["read"] == len(rs.TOOLS)
+    assert cat["counts"]["write"] == len(ws.TOOLS)
+    assert cat["counts"]["total"] == len(rs.TOOLS) + len(ws.TOOLS)
+    # the SET of names matches too (not just the count)
+    listed = {(t["server"], t["name"]) for t in cat["tools"]}
+    expected = {("read", n) for n in rs.TOOLS} | {("write", n) for n in ws.TOOLS}
+    assert listed == expected, f"catalog drift: {listed ^ expected}"
+
+
+def test_catalog_every_tool_has_description_and_fields(app_db):
+    cat = rs.list_tools_catalog()
+    for t in cat["tools"]:
+        assert set(t) >= {"name", "server", "capability", "neutral", "description"}
+        assert t["description"], f"{t['name']} has no description"
+        assert t["server"] in ("read", "write")
+        assert t["capability"] in ("read", "propose")
+        assert isinstance(t["neutral"], bool)
+    json.dumps(cat)
+
+
+def test_catalog_states_capability_boundary(app_db):
+    """The catalog must spell out the supervision boundary so the agent reasons within
+    it: read writes nothing; write only proposes; apply is human-only; agent reads
+    verdict; analysis is neutral."""
+    cat = rs.list_tools_catalog()
+    b = cat["capabilityBoundary"]
+    assert set(b) >= {"read", "write", "apply", "feedback", "neutrality"}
+    assert "human-only" in b["apply"].lower()
+    assert "propos" in b["write"].lower()
+    assert "neutral" in b["neutrality"].lower()
+
+
+def test_catalog_marks_write_tools_as_propose_not_apply(app_db):
+    """No write tool is ever labelled with an apply/accept capability — they propose."""
+    cat = rs.list_tools_catalog()
+    write_tools = [t for t in cat["tools"] if t["server"] == "write"]
+    assert write_tools, "expected write tools in the catalog"
+    assert all(t["capability"] == "propose" for t in write_tools)
+
+
+def test_catalog_does_not_grant_write_capability(app_db):
+    """The catalog is READ/metadata — building it must not bind any write symbol into
+    the read-server's namespace (the lazy write_server import is metadata-only)."""
+    for sym in ("enqueue", "_enqueue", "mark_decided", "accept", "reject",
+                "set_applied_ref", "write_server"):
+        assert sym not in vars(rs), f"catalog leaked {sym!r} into the read-server"
+
+
+# --------------------------------------------------------------------------- #
 # THE CAPABILITY GATE — no write capability (structural, grep + AST proven)      #
 # --------------------------------------------------------------------------- #
 # Mutation symbols across the wrapped modules: if ANY is reachable from this
@@ -418,4 +477,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 25
+    assert len(rs.TOOLS) == 26

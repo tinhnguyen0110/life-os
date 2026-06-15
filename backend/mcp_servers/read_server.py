@@ -355,6 +355,87 @@ def proposal_stats() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Tool catalog (MCP-8) — a discoverable, machine-readable index of the WHOLE     #
+# agent toolkit so a future agent can ASK "what can I do?" instead of guessing.  #
+# DERIVED from the live TOOLS registries (read here + write lazily) — NEVER a     #
+# hand-maintained second list, so it cannot drift (the catalog-derive-from-NAV   #
+# lesson). READ/metadata only: it lists capabilities, it does not grant them.    #
+# --------------------------------------------------------------------------- #
+def _one_line(fn: Callable[..., Any]) -> str:
+    """First non-empty line of a tool's docstring (its 1-line description)."""
+    doc = (fn.__doc__ or "").strip()
+    for line in doc.splitlines():
+        line = line.strip()
+        if line:
+            return line.rstrip(".")
+    return ""
+
+
+def _is_neutral(fn: Callable[..., Any]) -> bool:
+    """True if the tool's docstring declares it NEUTRAL (no advice) — the market/brief
+    analysis tools assert this; the catalog surfaces it so the agent knows the data
+    carries no buy/sell signal and IT must do the reasoning."""
+    return "neutral" in (fn.__doc__ or "").lower()
+
+
+def list_tools_catalog() -> dict[str, Any]:
+    """The agent's self-discovery index: every MCP tool across BOTH servers as
+    machine-readable metadata so a future agent can enumerate its own capabilities
+    instead of hard-coding tool names. Each entry: {name, server (read|write),
+    capability (read|propose), neutral (bool), description (1-line)}.
+
+    DERIVED from the live tool registries (this read-server's TOOLS + the write-
+    server's TOOLS, imported lazily for metadata only — the propose fns are never
+    called here), so the catalog can never drift from what the servers actually expose.
+
+    CAPABILITY BOUNDARY (stated explicitly so the agent reasons within it):
+      - READ tools (this server) only read; they write NOTHING.
+      - WRITE tools (write-server) only ENQUEUE proposals (status=pending) — the agent
+        PROPOSES; it can NEVER apply/accept its own proposal. Applying is HUMAN-ONLY,
+        via the /agent-proposals REST surface (human disposes). The agent can READ the
+        verdict back (check_proposal_status / list_my_proposals / proposal_stats) to
+        learn, but cannot ratify.
+      - Analysis tools are NEUTRAL data (no buy/sell advice); the agent does the reasoning.
+    READ-ONLY: this tool lists capabilities; it does not grant any."""
+    tools: list[dict[str, Any]] = []
+    # read-server tools (this module's live registry)
+    for name, fn in TOOLS.items():
+        tools.append({
+            "name": name, "server": "read", "capability": "read",
+            "neutral": _is_neutral(fn), "description": _one_line(fn),
+        })
+    # write-server tools — lazy import for METADATA only (name + docstring). Importing
+    # inside the fn keeps this module's import-time namespace free of the write server
+    # (the no-write gate stays pristine); the propose fns are read for description, never
+    # invoked.
+    from mcp_servers import write_server as _write_server
+    for name, fn in _write_server.TOOLS.items():
+        tools.append({
+            "name": name, "server": "write", "capability": "propose",
+            "neutral": _is_neutral(fn), "description": _one_line(fn),
+        })
+    return {
+        "tools": tools,
+        "counts": {
+            "read": sum(1 for t in tools if t["server"] == "read"),
+            "write": sum(1 for t in tools if t["server"] == "write"),
+            "total": len(tools),
+        },
+        "capabilityBoundary": {
+            "read": "reads only — writes nothing",
+            "write": "ENQUEUE proposals only (status=pending) — agent proposes, "
+                     "cannot apply/accept its own proposal",
+            "apply": "HUMAN-ONLY via POST /agent-proposals/{id}/accept — the agent "
+                     "never has an apply/accept handle (proven by capability-gate tests)",
+            "feedback": "agent READS its verdict via check_proposal_status / "
+                        "list_my_proposals / proposal_stats — read-only, cannot ratify",
+            "neutrality": "analysis tools return NEUTRAL data (no buy/sell advice); "
+                          "the agent does the reasoning",
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
 # life_brief — the AGENT DATA-LAYER synthesizer (MCP-2). ONE tool composes the   #
 # read paths into a single neutral, SOURCE-TAGGED snapshot of the user's life so #
 # an external agent gets the whole picture in one call instead of 10 separate    #
@@ -526,6 +607,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "check_proposal_status": check_proposal_status,
     "list_my_proposals": list_my_proposals,
     "proposal_stats": proposal_stats,
+    "list_tools_catalog": list_tools_catalog,
 }
 
 
