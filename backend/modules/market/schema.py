@@ -128,6 +128,33 @@ class IndicatorTrigger(BaseModel):
     detail: str = Field(..., description="current reading, e.g. 'RSI 28.4 ≤ 30'")
 
 
+# --------------------------------------------------------------------------- #
+# Watchlist — user-curated symbols with a quick view for a mini-chart screen     #
+# --------------------------------------------------------------------------- #
+class WatchlistInput(BaseModel):
+    """POST /market/watchlist body — add a symbol to the watchlist."""
+
+    symbol: str = Field(..., min_length=1, max_length=20)
+
+
+class WatchlistItem(BaseModel):
+    """One watchlist row — everything a crypto-watchlist card needs in one shot.
+
+    ``sparkline`` is a short close-price array (oldest→newest) for a mini chart;
+    ``rsi``/``trend`` are a quick TA read from ta.py. Any field that can't be
+    computed (no series yet) is None — the row still renders, never a 500."""
+
+    symbol: str
+    name: str
+    price: float
+    changePct: float | None = Field(None, description="server-derived % change, None if unknown")
+    source: str = Field(..., description="coingecko | mock | last-known")
+    sparkline: list[float] = Field(default_factory=list, description="recent closes oldest→newest")
+    rsi: float | None = Field(None, description="latest RSI(14), None if series too short")
+    trend: str = Field("flat", description="up | down | flat — latest SMA-slope sign")
+    warning: str | None = None
+
+
 class MacroSignal(BaseModel):
     """A macro indicator (Fear&Greed/BTC Dominance/Brent) — stub mock this build.
 

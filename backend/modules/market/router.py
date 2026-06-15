@@ -19,7 +19,7 @@ from core.responses import ok
 from store import db
 
 from . import service
-from .schema import AlertRuleInput, IndicatorAlertRuleInput
+from .schema import AlertRuleInput, IndicatorAlertRuleInput, WatchlistInput
 
 logger = logging.getLogger("life-os.market.router")
 
@@ -142,6 +142,35 @@ def delete_indicator_alert(rule_id: str):
     if not service.delete_indicator_rule(rule_id):
         raise HTTPException(status_code=404, detail=f"no indicator alert rule {rule_id!r}")
     return ok(data={"deleted": rule_id})
+
+
+# --- watchlist (user-curated symbols + one-shot quick view) ------------------
+@router.get("/watchlist")
+def get_watchlist():
+    """The watchlist with a rich per-symbol view for a mini-chart screen:
+    ``{items:[{symbol,name,price,changePct,source,sparkline[],rsi,trend,warning?}]}``.
+    A symbol with no series yet still appears (price from the live quote, sparkline
+    empty, rsi/trend pending) + a per-row warning — never a 500.
+    """
+    items, warnings = service.watchlist_data()
+    return ok(data={"items": items}, warning="; ".join(warnings) if warnings else None)
+
+
+@router.post("/watchlist")
+def add_to_watchlist(body: WatchlistInput):
+    """Add a symbol to the watchlist (idempotent). An untracked symbol is also
+    registered as a best-effort crypto asset (so it gets polled + priced). Returns
+    the updated symbol list."""
+    symbols = service.add_watchlist(body.symbol)
+    return ok(data={"symbols": symbols})
+
+
+@router.delete("/watchlist/{symbol}")
+def remove_from_watchlist(symbol: str):
+    """Remove a symbol from the watchlist. 404 if it wasn't watchlisted."""
+    if not service.delete_watchlist(symbol):
+        raise HTTPException(status_code=404, detail=f"{symbol!r} not in watchlist")
+    return ok(data={"deleted": symbol.strip().upper()})
 
 
 # --------------------------------------------------------------------------- #

@@ -306,6 +306,77 @@ def test_indicator_alert_upsert_by_symbol_kind_period(app_client):
     assert len([x for x in rules if x["kind"] == "rsi_below"]) == 1
 
 
+# --- watchlist (curated symbols + rich quick view) ---
+def test_watchlist_empty_is_200(app_client):
+    resp = app_client.get("/market/watchlist")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"] == []
+
+
+def test_watchlist_add_list_delete(app_client):
+    # add (lowercase normalises to upper)
+    r = app_client.post("/market/watchlist", json={"symbol": "btc"})
+    assert r.status_code == 200
+    assert r.json()["data"]["symbols"] == ["BTC"]
+    # idempotent: re-adding doesn't duplicate
+    r2 = app_client.post("/market/watchlist", json={"symbol": "BTC"})
+    assert r2.json()["data"]["symbols"] == ["BTC"]
+    # delete
+    d = app_client.delete("/market/watchlist/BTC")
+    assert d.status_code == 200 and d.json()["data"]["deleted"] == "BTC"
+    assert app_client.get("/market/watchlist").json()["data"]["items"] == []
+
+
+def test_watchlist_delete_unwatched_404(app_client):
+    assert app_client.delete("/market/watchlist/NOPE").status_code == 404
+
+
+def test_watchlist_untracked_symbol_is_registered_and_appears(app_client):
+    """Adding an UNTRACKED symbol registers it as best-effort crypto + it appears in
+    the rich view (price from the live quote; series may be empty → flagged)."""
+    app_client.post("/market/watchlist", json={"symbol": "BTC"})  # BTC is in ASSETS
+    items = app_client.get("/market/watchlist").json()["data"]["items"]
+    assert len(items) == 1
+    row = items[0]
+    # shape the FE depends on — every key present
+    for k in ("symbol", "name", "price", "changePct", "source", "sparkline", "rsi", "trend"):
+        assert k in row
+    assert row["symbol"] == "BTC"
+
+
+def test_watchlist_with_data_has_sparkline_rsi_change(app_client):
+    """END-TO-END: a seeded close series → sparkline (downsampled), RSI, change all
+    populated on the watchlist row."""
+    _seed_prices("BTC", [100.0 + i for i in range(60)])  # 60 rising closes
+    app_client.post("/market/watchlist", json={"symbol": "BTC"})
+    row = app_client.get("/market/watchlist").json()["data"]["items"][0]
+    assert len(row["sparkline"]) > 0 and len(row["sparkline"]) <= 32  # downsampled
+    assert row["rsi"] is not None  # 60 points → RSI computable
+    assert row["sparkline"][-1] == 159.0  # last seeded close is the last sparkline point
+    assert row["trend"] == "up"  # rising series
+
+
+def test_watchlist_no_history_row_still_present_with_warning(app_client):
+    """A watchlisted symbol with NO price series still renders (sparkline [], rsi None)
+    + a per-row warning — never a 500."""
+    # DOGE is not in ASSETS → add registers it; no history seeded → empty series.
+    app_client.post("/market/watchlist", json={"symbol": "DOGE"})
+    body = app_client.get("/market/watchlist").json()
+    doge = next(it for it in body["data"]["items"] if it["symbol"] == "DOGE")
+    assert doge["sparkline"] == [] and doge["rsi"] is None
+    assert doge["warning"] and "no price history" in doge["warning"]
+    assert "no price history" in (body.get("warning") or "")  # bubbles to top-level
+
+
+def test_watchlist_sparkline_downsamples_large_series(app_client):
+    """A large series is downsampled to ≤32 points (mini-chart payload stays small)."""
+    _seed_prices("BTC", [float(i) for i in range(500)])  # 500 points
+    app_client.post("/market/watchlist", json={"symbol": "BTC"})
+    spark = app_client.get("/market/watchlist").json()["data"]["items"][0]["sparkline"]
+    assert 0 < len(spark) <= 32
+    assert spark[-1] == 499.0  # most-recent point always kept
+
+
 # --- alert rules CRUD (id-based) ---
 def test_alert_set_list_delete(app_client):
     # set → returns the created rule with a server id

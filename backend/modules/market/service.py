@@ -35,12 +35,15 @@ from .schema import (
     IndicatorTrigger,
     MacroSignal,
     PricePoint,
+    WatchlistItem,
 )
 
 logger = logging.getLogger("life-os.market.service")
 
 ALERTS_MD = "market/alerts.md"
 INDICATOR_ALERTS_MD = "market/indicator_alerts.md"  # separate file from price rules
+WATCHLIST_MD = "market/watchlist.md"                # user-curated symbols
+SPARKLINE_POINTS = 32                               # mini-chart sample size
 NEAR_PCT = 5.0                  # within 5% (|distancePct|) of threshold → "near"
 CHANGE_LOOKBACK_HOURS = 24
 MARKET_POLL_ID = "market-poll"  # run_log routine_id alert events are recorded under
@@ -374,6 +377,144 @@ def eval_indicator_alerts(rules: list[IndicatorAlertRule] | None = None, *,
             period=rule.period, fired=fired, detail=detail,
         ))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Watchlist — user-curated symbols + a one-shot quick view (price/spark/TA)      #
+# --------------------------------------------------------------------------- #
+def _parse_watchlist(content: str | None) -> list[str]:
+    """Parse watchlist.md front-matter `symbols:` → de-duped uppercased symbol list."""
+    if not content:
+        return []
+    text = content.lstrip("﻿")
+    if not text.startswith("---"):
+        return []
+    block = text[len("---"):].split("\n---", 1)[0]
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError as exc:
+        logger.warning("malformed watchlist.md, ignoring: %s", exc)
+        return []
+    if not isinstance(data, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in data.get("symbols", []) or []:
+        if isinstance(s, str) and s.strip():
+            sym = s.strip().upper()
+            if sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+    return out
+
+
+def list_watchlist() -> list[str]:
+    """The watchlisted symbols ([] if none), in insertion order."""
+    try:
+        content = md_store.read(WATCHLIST_MD)
+    except Exception as exc:
+        logger.warning("watchlist.md read failed: %s", exc)
+        return []
+    return _parse_watchlist(content)
+
+
+def _write_watchlist(symbols: list[str]) -> None:
+    body = "---\n" + yaml.safe_dump({"symbols": symbols}, sort_keys=False,
+                                     allow_unicode=True).strip() + "\n---\n"
+    md_store.write_file(WATCHLIST_MD, body, "update market watchlist")
+
+
+def add_watchlist(symbol: str) -> list[str]:
+    """Add a symbol to the watchlist (idempotent, uppercased). If it's not in the
+    tracked universe, also REGISTER it as a best-effort crypto asset so it gets
+    polled + priced (mirrors get_quote's by-symbol fallback). Returns the new list."""
+    sym = symbol.strip().upper()
+    symbols = list_watchlist()
+    if sym not in symbols:
+        symbols.append(sym)
+        _write_watchlist(symbols)
+    # ensure it's tracked (so the poll routine fetches it + change/spark have a series)
+    tracked = {a.get("symbol") for a in tracked_assets()}
+    if sym not in tracked:
+        assets = list(settings.market_assets or [])
+        assets.append({"symbol": sym, "name": sym, "assetClass": "crypto", "cgId": sym.lower()})
+        settings.market_assets = assets  # in-process registration (config-level)
+        logger.info("watchlist: registered untracked symbol %s as best-effort crypto", sym)
+    return symbols
+
+
+def delete_watchlist(symbol: str) -> bool:
+    """Remove a symbol from the watchlist. Returns True if it was present. Does NOT
+    un-track the asset (other features may still use it) — just drops the watch."""
+    sym = symbol.strip().upper()
+    symbols = list_watchlist()
+    if sym not in symbols:
+        return False
+    _write_watchlist([s for s in symbols if s != sym])
+    return True
+
+
+def _sparkline(symbol: str, hours: int = 24, points: int = SPARKLINE_POINTS) -> list[float]:
+    """A short, evenly-downsampled close-price array (oldest→newest) for a mini chart.
+    Empty if no series. Downsamples to EXACTLY ``points`` (the last sample is always
+    the most-recent close) so the payload stays small + bounded."""
+    closes = [p.price for p in history(symbol, hours=hours, limit=10000)]
+    n = len(closes)
+    if n <= points:
+        return closes
+    # Even stride over ``points`` slots; force the final slot to the most-recent close.
+    step = (n - 1) / (points - 1)
+    idxs = [int(round(i * step)) for i in range(points)]
+    idxs[-1] = n - 1
+    return [closes[i] for i in idxs]
+
+
+def watchlist_data(hours: int = 168) -> tuple[list[dict], list[str]]:
+    """Build the rich watchlist view: one row per symbol with price + %change +
+    sparkline + a quick RSI/trend read (ta.py). Returns ``(items, warnings)``. A
+    symbol with no series → row still present (price from quote, spark [], rsi None),
+    flagged in its own ``warning`` — never a 500.
+    """
+    from . import ta
+
+    symbols = list_watchlist()
+    items: list[dict] = []
+    warnings: list[str] = []
+    asset_by_symbol = {a.get("symbol"): a for a in tracked_assets()}
+
+    for sym in symbols:
+        quote = get_quote(sym)  # fail-open: CoinGecko down → last-known/mock
+        name = (asset_by_symbol.get(sym) or {}).get("name") or sym
+        closes = [p.price for p in history(sym, hours=hours, limit=10000)]
+        spark = _sparkline(sym, hours=24)
+        rsi_res = ta.rsi(closes, 14)
+        summ = ta.summarize(closes) if closes else None
+        row_warn: str | None = None
+        if quote is None:
+            row_warn = f"{sym}: no quote available"
+        elif not closes:
+            row_warn = f"{sym}: no price history yet (sparkline empty, RSI/trend pending)"
+
+        # changePct: prefer our own series (24h lookback); fall back to the quote's.
+        change_pct: float | None = None
+        if quote is not None:
+            change_pct = derive_change_pct(sym, quote.price, quote.changePct)
+
+        item = WatchlistItem(
+            symbol=sym,
+            name=name,
+            price=quote.price if quote is not None else 0.0,
+            changePct=change_pct,
+            source=quote.source if quote is not None else "unavailable",
+            sparkline=spark,
+            rsi=rsi_res.latest,
+            trend=(summ["signals"]["trend"] if summ else "flat"),
+            warning=row_warn,
+        )
+        if row_warn:
+            warnings.append(row_warn)
+        items.append(item.model_dump())
+    return items, warnings
 
 
 # --------------------------------------------------------------------------- #
