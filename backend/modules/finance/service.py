@@ -372,8 +372,10 @@ def _okx_crypto_holdings() -> list[dict] | None:
 
     Returns None (NOT []) when OKX is unconfigured / down / has no balances → the
     caller keeps the MANUAL crypto holdings (fail-soft; finance never breaks on OKX).
-    A coin with no usdValue is skipped (can't value it). USDT/stablecoins are included
-    (they're real crypto-channel value). Newest provenance asOf = the snapshot time.
+    A coin with NO usdValue is still SHOWN (qty visible) with value=0 + honest-null pnl
+    (architect: "show qty, value honest-null — don't crash, don't assume") — NOT
+    skipped, NOT fabricated. A zero-total position IS skipped (not held). USDT/
+    stablecoins included (real crypto-channel value). asOf = the snapshot time.
     """
     try:
         snap, _ = exchange_service.get_overview()
@@ -386,10 +388,12 @@ def _okx_crypto_holdings() -> list[dict] | None:
     now = _now_iso()
     entries: list[dict] = []
     for b in snap.balances:
-        if b.usdValue is None or b.total <= 0:
-            continue  # can't value it / no position → skip (don't fabricate)
-        value = round(float(b.usdValue), 2)
-        price = round(value / b.total, 6) if b.total else 0.0  # display price, not cost
+        if b.total <= 0:
+            continue  # not actually held → skip
+        valued = b.usdValue is not None
+        value = round(float(b.usdValue), 2) if valued else 0.0
+        # display price = value/qty when valued; None when unvalued (don't assume a price).
+        price = round(value / b.total, 6) if (valued and b.total) else None
         holding = Holding(channel="crypto", symbol=b.symbol, qty=b.total,
                           avgCost=None, source="okx", asOf=now)
         entries.append({

@@ -129,12 +129,23 @@ def test_aggregate_crypto_pnl_still_works(mock_okx, mock_prices, isolated_paths)
     assert crypto.pnl is not None and crypto.pnl.current == 60000.0
 
 
-def test_okx_skips_unvalued_coin(mock_okx, mock_prices, isolated_paths):
-    # a coin with usdValue None (can't value) is skipped — not a fabricated 0.
+def test_okx_unvalued_coin_shown_honest_null(mock_okx, mock_prices, isolated_paths):
+    # a coin with usdValue None is SHOWN (qty visible) with value 0 + honest-null pnl
+    # (architect: don't skip, don't assume a price/value) — NOT fabricated, NOT dropped.
     mock_okx([
         OkxBalance(symbol="BTC", available=1.0, frozen=0.0, total=1.0, usdValue=60000.0),
         OkxBalance(symbol="XYZ", available=5.0, frozen=0.0, total=5.0, usdValue=None),
     ], total=60000.0)
-    overview, _ = service.get_overview()
-    crypto_syms = {h.symbol for h in overview.holdings if h.channel == "crypto"}
-    assert crypto_syms == {"BTC"} and "XYZ" not in crypto_syms
+    ch, _ = service.get_channel("crypto")
+    by_sym = {e["holding"]["symbol"]: e for e in ch["holdings"]}
+    assert "XYZ" in by_sym  # SHOWN, not skipped
+    xyz = by_sym["XYZ"]
+    assert xyz["holding"]["qty"] == 5.0      # qty visible
+    assert xyz["value"] == 0.0               # honest-null value (no fabrication)
+    assert xyz["price"] is None              # no assumed price
+    assert xyz["pnl"] is None                # honest-null pnl
+    # a zero-TOTAL coin (not held) is still skipped
+    mock_okx([OkxBalance(symbol="ZERO", available=0.0, frozen=0.0, total=0.0, usdValue=None)],
+             total=0.0)
+    # total 0 → _okx_crypto_holdings returns None (no entries) → fail-soft to manual
+    assert service._okx_crypto_holdings() is None
