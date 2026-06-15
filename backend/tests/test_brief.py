@@ -45,8 +45,14 @@ class _Finance:
 
 
 class _Claude:
-    def __init__(self, pct, stale=False, asOf="2026-06-06"):
+    # G6: the brief's quota band now keys on pct5h (the correct window %), not raw pct.
+    # Default pct5h to pct when a test doesn't set it explicitly, so a test expressing
+    # "N% quota" via pct=N still drives the band (its intent) on the correct field.
+    # The G6-specific tests pass pct5h explicitly (incl. None / a value ≠ pct) to
+    # exercise the divergence.
+    def __init__(self, pct, stale=False, asOf="2026-06-06", pct5h="__default__"):
         self.pct = pct; self.stale = stale; self.asOf = asOf
+        self.pct5h = pct if pct5h == "__default__" else pct5h
 
 
 # =========================================================================== #
@@ -123,24 +129,57 @@ def test_project_none_source_silent():
 # =========================================================================== #
 # Rule 3 — claude quota bands                                                   #
 # =========================================================================== #
+# G6: the band keys on pct5h (the correct window %), not the raw used/cap pct.
 def test_claude_90pct_is_urgent():
-    p = service._claude_priority(_Claude(pct=92.0))
+    p = service._claude_priority(_Claude(pct=92.0, pct5h=92.0))
     assert p is not None and p.severity == "urgent" and p.source == "claude"
 
 
 def test_claude_75pct_is_warn():
-    p = service._claude_priority(_Claude(pct=80.0))
+    p = service._claude_priority(_Claude(pct=80.0, pct5h=80.0))
     assert p is not None and p.severity == "warn"
 
 
 def test_claude_under_75_silent():
-    assert service._claude_priority(_Claude(pct=50.0)) is None
+    assert service._claude_priority(_Claude(pct=50.0, pct5h=50.0)) is None
 
 
 def test_claude_stale_caps_at_warn():
     """≥90% but STALE cache → capped at warn (don't cry urgent on old data) + asOf note."""
-    p = service._claude_priority(_Claude(pct=95.0, stale=True, asOf="2026-05-01"))
+    p = service._claude_priority(_Claude(pct=95.0, pct5h=95.0, stale=True, asOf="2026-05-01"))
     assert p is not None and p.severity == "warn" and "2026-05-01" in p.text
+
+
+# --- G6: brief quota % = the CORRECT pct5h field, NEVER the raw used/cap overflow #
+def test_G6_quota_pct_is_pct5h_not_raw_pct():
+    # the brief consumes pct5h (the real 0-100 window %), NOT the absurd used/cap pct.
+    assert service._quota_pct(_Claude(pct=3316.0, pct5h=71.0)) == 71.0
+
+
+def test_G6_quota_pct_none_when_no_pct5h_no_fallback_to_raw():
+    # ROOT-CAUSE (not clamp): no pct5h → None. We do NOT fall back to the broken raw
+    # pct (clamped or otherwise) — a missing snapshot means no quota signal, not 100%.
+    assert service._quota_pct(_Claude(pct=3316.0, pct5h=None)) is None
+
+
+def test_G6_absurd_raw_pct_never_headlines_over_100():
+    # the band rule reads pct5h: a 3316% raw pct with pct5h=71 → warn band (71≥75? no
+    # → silent), and the headline NEVER contains the 3316 overflow.
+    p = service._claude_priority(_Claude(pct=3316.0, pct5h=71.0))
+    # 71 < CLAUDE_WARN_PCT(75) → silent; the absurd number never reaches a headline.
+    assert p is None
+
+
+def test_G6_pct5h_drives_the_band_urgent_only_if_pct5h_high():
+    # urgent fires ONLY when pct5h genuinely ≥90 (not the raw overflow).
+    p = service._claude_priority(_Claude(pct=3316.0, pct5h=95.0))
+    assert p is not None and p.severity == "urgent" and "3316" not in p.text
+
+
+def test_G6_no_pct5h_is_silent_not_urgent():
+    # claude down / no snapshot (pct5h None) → no quota priority (not a false urgent
+    # off the broken raw pct).
+    assert service._claude_priority(_Claude(pct=3316.0, pct5h=None)) is None
 
 
 def test_claude_none_silent():

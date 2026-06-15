@@ -94,12 +94,27 @@ def _project_priority(projects: list | None) -> Priority | None:
     return None
 
 
+def _quota_pct(claude) -> float | None:
+    """G6 — the QUOTA % to surface in the brief = ``pct5h``, the LIVE 5h rate-limit
+    used % (a real 0-100 from the quota snapshot, confirmed correct ~71%).
+
+    ROOT-CAUSE fix (NOT a clamp): we consume the CORRECT field the data already has,
+    we do NOT read + clamp the raw ``pct`` (= round(used/cap*100), where cap is a
+    too-small token-window guess → reads absurd like 3316%). Clamping would HIDE the
+    symptom and leave the raw field for the next consumer to re-hit; wiring to pct5h
+    fixes it at the source (same lesson as the M4 sidebar-badge field bug). If pct5h
+    is absent (claude down / no snapshot) → None (the existing None-handling kicks in;
+    we never fall back to the broken raw pct)."""
+    pct5h = getattr(claude, "pct5h", None)
+    return float(pct5h) if pct5h is not None else None
+
+
 def _claude_priority(claude) -> Priority | None:
-    """Rule 3 — quota bands on pct. Stale claude cache caps severity at warn (don't cry
-    urgent on old data) + notes asOf."""
+    """Rule 3 — quota bands on the meaningful quota % (pct5h, else clamped pct — G6).
+    Stale claude cache caps severity at warn (don't cry urgent on old data) + notes asOf."""
     if claude is None:
         return None
-    pct = getattr(claude, "pct", None)
+    pct = _quota_pct(claude)
     if pct is None:
         return None
     stale = bool(getattr(claude, "stale", False))
@@ -157,7 +172,9 @@ def _alerts_priority(market: dict | None) -> Priority | None:
 # --------------------------------------------------------------------------- #
 def _build_summary(src: reader.Sources) -> BriefSummary:
     net_worth = getattr(src.finance, "totalValue", None) if src.finance is not None else None
-    claude_pct = getattr(src.claude, "pct", None) if src.claude is not None else None
+    # G6: surface the meaningful quota % (pct5h, else clamped pct) — never the absurd
+    # used/cap ratio that can read >100%.
+    claude_pct = _quota_pct(src.claude) if src.claude is not None else None
     projects_active = 0
     if src.projects:
         projects_active = sum(1 for p in src.projects if p.health in ("act", "slow"))

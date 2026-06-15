@@ -127,8 +127,30 @@ def _tracked_repos() -> dict[str, str]:
                 # which never starts with a dot.
                 continue
             pid = child.name
+            # G7 — REGISTRATION IS status.md EXISTENCE (the module contract). A child
+            # dir WITHOUT a status.md is NOT a registered project — skip it. Without
+            # this, leaked dirs under projects_dir (test fixtures like /tmp/pytest-*,
+            # crewly scaffolds) surface as phantom notes-only projects in prod (G7).
+            if not (child / "status.md").is_file():
+                continue
             meta = _load_meta(pid)
             repo = meta.get("repo")
+            # G7 (real fix) — TEST-FIXTURE POLLUTION: a test run wrote status.md files
+            # into the REAL md-store with repo: pointing at a pytest tmp dir
+            # (/tmp/pytest-of-*/...) that no longer exists. Skip a project whose repo: is
+            # a /tmp/pytest fixture path THAT DOESN'T RESOLVE (a dead fixture from a past
+            # run). NARROW on purpose: a /tmp/pytest path that STILL resolves is a
+            # legitimately-registered repo that happens to live in tmp (a test's own
+            # repo) — keep it. And a non-/tmp dead path (a real moved/gone repo) is left
+            # to the honest-dead stale-path handling below — we don't editorialize those.
+            if isinstance(repo, str) and repo.strip():
+                rp = repo.strip()
+                if rp.startswith("/tmp/pytest") and not Path(rp).expanduser().is_dir():
+                    logger.warning(
+                        "skipping phantom project %r — repo %r is a dead pytest fixture "
+                        "(G7 pollution leaked into the md-store)", pid, rp,
+                    )
+                    continue
             if isinstance(repo, str) and repo.strip():
                 repo = repo.strip()
                 # Stale-path fallback (3B layer-4): if the status.md repo: path no

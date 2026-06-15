@@ -279,6 +279,57 @@ def test_list_projects_empty_when_none_tracked(monkeypatch, isolated_paths):
     assert statuses == [] and warnings == []
 
 
+def test_G7_phantom_dir_without_status_md_is_not_a_project(monkeypatch, isolated_paths):
+    """G7 — a leaked dir under projects_dir with NO status.md (test fixture like a
+    /tmp/pytest-* artifact or a crewly scaffold) must NOT surface as a phantom
+    project. Registration IS status.md existence."""
+    from store import md_store
+    monkeypatch.setattr(service.settings, "project_repos", {})
+    # a REAL registered project (has status.md)
+    md_store.write_file("projects/real-proj/status.md",
+                        "---\nname: Real\nprogress: 10\n---\n", "seed real")
+    # a PHANTOM dir (leaked) — exists under projects_dir but has NO status.md
+    phantom = service.settings.projects_dir / "tmp-pytest-leak"
+    phantom.mkdir(parents=True, exist_ok=True)
+    (phantom / "some_fixture.txt").write_text("not a project")
+
+    repos = service._tracked_repos()
+    assert "real-proj" in repos          # the real one surfaces
+    assert "tmp-pytest-leak" not in repos  # the phantom does NOT (no status.md)
+
+
+def test_G7_status_md_with_tmp_fixture_repo_is_filtered(monkeypatch, tmp_path, isolated_paths):
+    """G7 (the REAL leak) — a status.md-BEARING project whose repo: points at a test
+    fixture (/tmp/pytest-*) or a nonexistent non-builtin path is test pollution that
+    leaked into the md-store. It must NOT surface in projects_list (the existence gate
+    alone misses it because it HAS a status.md)."""
+    from store import md_store
+    real = tmp_path / "realrepo"
+    real.mkdir()
+    monkeypatch.setattr(service.settings, "project_repos", {"life-os": str(real)})
+    # life-os: a real config built-in → surfaces.
+    md_store.write_file("projects/life-os/status.md", "---\nname: Life OS\n---\n", "seed")
+    # active: status.md with a DEAD /tmp/pytest fixture repo → phantom, filtered.
+    md_store.write_file("projects/active/status.md",
+                        "---\nname: Active\nrepo: /tmp/pytest-of-x/pytest-9/active\n---\n", "seed")
+
+    repos = service._tracked_repos()
+    assert "life-os" in repos                 # real built-in surfaces
+    assert "active" not in repos, "dead /tmp/pytest fixture leaked"
+
+
+def test_G7_resolving_tmp_repo_is_kept(monkeypatch, tmp_path, isolated_paths):
+    """A /tmp/pytest path that STILL RESOLVES is a legit registered repo (a test's own
+    repo) — the G7 filter is NARROW (dead-fixture only), it must NOT kill it."""
+    from store import md_store
+    live = tmp_path / "live-tmp-repo"  # tmp_path is itself /tmp/pytest-* and resolves
+    live.mkdir()
+    monkeypatch.setattr(service.settings, "project_repos", {})
+    md_store.write_file("projects/livep/status.md",
+                        f"---\nname: Live\nrepo: {live}\n---\n", "seed")
+    assert "livep" in service._tracked_repos()  # resolving tmp repo kept
+
+
 def test_list_and_get_over_real_repos(monkeypatch, active_repo, stall_repo, isolated_paths):
     monkeypatch.setattr(
         service.settings,
@@ -479,18 +530,22 @@ def test_hidden_dirs_are_not_projects(monkeypatch, isolated_paths):
 
     RED without the `startswith('.')` filter in _tracked_repos(); GREEN with it.
     """
+    from store import md_store
     monkeypatch.setattr(service.settings, "project_repos", {})
     projects_dir = service.settings.projects_dir
     # Physically create hidden dirs (the real condition: .claude lands here).
     (projects_dir / ".claude" / "agent-memory").mkdir(parents=True)
     (projects_dir / ".git").mkdir(parents=True)
-    # A real (non-hidden) project alongside, to prove the filter is surgical.
-    (projects_dir / "realproj").mkdir(parents=True)
+    # A real (non-hidden) REGISTERED project alongside, to prove the filter is
+    # surgical. G7: registration = status.md existence, so the real project has one
+    # (a bare dir without status.md is now correctly a phantom — see the G7 test).
+    md_store.write_file("projects/realproj/status.md",
+                        "---\nname: Real\nprogress: 5\n---\n", "seed realproj")
 
     tracked = service._tracked_repos()
     assert ".claude" not in tracked, f".claude leaked as a project: {sorted(tracked)}"
     assert ".git" not in tracked, f".git leaked as a project: {sorted(tracked)}"
-    assert "realproj" in tracked, "the real non-hidden project must still be tracked"
+    assert "realproj" in tracked, "the real registered project must still be tracked"
 
     # And it must not appear in the public list_projects() output either.
     ids = {s.id for s in service.list_projects()[0]}
