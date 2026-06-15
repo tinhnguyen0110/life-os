@@ -56,6 +56,23 @@ class ChannelAlloc(BaseModel):
     drift: float = Field(..., description="pct - target (signed)")
     driftAlert: bool = Field(..., description="|drift| > 5 (5% rule decided server-side)")
     pnl: PnL
+    # NB4 — honest framing of value-only / stablecoin-heavy data (read-path derived):
+    basisUnknown: bool = Field(
+        False,
+        description="true when the majority (by value) of this channel's holdings lack a "
+                    "cost basis (avgCost) — so pnl is computed against cost=0 and must NOT "
+                    "be read as a real gain (value-only data, e.g. OKX per-coin)",
+    )
+    stableValue: float | None = Field(
+        None,
+        description="crypto channel only: USD value held in stablecoins (USDT/USDC/…) — "
+                    "dry-powder-like, NOT crypto exposure. None for non-crypto channels",
+    )
+    stablePct: float | None = Field(
+        None,
+        description="crypto channel only: stableValue / channel value × 100 (None when "
+                    "non-crypto or channel value is 0)",
+    )
 
 
 class LadderState(BaseModel):

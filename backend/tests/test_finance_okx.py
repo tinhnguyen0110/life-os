@@ -149,3 +149,99 @@ def test_okx_unvalued_coin_shown_honest_null(mock_okx, mock_prices, isolated_pat
              total=0.0)
     # total 0 → _okx_crypto_holdings returns None (no entries) → fail-soft to manual
     assert service._okx_crypto_holdings() is None
+
+
+# --------------------------------------------------------------------------- #
+# NB4 — honest framing: basisUnknown (value-only pnl isn't a real gain) +        #
+# stableValue/stablePct split (stablecoins are dry-powder-like, not exposure).   #
+# --------------------------------------------------------------------------- #
+def test_nb4_basis_unknown_true_for_value_only_crypto(mock_okx, mock_prices, isolated_paths):
+    """OKX per-coin holdings are value-only (avgCost None) → the crypto channel's
+    basisUnknown is TRUE, so the cost=0 pnl ($ value as 'abs gain') isn't misread."""
+    mock_okx([OkxBalance(symbol="BTC", available=1.0, frozen=0.0, total=1.0, usdValue=60000.0)],
+             total=60000.0)
+    overview, _ = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.basisUnknown is True
+    # NB4 decision: basisUnknown → pnl.pct NULLED (no misleading "% return"); real $ kept.
+    assert crypto.pnl.pct is None
+    assert crypto.pnl.current is not None
+
+
+def test_nb4_basis_unknown_false_for_manual_with_cost(mock_okx, mock_prices, isolated_paths):
+    """DISTINGUISHING: a manual etf channel WITH avgCost → basisUnknown FALSE in the SAME
+    overview where the value-only crypto channel is TRUE (proves it's per-channel by
+    real basis, not a blanket flag)."""
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=10, avgCost=400))
+    mock_okx([OkxBalance(symbol="BTC", available=1.0, frozen=0.0, total=1.0, usdValue=60000.0)],
+             total=60000.0)
+    overview, _ = service.get_overview()
+    etf = next(a for a in overview.allocations if a.channel == "etf")
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert etf.basisUnknown is False    # has avgCost → real basis
+    assert crypto.basisUnknown is True  # value-only → flagged
+    # same overview, two channels DIVERGE → the flag tracks real basis, not a constant.
+    # NB4 distinguishing: the manual channel's legit pnl.pct is NOT hidden, only the
+    # value-only channel's misleading % is nulled.
+    assert etf.pnl.pct is not None      # legit manual P&L SHOWN (not hidden)
+    assert crypto.pnl.pct is None       # value-only % nulled
+
+
+def test_nb4_stable_split_and_high_warning(mock_okx, mock_prices, isolated_paths):
+    """Crypto channel majority stablecoins → stableValue/stablePct populated + a
+    'dry-powder-like' warning fires (>50%)."""
+    mock_okx([
+        OkxBalance(symbol="USDT", available=70000, frozen=0, total=70000, usdValue=70000.0),
+        OkxBalance(symbol="BTC", available=0.5, frozen=0, total=0.5, usdValue=30000.0),
+    ], total=100000.0)
+    overview, warnings = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.stableValue == 70000.0
+    assert crypto.stablePct == 70.0
+    assert any("stablecoin" in w.lower() and "dry-powder" in w.lower() for w in warnings)
+
+
+def test_nb4_stable_split_low_no_warning_distinguishing(mock_okx, mock_prices, isolated_paths):
+    """DISTINGUISHING: a crypto channel that is MOSTLY real exposure (BTC-heavy, little
+    stable) → stablePct low + NO dry-powder warning. The SAME tool that warns on a
+    stable-heavy channel stays quiet here — proves the warn keys on the ratio, not a
+    blanket 'crypto has any stablecoin' flag."""
+    mock_okx([
+        OkxBalance(symbol="BTC", available=1.5, frozen=0, total=1.5, usdValue=90000.0),
+        OkxBalance(symbol="USDT", available=10000, frozen=0, total=10000, usdValue=10000.0),
+    ], total=100000.0)
+    overview, warnings = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.stableValue == 10000.0
+    assert crypto.stablePct == 10.0
+    assert not any("dry-powder" in w.lower() for w in warnings)  # 10% < 50% → quiet
+
+
+def test_nb4_stable_pct_none_for_non_crypto(mock_okx, mock_prices, isolated_paths):
+    """stableValue/stablePct are crypto-ONLY — a non-crypto channel reports None (a
+    stablecoin only lives in the crypto channel; etf/vn/dry get None, not 0)."""
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=10, avgCost=400))
+    mock_okx([OkxBalance(symbol="BTC", available=1.0, frozen=0, total=1.0, usdValue=60000.0)],
+             total=60000.0)
+    overview, _ = service.get_overview()
+    etf = next(a for a in overview.allocations if a.channel == "etf")
+    assert etf.stableValue is None and etf.stablePct is None
+
+
+def test_nb4_get_channel_carries_framing(mock_okx, mock_prices, isolated_paths):
+    """GET /finance/{channel} (detail) carries the SAME framing as the overview."""
+    mock_okx([
+        OkxBalance(symbol="USDT", available=60000, frozen=0, total=60000, usdValue=60000.0),
+        OkxBalance(symbol="BTC", available=0.5, frozen=0, total=0.5, usdValue=30000.0),
+    ], total=90000.0)
+    ch, warnings = service.get_channel("crypto")
+    assert ch["alloc"]["basisUnknown"] is True
+    assert ch["alloc"]["stablePct"] == round(60000.0 / 90000.0 * 100, 2)
+    assert any("dry-powder" in w.lower() for w in warnings)
+
+
+def test_nb4_empty_channel_basis_unknown_false():
+    """Pure-helper edge: an empty channel (no holdings) → basisUnknown False (no false
+    alarm) + stable split (None, None) on zero value."""
+    assert service._basis_unknown([]) is False
+    assert service._stable_split([], 0.0) == (0.0, None)

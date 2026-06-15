@@ -56,6 +56,12 @@ CRYPTO_BASIS_MD = "finance/crypto_basis.md"
 DRIFT_ALERT_PCT = 5.0
 DRY_CHANNEL = "dry"
 CHANNELS = ("crypto", "etf", "vn", "dry")
+# NB4 — common USD-pegged stablecoins. Held in the crypto channel they are dry-powder-
+# like (no crypto price exposure), so we split their value out for honest framing.
+STABLECOINS = frozenset({
+    "USDT", "USDC", "DAI", "TUSD", "BUSD", "USDP", "FDUSD", "GUSD", "USDD", "PYUSD",
+})
+STABLE_HEAVY_PCT = 50.0  # crypto channel >this% stablecoins → honest "dry-powder-like" warning
 
 BASELINE_TARGETS: dict[str, float] = {"crypto": 38.0, "etf": 24.0, "vn": 18.0, "dry": 20.0}
 BASELINE_RUNGS: list[float] = [-10.0, -20.0, -30.0]
@@ -243,6 +249,17 @@ def _pnl(cost: float, current: float) -> PnL:
     return PnL(cost=round(cost, 2), current=round(current, 2), abs=abs_, pct=pct)
 
 
+def _pnl_framed(cost: float, current: float, basis_unknown: bool) -> PnL:
+    """NB4: channel-level pnl with honest framing. When basisUnknown (the channel's
+    holdings majority lack a real avgCost — e.g. OKX value-only), NULL pnl.pct so the
+    misleading "% return" doesn't show; keep cost/current/abs (real $ figures). A channel
+    with real basis → unchanged pnl (the legit manual P&L is NOT hidden)."""
+    pnl = _pnl(cost, current)
+    if basis_unknown:
+        return pnl.model_copy(update={"pct": None})
+    return pnl
+
+
 # --------------------------------------------------------------------------- #
 # Ladder                                                                        #
 # --------------------------------------------------------------------------- #
@@ -294,6 +311,46 @@ def _aggregate(holdings: list[Holding]) -> tuple[dict, list[str]]:
             "value": value, "pnl": _pnl(cost, value).model_dump(),
         })
     return by_channel, warnings
+
+
+# --------------------------------------------------------------------------- #
+# NB4 — honest framing of value-only / stablecoin-heavy channel data. Pure       #
+# derivations over a channel's holdings entry-list ({holding, value, ...}).      #
+# READ-PATH only — no store change, no channel re-architecture.                  #
+# --------------------------------------------------------------------------- #
+def _basis_unknown(holdings_entries: list[dict]) -> bool:
+    """True when the MAJORITY (by value) of a channel's holdings lack a cost basis
+    (avgCost None or 0) — so the channel pnl is computed against cost≈0 and a value-only
+    inflow reads as a fake huge gain. Empty channel → False (no holdings, no false alarm).
+    Decided by VALUE-weight (not count) so one large value-only coin dominates the verdict
+    the way it dominates the pnl."""
+    total_value = sum(float(e.get("value") or 0.0) for e in holdings_entries)
+    if total_value <= 0:
+        # No value to weigh → fall back to count (any present holding lacking basis).
+        present = [e for e in holdings_entries]
+        if not present:
+            return False
+        unknown = sum(1 for e in present if not (e.get("holding") or {}).get("avgCost"))
+        return unknown > len(present) / 2
+    unknown_value = sum(
+        float(e.get("value") or 0.0)
+        for e in holdings_entries
+        if not (e.get("holding") or {}).get("avgCost")  # None or 0 → unknown basis
+    )
+    return unknown_value > total_value / 2
+
+
+def _stable_split(holdings_entries: list[dict], channel_value: float) -> tuple[float | None, float | None]:
+    """Crypto channel ONLY: (stableValue, stablePct) — USD held in stablecoins, which is
+    dry-powder-like, not crypto exposure. Returns (None, None) — caller decides to apply
+    only for the crypto channel. stablePct None when channel_value ≤ 0 (no div-0)."""
+    stable_value = round(sum(
+        float(e.get("value") or 0.0)
+        for e in holdings_entries
+        if str((e.get("holding") or {}).get("symbol", "")).upper() in STABLECOINS
+    ), 2)
+    stable_pct = round(stable_value / channel_value * 100.0, 2) if channel_value > 0 else None
+    return stable_value, stable_pct
 
 
 def _series(days: int = 365) -> list[float]:
@@ -464,9 +521,20 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
         drift_alert = abs(drift) > DRIFT_ALERT_PCT
         if drift_alert:
             warnings.append(f"{ch}: allocation drift {drift:+.1f}% (target {target}%, actual {pct}%)")
+        # NB4 — honest framing (derived from this channel's holdings entries).
+        ch_entries = by_channel.get(ch, {}).get("holdings", [])
+        basis_unknown = _basis_unknown(ch_entries)
+        stable_value, stable_pct = (None, None)
+        if ch == "crypto":
+            stable_value, stable_pct = _stable_split(ch_entries, value)
+            if stable_pct is not None and stable_pct > STABLE_HEAVY_PCT:
+                warnings.append(
+                    f"crypto channel is {stable_pct:.0f}% stablecoins "
+                    f"(${stable_value:,.0f}) — dry-powder-like, not crypto exposure")
         allocations.append(ChannelAlloc(
             channel=ch, value=value, pct=pct, target=target, drift=drift,  # type: ignore[arg-type]
-            driftAlert=drift_alert, pnl=_pnl(cost, value),
+            driftAlert=drift_alert, pnl=_pnl_framed(cost, value, basis_unknown),
+            basisUnknown=basis_unknown, stableValue=stable_value, stablePct=stable_pct,
         ))
 
     overview = FinanceOverview(
@@ -528,11 +596,24 @@ def get_channel(channel: str) -> tuple[dict | None, list[str]]:
         current = round(agg["value"] / total_qty, 2) if total_qty > 0 else reference
         ladder = _ladder_for(channel, reference, current, rungs).model_dump()
 
+    # NB4 — honest framing for this channel (same derivations as the overview).
+    ch_value = round(agg["value"], 2)
+    basis_unknown = _basis_unknown(agg["holdings"])
+    stable_value, stable_pct = (None, None)
+    if channel == "crypto":
+        stable_value, stable_pct = _stable_split(agg["holdings"], ch_value)
+        if stable_pct is not None and stable_pct > STABLE_HEAVY_PCT:
+            warnings.append(
+                f"crypto channel is {stable_pct:.0f}% stablecoins "
+                f"(${stable_value:,.0f}) — dry-powder-like, not crypto exposure")
+
     detail = {
         "channel": channel,
         "alloc": ChannelAlloc(
-            channel=channel, value=round(agg["value"], 2), pct=pct, target=target,  # type: ignore[arg-type]
-            drift=drift, driftAlert=drift_alert, pnl=_pnl(agg["cost"], agg["value"]),
+            channel=channel, value=ch_value, pct=pct, target=target,  # type: ignore[arg-type]
+            drift=drift, driftAlert=drift_alert,
+            pnl=_pnl_framed(agg["cost"], agg["value"], basis_unknown),
+            basisUnknown=basis_unknown, stableValue=stable_value, stablePct=stable_pct,
         ).model_dump(),
         "holdings": agg["holdings"],
         "ladder": ladder,
