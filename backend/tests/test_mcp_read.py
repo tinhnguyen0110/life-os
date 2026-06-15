@@ -58,6 +58,8 @@ NULLARY_TOOLS = [
     "app_settings",
     "reliability_report",
     "macro_overview",
+    "news_digest",
+    "news_list",
     "life_brief",
     "market_watchlist",
     "market_summary",
@@ -80,6 +82,8 @@ ENVELOPE_KEY = {
     "app_settings": "settings",
     "reliability_report": "report",
     "macro_overview": "macro",
+    "news_digest": "digest",
+    "news_list": "news",
     "life_brief": "brief",
     "market_watchlist": "items",
     "market_summary": "watchlist",
@@ -211,6 +215,52 @@ def test_macro_history_shape_and_unknown(app_db):
     assert isinstance(out["history"]["points"], list)
     # unknown indicator → honest found:False, not a crash
     assert rs.macro_history("not-an-indicator") == {"found": False, "indicator": "not-an-indicator"}
+
+
+# --------------------------------------------------------------------------- #
+# NEWS-MCP — wrap news READ over MCP (mirror macro). NEUTRAL, source-cited,      #
+# honest-empty, tag-filter, 0 write-leak (gate covered by WRITE_SYMBOLS).        #
+# --------------------------------------------------------------------------- #
+def _seed_news_item(*, title, url, source="Reuters", tags=None, ts="2026-06-15T00:00:00+00:00"):
+    from modules.news import store as news_store
+    news_store.upsert_item(title=title, summary="", url=url, source=source,
+                           published_ts=ts, tags=tags or [], captured_at=ts)
+
+
+def test_news_digest_cites_source_and_honest_empty(app_db):
+    # honest-empty: nothing captured → count 0, items [], NOT fabricated.
+    empty = rs.news_digest()["digest"]
+    assert empty["count"] == 0 and empty["items"] == []
+    assert "headline" in empty and "note" in empty  # honest note, no invented headline
+    # seeded: each item cites its source url
+    _seed_news_item(title="Fed holds rates", url="https://reuters.com/a", tags=["MACRO"])
+    out = rs.news_digest()["digest"]
+    assert out["count"] == 1
+    item = out["items"][0]
+    assert item["url"] == "https://reuters.com/a" and item["source"] == "Reuters"
+    assert item["title"] == "Fed holds rates"
+
+
+def test_news_list_shape_and_tag_filter(app_db):
+    _seed_news_item(title="BTC ETF news", url="https://x.com/btc", tags=["CRYPTO"])
+    _seed_news_item(title="VN macro", url="https://x.com/vn", tags=["MACRO"])
+    alln = rs.news_list()["news"]
+    assert alln["count"] == 2
+    assert {"title", "url", "source", "publishedTs"} <= set(alln["items"][0].keys())
+    # tag filter narrows; unknown tag → [] clean
+    crypto = rs.news_list(tag="CRYPTO")["news"]
+    assert crypto["count"] == 1 and crypto["items"][0]["title"] == "BTC ETF news"
+    assert rs.news_list(tag="NOPE")["news"]["count"] == 0
+
+
+def test_news_mcp_neutral_no_leak(app_db):
+    # NEUTRAL preserved at the MCP wrapper: no sentiment/advice/forecast term leaks.
+    _seed_news_item(title="Bitcoin price moves after Fed meeting",
+                    url="https://x.com/neutral", tags=["CRYPTO"])
+    flat = json.dumps(rs.news_digest(), ensure_ascii=False).lower()
+    for banned in ("buy", "sell", "bullish", "bearish", "recommend", "forecast",
+                   "khuyến nghị", "nên mua", "nên bán"):
+        assert banned not in flat, f"news_digest leaked a sentiment/advice term: {banned}"
 
 
 # --------------------------------------------------------------------------- #
@@ -466,6 +516,10 @@ WRITE_SYMBOLS = [
     # but must NOT import refresh/record_point/init_macro_tables (the agent can't write
     # the macro series).
     "refresh", "record_point", "init_macro_tables",
+    # NEWS-MCP: the news module's WRITE/FETCH/INIT surface — the read-server reads
+    # digest/list but must NOT import capture (RSS fetch+write) / init_news_tables /
+    # upsert_item (the agent reads captured news; it cannot capture or init the store).
+    "capture", "init_news_tables", "upsert_item",
 ]
 
 
@@ -527,4 +581,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 28
+    assert len(rs.TOOLS) == 30  # +2 NEWS-MCP (news_digest, news_list); was 28

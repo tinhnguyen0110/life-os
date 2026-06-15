@@ -101,6 +101,11 @@ from modules.reliability.service import run_suite as _reliability_suite
 # agent reads the macro backdrop; it cannot write the macro series.
 from modules.macro.service import get_overview as _macro_overview
 from modules.macro.service import get_history as _macro_history
+# NEWS-MCP: the agent reads grounded news (digest/list) — READ paths only. NOT
+# capture / init_news_tables (those stay in WRITE_SYMBOLS — the agent reads the
+# captured news; it cannot capture/fetch or init the store).
+from modules.news.service import digest as _news_digest
+from modules.news.service import list_news as _news_list
 # MCP-5: the agent reads the DISPOSITION of its own proposals (status/applied_ref) so it
 # can learn from accept/reject — READ paths only. We import the SPECIFIC read fns (NOT
 # the proposals_store module), so enqueue / mark_decided / set_applied_ref / append_audit
@@ -326,6 +331,22 @@ def macro_history(indicator: str, days: int = 365) -> dict[str, Any]:
     if hist is None:
         return {"found": False, "indicator": indicator}
     return {"found": True, "history": _jsonable(hist)}
+
+
+def news_digest(tag: str | None = None, limit: int = 10) -> dict[str, Any]:
+    """A NEUTRAL, source-cited roll-up of the grounded news the module has captured.
+    Each item carries its source url + published_ts. NO sentiment / advice / forecast —
+    it ONLY lists what's in the store. Honest empty-state when nothing has been captured
+    (never invents a headline). ``tag`` filters by exact tag (no match → empty). ``{headline,
+    items, count, asOf, note}``. (Wraps GET /news/digest — read-only; capture is human/poller.)"""
+    return {"digest": _jsonable(_news_digest(tag, limit=int(limit)))}
+
+
+def news_list(tag: str | None = None, limit: int = 30) -> dict[str, Any]:
+    """Raw captured headlines, newest-first — each with source url + published_ts.
+    ``tag`` filters by exact tag (unknown tag → empty). NEUTRAL (headlines only, no
+    commentary). ``{items, count, asOf, tag}``. (Wraps GET /news — read-only.)"""
+    return {"news": _jsonable(_news_list(tag, limit=int(limit)))}
 
 
 # --------------------------------------------------------------------------- #
@@ -634,6 +655,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "reliability_report": reliability_report,
     "macro_overview": macro_overview,
     "macro_history": macro_history,
+    "news_digest": news_digest,
+    "news_list": news_list,
     "life_brief": life_brief,
     "check_proposal_status": check_proposal_status,
     "list_my_proposals": list_my_proposals,
