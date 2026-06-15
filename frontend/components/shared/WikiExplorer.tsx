@@ -9,7 +9,7 @@
    FE nests the flat groups into a tree by splitting the path. Fail-soft: tree error
    → an inline notice, never blanks the pane. Empty vault → honest empty.
    ============================================================ */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWikiTree } from "@/lib/useWiki";
 import { Icon } from "@/lib/icons";
@@ -96,6 +96,19 @@ export function WikiExplorer() {
     const n = seg ? parseInt(seg, 10) : NaN;
     return Number.isNaN(n) ? null : n;
   }, [pathname]);
+
+  // Refetch the tree when the wiki route CHANGES (not on mount — useWikiTree already
+  // fetches once on mount). The tree changes on create / delete / move; the most common
+  // signal of one is a navigation (e.g. deleting a note routes back to /wiki). Without
+  // this the explorer kept showing a just-deleted note until a manual refresh. The
+  // prev-pathname ref (seeded with the current path) skips the initial render so we
+  // don't double-fetch on mount; subsequent path changes trigger a refetch.
+  const prevPath = useRef(pathname);
+  useEffect(() => {
+    if (prevPath.current === pathname) return; // unchanged (incl. first run) → skip
+    prevPath.current = pathname;
+    reload();
+  }, [pathname, reload]);
 
   const folderPaths = useMemo(() => allFolderPaths(root), [root]);
 

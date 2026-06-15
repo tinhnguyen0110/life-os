@@ -105,4 +105,18 @@ describe("WikiExplorer (WEXP tree pane)", () => {
     await waitFor(() => expect(screen.getByTestId("wex-error")).toBeInTheDocument());
     expect(screen.getByTestId("wiki-explorer")).toBeInTheDocument(); // pane still there
   });
+
+  // Regression: the explorer must REFETCH the tree when the route changes, so a note
+  // deleted from the note page (which routes back to /wiki) disappears from the tree
+  // without a manual refresh. Previously the tree was fetched once on mount only.
+  it("refetches the tree when the pathname changes (e.g. after a delete routes to /wiki)", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    mockPath = "/wiki/3";
+    const { rerender } = render(<WikiExplorer />);
+    await waitFor(() => expect(getWikiTree).toHaveBeenCalledTimes(1));
+    // simulate navigation (note deleted → routed to /wiki): pathname changes
+    mockPath = "/wiki";
+    rerender(<WikiExplorer />);
+    await waitFor(() => expect(getWikiTree).toHaveBeenCalledTimes(2));
+  });
 });

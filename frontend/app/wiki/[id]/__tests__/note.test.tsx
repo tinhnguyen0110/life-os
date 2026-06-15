@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 const getWikiNote = vi.fn();
 const getWikiBacklinks = vi.fn();
 const updateWikiNote = vi.fn();
+const deleteWikiNote = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -13,7 +14,7 @@ vi.mock("@/lib/api", async () => {
     getWikiNote: (...a: unknown[]) => getWikiNote(...a),
     getWikiBacklinks: (...a: unknown[]) => getWikiBacklinks(...a),
     updateWikiNote: (...a: unknown[]) => updateWikiNote(...a),
-    deleteWikiNote: vi.fn(),
+    deleteWikiNote: (...a: unknown[]) => deleteWikiNote(...a),
   };
 });
 vi.mock("next/link", () => ({
@@ -22,6 +23,11 @@ vi.mock("next/link", () => ({
       {children}
     </a>
   ),
+}));
+// Router mock — the delete flow calls router.push("/wiki") on success.
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush }),
 }));
 
 import WikiNotePage from "../page";
@@ -158,5 +164,60 @@ describe("W2 Note view/edit", () => {
     render(<WikiNotePage params={{ id: "abc" }} />);
     await waitFor(() => expect(screen.getByTestId("wiki-error")).toBeInTheDocument());
     expect(getWikiNote).not.toHaveBeenCalled();
+  });
+
+  // --- delete control (gap closed: the note page now exposes delete) ---
+  it("delete is a TWO-CLICK confirm: first click arms it, does NOT delete yet", async () => {
+    getWikiNote.mockResolvedValueOnce(ok(NOTE));
+    getWikiBacklinks.mockResolvedValueOnce(ok(BL));
+    render(<WikiNotePage params={{ id: "47" }} />);
+    await screen.findByTestId("wiki-id");
+
+    // first click: arms — confirm button appears, delete NOT called (no 1-click loss)
+    await userEvent.click(screen.getByTestId("wiki-delete-btn"));
+    expect(screen.getByTestId("wiki-delete-confirm")).toBeInTheDocument();
+    expect(deleteWikiNote).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("confirm → DELETEs the note then navigates to /wiki", async () => {
+    getWikiNote.mockResolvedValueOnce(ok(NOTE));
+    getWikiBacklinks.mockResolvedValueOnce(ok(BL));
+    deleteWikiNote.mockResolvedValueOnce(ok(NOTE));
+    render(<WikiNotePage params={{ id: "47" }} />);
+    await screen.findByTestId("wiki-id");
+
+    await userEvent.click(screen.getByTestId("wiki-delete-btn"));      // arm
+    await userEvent.click(screen.getByTestId("wiki-delete-confirm"));  // confirm
+    await waitFor(() => expect(deleteWikiNote).toHaveBeenCalledWith(47));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/wiki"));
+  });
+
+  it("cancel disarms the delete (note NOT deleted)", async () => {
+    getWikiNote.mockResolvedValueOnce(ok(NOTE));
+    getWikiBacklinks.mockResolvedValueOnce(ok(BL));
+    render(<WikiNotePage params={{ id: "47" }} />);
+    await screen.findByTestId("wiki-id");
+
+    await userEvent.click(screen.getByTestId("wiki-delete-btn"));     // arm
+    await userEvent.click(screen.getByTestId("wiki-delete-cancel"));  // cancel
+    // back to the un-armed delete button; nothing deleted/navigated
+    expect(screen.getByTestId("wiki-delete-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("wiki-delete-confirm")).toBeNull();
+    expect(deleteWikiNote).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("TEETH: delete FAILS → error surfaces, no navigation, note stays (fail-closed)", async () => {
+    getWikiNote.mockResolvedValueOnce(ok(NOTE));
+    getWikiBacklinks.mockResolvedValueOnce(ok(BL));
+    deleteWikiNote.mockRejectedValueOnce(new ApiError(500, "delete failed"));
+    render(<WikiNotePage params={{ id: "47" }} />);
+    await screen.findByTestId("wiki-id");
+
+    await userEvent.click(screen.getByTestId("wiki-delete-btn"));      // arm
+    await userEvent.click(screen.getByTestId("wiki-delete-confirm"));  // confirm → rejects
+    await waitFor(() => expect(screen.getByTestId("wiki-delete-err")).toBeInTheDocument());
+    expect(routerPush).not.toHaveBeenCalled(); // did NOT navigate
   });
 });

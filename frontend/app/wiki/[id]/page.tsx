@@ -16,6 +16,7 @@
    States: loading · error (incl. 404) · ready(view) · ready(edit).
    ============================================================ */
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useWikiNote } from "@/lib/useWiki";
 import {
   WikiMarkdown,
@@ -42,18 +43,26 @@ type EditDraft = { title: string; content: string; status: WikiStatus; tags: str
 export default function WikiNotePage({ params }: { params?: { id?: string } }) {
   const rawId = params?.id ?? "";
   const id = /^\d+$/.test(rawId) ? parseInt(rawId, 10) : null;
-  const { note, backlinks, status, errMsg, warning, save } = useWikiNote(id);
+  const { note, backlinks, status, errMsg, warning, save, remove } = useWikiNote(id);
+  const router = useRouter();
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
+  // Delete is a TWO-CLICK inline confirm (no browser confirm() dialog): first click
+  // arms it (button → "Xác nhận xoá?"), second click deletes. Guards against a
+  // 1-click accidental loss without a modal.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteErr, setDeleteErr] = useState("");
 
-  // Leaving a note (id change) → drop any open edit.
+  // Leaving a note (id change) → drop any open edit + reset the delete-confirm.
   useEffect(() => {
     setEditing(false);
     setDraft(null);
     setFormErr("");
+    setConfirmingDelete(false);
+    setDeleteErr("");
   }, [id]);
 
   if (status === "loading") {
@@ -113,6 +122,22 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
     }
   }
 
+  async function onDelete() {
+    setDeleteErr("");
+    setBusy(true);
+    try {
+      await remove(); // DELETE /wiki/notes/{id} (inbound links → ghost server-side)
+      // Gone → leave the now-404 note page for the vault (list/explorer refetch there).
+      router.push("/wiki");
+    } catch (e) {
+      // fail-closed: surface the error, stay on the note (still exists).
+      setConfirmingDelete(false);
+      setDeleteErr(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div data-testid="wiki-note-screen">
       {warning && (
@@ -134,11 +159,52 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
         <TrustTierBadge tier={note.trustTier} testId="wiki-trust" />
         <span className="sp" style={{ flex: 1 }} />
         {!editing && (
-          <button type="button" className="btn sm accent" onClick={openEdit} data-testid="wiki-edit-btn">
-            <Icon name="i-note" /> Sửa
-          </button>
+          <>
+            <button type="button" className="btn sm accent" onClick={openEdit} data-testid="wiki-edit-btn">
+              <Icon name="i-note" /> Sửa
+            </button>
+            {/* Two-click inline delete: arm → confirm. No browser confirm() dialog. */}
+            {confirmingDelete ? (
+              <>
+                <button
+                  type="button"
+                  className="btn sm"
+                  style={{ color: "var(--red)", borderColor: "var(--red)" }}
+                  onClick={onDelete}
+                  disabled={busy}
+                  data-testid="wiki-delete-confirm"
+                >
+                  {busy ? "Đang xoá…" : "Xác nhận xoá?"}
+                </button>
+                <button
+                  type="button"
+                  className="btn sm ghost"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={busy}
+                  data-testid="wiki-delete-cancel"
+                >
+                  Huỷ
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn sm ghost"
+                style={{ color: "var(--red)" }}
+                onClick={() => { setDeleteErr(""); setConfirmingDelete(true); }}
+                data-testid="wiki-delete-btn"
+              >
+                <Icon name="i-x" /> Xoá
+              </button>
+            )}
+          </>
         )}
       </div>
+      {deleteErr && (
+        <div className="hint" style={{ padding: "8px 4px", color: "var(--red)" }} data-testid="wiki-delete-err">
+          Xoá thất bại: {deleteErr}
+        </div>
+      )}
 
       <div className="wnote-grid">
         {/* main column */}
