@@ -569,6 +569,9 @@ def test_gold_indicators_flow_through_unchanged(app_client):
 def test_gold_correlation_vs_btc(app_client):
     """END-TO-END: gold (XAU) vs BTC correlation via the SAME /correlation endpoint —
     two co-moving seeded series → 1.0, proving XAU is a full correlation citizen."""
+    from store import db
+    db.clear_prices("BTC")  # exact-1.0 correlation needs the EXACT seeded BTC series
+    db.clear_prices("XAU")
     _seed_prices("BTC", [float(i) for i in range(1, 30)])       # rising
     _seed_prices("XAU", [float(2600 + i) for i in range(1, 30)])  # rising in lockstep
     d = app_client.get("/market/correlation?symbols=BTC,XAU&hours=100000").json()["data"]
@@ -592,6 +595,8 @@ def test_backfill_endpoint_inserts_and_is_idempotent(app_client):
     source='coingecko-hist' (distinct from spot poll)."""
     from unittest.mock import patch
     from datetime import datetime, timedelta, timezone
+    from store import db
+    db.clear_prices("BTC")  # exact dedup/count assertions need a guaranteed-clean slate
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     pts = [((base + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(12)]
     with patch("modules.market.reader.fetch_market_chart", return_value=pts):
@@ -602,7 +607,6 @@ def test_backfill_endpoint_inserts_and_is_idempotent(app_client):
     # the backfilled history is now queryable + tagged as historical, not spot poll
     pts_out = app_client.get("/market/history/BTC?hours=1000000").json()["data"]["points"]
     assert len(pts_out) == 12
-    from store import db
     assert db.latest_price("BTC")["source"] == "coingecko-hist"
 
 
@@ -618,9 +622,14 @@ def test_backfill_blank_asset_is_422(app_client):
 
 
 # --- price-at (29C): GET /market/price-at?asset=&ts= — nearest owned point, honest ---
+# NOTE (sprint-29D): nearest-point assertions are sensitive to EXACT BTC rows in the
+# active DB. The app_client fixture already isolates to a tmp DB, but these tests also
+# clear_prices("BTC") first so the slate is GUARANTEED to be exactly what each test
+# records — deterministic regardless of run order / any ambient pollution.
 def test_price_at_endpoint_returns_nearest_point(app_client):
     from datetime import datetime, timezone
     from store import db
+    db.clear_prices("BTC")  # guaranteed clean slate (sprint-29D: kill order-dependence)
     db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
     db.record_price("BTC", 55000.0, datetime(2026, 5, 5, tzinfo=timezone.utc).isoformat())
     d = app_client.get("/market/price-at?asset=BTC&ts=2026-05-06T00:00:00+00:00").json()["data"]
@@ -634,6 +643,7 @@ def test_price_at_endpoint_out_of_range_warns(app_client):
     NOT a fabricated/null price."""
     from datetime import datetime, timezone
     from store import db
+    db.clear_prices("BTC")  # guaranteed clean slate
     db.record_price("BTC", 50000.0, datetime(2026, 5, 1, tzinfo=timezone.utc).isoformat())
     body = app_client.get("/market/price-at?asset=BTC&ts=2020-01-01T00:00:00+00:00").json()
     assert body["data"]["price"] == 50000.0          # nearest edge, not null
@@ -642,6 +652,8 @@ def test_price_at_endpoint_out_of_range_warns(app_client):
 
 def test_price_at_endpoint_no_history_null(app_client):
     """Tracked asset but no history at all → 200 {price: null} + warning, never 500."""
+    from store import db
+    db.clear_prices("BTC")  # guarantee NO history (the case under test) — order-independent
     body = app_client.get("/market/price-at?asset=BTC&ts=2026-05-01T00:00:00+00:00").json()
     assert body["data"]["price"] is None
     assert "no price history" in (body.get("warning") or "")

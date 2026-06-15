@@ -205,6 +205,19 @@ def price_at_or_before(asset: str, ts: str) -> sqlite3.Row | None:
         return cur.fetchone()
 
 
+def clear_prices(asset: str) -> int:
+    """Delete ALL price_history rows for ``asset``. Returns the row count removed.
+
+    Test-support / maintenance helper: lets a test guarantee a clean slate for an asset
+    regardless of ambient DB state (deterministic point-in-time / nearest assertions),
+    and lets an operator drop a polluted symbol. Scoped to one asset — never a blanket wipe."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM price_history WHERE asset = ?", (asset,))
+        conn.commit()
+        return cur.rowcount
+
+
 def price_range(asset: str) -> tuple[str, str] | None:
     """The (earliest_ts, latest_ts) bounds of ``asset``'s price_history, or None if no
     points. Used to tell the caller when a requested ts falls OUTSIDE the owned range."""
