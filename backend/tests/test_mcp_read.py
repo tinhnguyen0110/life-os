@@ -42,6 +42,19 @@ def app_db(isolated_paths):
     return isolated_paths
 
 
+@pytest.fixture
+def mock_okx_for_insights(monkeypatch):
+    """Patch the exchange so the crypto channel is stablecoin-heavy (USDT) — so the
+    undeployed-capital insight has real cross-domain data to fire on."""
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview, OkxBalance
+    snap = ExchangeOverview(configured=True, totalUsdValue=10000.0, balances=[
+        OkxBalance(symbol="USDT", available=9000, frozen=0, total=9000, usdValue=9000.0),
+        OkxBalance(symbol="BTC", available=0.016, frozen=0, total=0.016, usdValue=1000.0),
+    ])
+    monkeypatch.setattr(fin.exchange_service, "get_overview", lambda: (snap, None))
+
+
 # Tools that take no required args — callable with zero arguments against an empty app.
 NULLARY_TOOLS = [
     "finance_overview",
@@ -62,6 +75,7 @@ NULLARY_TOOLS = [
     "news_list",
     "wiki_overview",
     "life_brief",
+    "insights",
     "market_watchlist",
     "market_summary",
     "list_tools_catalog",
@@ -87,6 +101,7 @@ ENVELOPE_KEY = {
     "news_list": "news",
     "wiki_overview": "overview",
     "life_brief": "brief",
+    "insights": "insights",
     "market_watchlist": "items",
     "market_summary": "watchlist",
     "list_tools_catalog": "tools",
@@ -253,6 +268,106 @@ def test_NB_FINANCE_MCP_no_write_leak(app_db):
     for w in ("upsert_holding", "delete_holding", "set_golden_path", "set_crypto_basis",
               "add_rule", "delete_rule", "poll_once"):
         assert w not in ns, f"NB-FINANCE-MCP leaked a write symbol: {w}"
+
+
+# --------------------------------------------------------------------------- #
+# INSIGHTS (D1) — cross-domain neutral observations over the live read paths.    #
+# --------------------------------------------------------------------------- #
+def test_insights_shape_and_honest_empty(monkeypatch, app_db):
+    """With every source EMPTY (no holdings/crypto/notes/projects) NO rule fires →
+    honest-empty {insights: []}, never a crash. (The live dev box has a configured OKX +
+    real project repos, so isolate those sources here — the point is the empty-data path.)"""
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview
+    monkeypatch.setattr(fin.exchange_service, "get_overview",
+                        lambda: (ExchangeOverview(configured=False, totalUsdValue=0.0, balances=[]), None))
+    monkeypatch.setattr(rs, "_proj_list", lambda: ([], []))
+    monkeypatch.setattr(rs, "_mkt_tracked", lambda: [])
+    monkeypatch.setattr(rs, "_wiki_search", lambda *a, **k: [])
+    out = rs.insights()
+    assert out == {"insights": []}
+
+
+def test_insights_each_is_neutral_no_advice_verb(app_db):
+    """Every insight is a NEUTRAL observation — no buy/sell/advice/recommendation verb
+    leaks (insights describe a pattern; the agent decides)."""
+    flat = json.dumps(rs.insights()).lower()
+    for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":",
+                   "you should", "we recommend"):
+        assert banned not in flat, f"insights leaked a non-neutral term: {banned}"
+
+
+def test_insights_undeployed_capital_fires_on_stablecoin_heavy(mock_okx_for_insights, app_db):
+    """undeployed-capital fires when crypto-channel stablecoins + dry powder exceed 30%
+    of the portfolio (NB4 stableValue feeds it)."""
+    out = rs.insights()
+    ids = {i["id"] for i in out["insights"]}
+    assert "undeployed-capital" in ids
+    ins = next(i for i in out["insights"] if i["id"] == "undeployed-capital")
+    assert ins["sources"] == ["finance"]
+    assert ins["evidence"]["pct"] > 30.0
+
+
+def test_insights_all_crypto_overbought_distinguishing(monkeypatch, app_db):
+    """DISTINGUISHING: fires ONLY when ALL tracked crypto are overbought. With a mix
+    (one neutral) it must NOT fire — proves it's an AND over the set, not 'any overbought'."""
+    crypto = [{"symbol": "BTC", "assetClass": "crypto"},
+              {"symbol": "ETH", "assetClass": "crypto"}]
+    monkeypatch.setattr(rs, "_mkt_tracked", lambda: crypto)
+
+    def _ind(sym, names, hours=720, full=False):
+        sig = "overbought" if sym == "BTC" else "neutral"  # ETH neutral → rule must NOT fire
+        return {"indicators": {"summary": {"signals": {"rsi": sig}, "latest": {"rsi": 50}}}}, []
+    monkeypatch.setattr(rs, "_mkt_indicators", _ind)
+    assert "all-crypto-overbought" not in {i["id"] for i in rs.insights()["insights"]}
+
+    # now ALL overbought → fires
+    monkeypatch.setattr(rs, "_mkt_indicators",
+                        lambda s, n, hours=720, full=False:
+                        ({"indicators": {"summary": {"signals": {"rsi": "overbought"},
+                                                     "latest": {"rsi": 80}}}}, []))
+    fired = {i["id"] for i in rs.insights()["insights"]}
+    assert "all-crypto-overbought" in fired
+
+
+def test_insights_fail_soft_one_bad_rule_doesnt_break(monkeypatch, app_db):
+    """A rule that raises → captured in warnings, the others still run (fail-soft)."""
+    def _boom():
+        raise RuntimeError("rule blew up")
+    monkeypatch.setattr(rs, "_INSIGHT_RULES", [_boom, rs._insight_stalled_projects])
+    out = rs.insights()
+    assert "insights" in out  # didn't crash
+    assert any("rule blew up" in w for w in out.get("warnings", []))
+
+
+def test_insights_severity_ranked(monkeypatch, app_db):
+    """warn insights sort before info."""
+    monkeypatch.setattr(rs, "_INSIGHT_RULES", [
+        lambda: {"id": "i1", "severity": "info", "title": "t", "evidence": {}, "sources": []},
+        lambda: {"id": "w1", "severity": "warn", "title": "t", "evidence": {}, "sources": []},
+    ])
+    out = rs.insights()["insights"]
+    assert [i["severity"] for i in out] == ["warn", "info"]
+
+
+def test_insights_read_only_no_disk_mutation(mock_okx_for_insights, app_db):
+    """READ-ONLY: calling insights() mutates no finance/wiki/projects store. (The rules
+    only read; assert the holdings store is byte+mtime unchanged across a call.)"""
+    from core.config import settings
+    from modules.finance import service as fin
+    from modules.finance.schema import HoldingInput
+    fin.upsert_holding(HoldingInput(symbol="ETH", channel="crypto", qty=1, avgCost=2000))
+    disk = settings.data_dir / fin.HOLDINGS_MD
+    before, mtime = disk.read_bytes(), disk.stat().st_mtime_ns
+    rs.insights()
+    assert disk.read_bytes() == before and disk.stat().st_mtime_ns == mtime
+
+
+def test_insights_no_write_symbol_leak(app_db):
+    """The insights rules read only — no write symbol reachable."""
+    ns = set(vars(rs))
+    for w in ("upsert_holding", "create_note", "register_project", "set_config", "enqueue"):
+        assert w not in ns, f"insights leaked a write symbol: {w}"
 
 
 # --------------------------------------------------------------------------- #
@@ -850,4 +965,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 39  # +3 NB-FINANCE-MCP (finance_simulate/market_correlation/market_relative_strength); was 36 (NB3)
+    assert len(rs.TOOLS) == 40  # +1 INSIGHTS (D1 cross-domain insights); was 39 (NB-FINANCE-MCP)
