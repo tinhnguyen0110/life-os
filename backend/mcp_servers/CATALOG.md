@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **38 tools** — 34 read · 4 write (propose).
+Totals: **44 tools** — 34 read · 10 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -62,6 +62,12 @@ Totals: **38 tools** — 34 read · 4 write (propose).
 | `propose_note` | Propose a NEW note (module=notes, kind=note_create). Lands PENDING; a human |
 | `propose_journal` | Propose a NEW trade-journal entry (module=journal, kind=journal_create) |
 | `propose_project_update` | Propose an UPDATE to a project's human-authored status fields (module=projects, |
+| `wiki_propose_note` | Propose a NEW wiki note → wiki_proposals queue (separate from agent_proposals) |
+| `wiki_propose_edit` | Propose an EDIT to a wiki note → wiki_proposals queue |
+| `wiki_propose_link` | Propose ADDING a [[target]] link to a wiki note → wiki_proposals queue |
+| `wiki_propose_unlink` | Propose REMOVING a [[target]] link from a wiki note → wiki_proposals queue |
+| `wiki_propose_merge` | Propose MERGING wiki note source_id INTO target_id → wiki_proposals queue |
+| `wiki_propose_moc` | Propose a wiki Map-of-Content note → wiki_proposals queue |
 
 ## Regenerate this doc
 
