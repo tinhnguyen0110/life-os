@@ -11,6 +11,9 @@ import { useSafePathname } from "@/lib/useNav";
 import { NAV } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
 import { getRoutines, getProjects, getMarket, getClaudeUsage } from "@/lib/api";
+import { useSidebarPrefs } from "@/lib/useSidebarPrefs";
+import { applyPrefs } from "@/lib/sidebar-prefs";
+import { SidebarCustomizer } from "./SidebarCustomizer";
 
 /** A nav item is active if pathname equals its route, or (for non-home) starts with it. */
 function isActive(route: string, pathname: string): boolean {
@@ -25,6 +28,14 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
   // which would otherwise log a className mismatch). Post-hydration the real path wins.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // FE-1: user-customizable sidebar — hide/show + reorder modules, persisted to
+  // localStorage. SSR + first paint use the canonical NAV (ready=false → DEFAULT_PREFS)
+  // so server/client agree; the applied (filtered/reordered) list takes over after
+  // the prefs load post-mount — same hydration-safe gate as `mounted`.
+  const { prefs, ready: prefsReady } = useSidebarPrefs();
+  const [custOpen, setCustOpen] = useState(false);
+  const navGroups = prefsReady ? applyPrefs(prefs, NAV) : NAV;
 
   // F2-M4: wire ALL 4 sidebar badges to LIVE data (was static placeholders per
   // sidebar-badges-static-placeholder — done all-together, not piecemeal). Each fetch
@@ -81,6 +92,16 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
         </div>
         <button
           type="button"
+          className="sb-cust"
+          onClick={() => setCustOpen(true)}
+          title="Tùy chỉnh sidebar"
+          aria-label="Tùy chỉnh sidebar"
+          data-testid="sb-customize"
+        >
+          <Icon name="i-set" />
+        </button>
+        <button
+          type="button"
           className="sb-collapse"
           onClick={() => onToggleCollapse?.()}
           title="Thu gọn"
@@ -92,7 +113,7 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
       </div>
 
       <nav className="sb-nav" aria-label="Điều hướng chính">
-        {NAV.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.sec} data-nav-group>
             <div className="sb-sec">{group.sec}</div>
             {group.items.map((item) => {
@@ -128,6 +149,8 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
           <span>pro · vira</span>
         </div>
       </Link>
+
+      <SidebarCustomizer open={custOpen} onClose={() => setCustOpen(false)} />
     </aside>
   );
 }

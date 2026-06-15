@@ -59,7 +59,10 @@ html[data-scanline] #app::after { content:''; position:fixed; inset:0; pointer-e
   font-family:var(--mono); font-weight:700; font-size:16px; color:#180f04; background:var(--accent-grad); box-shadow:0 0 16px -4px var(--accent); }
 .sb-word { font-family:var(--mono); font-size:13px; font-weight:600; letter-spacing:.04em; white-space:nowrap; }
 .sb-word b { color:var(--accent); }
-.sb-collapse { margin-left:auto; width:24px; height:24px; border-radius:6px; display:grid; place-items:center; color:var(--tx-2); cursor:pointer; }
+.sb-cust { margin-left:auto; width:24px; height:24px; border-radius:6px; display:grid; place-items:center; color:var(--tx-2); cursor:pointer; border:0; background:transparent; }
+.sb-cust:hover { background:var(--bg-3); color:var(--tx-0); }
+.sb-cust svg { width:15px; height:15px; }
+.sb-collapse { width:24px; height:24px; border-radius:6px; display:grid; place-items:center; color:var(--tx-2); cursor:pointer; }
 .sb-collapse:hover { background:var(--bg-3); color:var(--tx-0); }
 .sb-collapse svg { width:15px; height:15px; transition:transform .2s; }
 #app.collapsed .sb-collapse svg { transform:rotate(180deg); }
@@ -77,8 +80,11 @@ html[data-scanline] #app::after { content:''; position:fixed; inset:0; pointer-e
 .badge.g { color:var(--green); background:var(--green-dim); }
 .badge.acc { color:var(--accent); background:var(--accent-dim); }
 #app.collapsed .sb-word, #app.collapsed .sb-sec, #app.collapsed .sb-item .lbl,
-#app.collapsed .sb-item .badge, #app.collapsed .sb-user .uinfo, #app.collapsed .sb-collapse { display:none; }
+#app.collapsed .sb-item .badge, #app.collapsed .sb-user .uinfo, #app.collapsed .sb-collapse,
+#app.collapsed .sb-cust { display:none; }
 #app.collapsed .sb-item { justify-content:center; padding:8px; }
+/* when the customize button is hidden (collapsed), the collapse chevron takes the right slot */
+#app.collapsed .sb-collapse { margin-left:auto; }
 .sb-user { border-top:1px solid var(--line); padding:11px 13px; display:flex; align-items:center; gap:10px; flex-shrink:0; cursor:pointer; }
 .sb-user:hover { background:var(--bg-2); }
 .avatar { width:32px; height:32px; border-radius:50%; flex-shrink:0; display:grid; place-items:center; font-family:var(--mono); font-size:12px; font-weight:600; color:#180f04; background:var(--accent-grad); }
@@ -381,6 +387,38 @@ select.finput { cursor:pointer; }
 #tweaks .togrow { display:flex; align-items:center; gap:10px; padding:7px 0; }
 #tweaks .togrow .lbl { flex:1; font-size:12.5px; color:var(--tx-1); }
 #tweaks .tw-foot { font-family:var(--mono); font-size:10px; color:var(--tx-2); margin-top:14px; line-height:1.5; }
+
+/* ============================================================
+   SidebarCustomizer (FE-1) — floating panel: hide/show + reorder nav modules.
+   Same floating-card chrome as #tweaks (backdrop + bottom-right card), but
+   anchored to the sidebar so it opens near the customize button (top-left).
+   ============================================================ */
+#sbcust-backdrop { position:fixed; inset:0; z-index:399; background:transparent; }
+#sbcust { position:fixed; top:54px; left:16px; width:296px; z-index:400; overflow:hidden;
+  background:color-mix(in oklch, var(--bg-1) 92%, transparent); backdrop-filter:blur(14px);
+  border:1px solid var(--line-2); border-radius:14px; box-shadow:0 24px 60px -20px rgba(0,0,0,.85); font-family:var(--sans); }
+#sbcust .sbc-head { display:flex; align-items:center; gap:9px; padding:13px 15px; border-bottom:1px solid var(--line); }
+#sbcust .dotlogo { width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+#sbcust .sbc-head b { font-size:13px; font-weight:600; flex:1; }
+#sbcust .sbc-head .x { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; color:var(--tx-2); border:0; background:transparent; }
+#sbcust .sbc-head .x:hover { background:var(--bg-3); color:var(--tx-0); }
+#sbcust .sbc-body { padding:12px 14px 14px; max-height:74vh; overflow:auto; }
+#sbcust .sbc-intro { font-size:11px; color:var(--tx-2); line-height:1.5; margin-bottom:8px; }
+#sbcust .sbc-sec { font-family:var(--mono); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--tx-2); padding:11px 2px 4px; }
+#sbcust .sbc-row { display:flex; align-items:center; gap:9px; padding:5px 6px; border-radius:8px; }
+#sbcust .sbc-row:hover { background:var(--bg-2); }
+#sbcust .sbc-row.off { opacity:.5; }
+#sbcust .sbc-ic { display:grid; place-items:center; color:var(--tx-1); flex-shrink:0; }
+#sbcust .sbc-ic svg { width:16px; height:16px; }
+#sbcust .sbc-lbl { flex:1; font-size:12.5px; color:var(--tx-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#sbcust .sbc-row.off .sbc-lbl { text-decoration:line-through; }
+#sbcust .sbc-move { display:flex; flex-direction:column; gap:1px; flex-shrink:0; }
+#sbcust .sbc-mbtn { width:18px; height:13px; display:grid; place-items:center; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); border-radius:4px; cursor:pointer; font-size:7px; line-height:1; padding:0; }
+#sbcust .sbc-mbtn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+#sbcust .sbc-mbtn:disabled { opacity:.3; cursor:not-allowed; }
+#sbcust .sbc-pin { font-family:var(--mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-2); padding:3px 7px; border:1px solid var(--line-2); border-radius:100px; flex-shrink:0; }
+#sbcust .sbc-row .toggle { flex-shrink:0; }
+#sbcust .sbc-foot { margin-top:12px; padding-top:11px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; }
 
 /* ============================================================
    WIKI (W1–W5) — PORTED from template/Life Command/app/wiki.css.

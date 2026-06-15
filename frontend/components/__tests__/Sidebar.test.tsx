@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, within, cleanup, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Sidebar } from "../Sidebar";
 import { NAV, ALL_ROUTES } from "@/lib/nav";
 
@@ -171,5 +172,47 @@ describe("Sidebar", () => {
     expect(container.querySelector('a[href="/ai"]')).toBeNull();
     expect(screen.queryByText(/AI Brain/i)).toBeNull();
     await settleSidebar();
+  });
+
+  // ── FE-1: user-customizable sidebar (hide/show + reorder via prefs) ──
+  it("FE-1: hides a module link when prefs hide its route (localStorage)", async () => {
+    mockPath = "/";
+    localStorage.setItem("lifeos.sidebar", JSON.stringify({ hidden: ["/market"], order: {} }));
+    const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
+    // prefs load post-mount → /market link removed; settle badges first
+    await settleSidebar();
+    await waitFor(() => expect(container.querySelector('a[href="/market"]')).toBeNull());
+    // a non-hidden route still present
+    expect(container.querySelector('a[href="/finance"]')).toBeTruthy();
+    localStorage.clear();
+  });
+
+  it("FE-1: opens the customizer panel from the customize button", async () => {
+    mockPath = "/";
+    const user = userEvent.setup();
+    render(<Sidebar onToggleCollapse={() => {}} />);
+    await settleSidebar();
+    expect(screen.queryByTestId("sbcust-panel")).toBeNull();
+    await user.click(screen.getByTestId("sb-customize"));
+    await waitFor(() => expect(screen.getByTestId("sbcust-panel")).toBeTruthy());
+  });
+
+  it("FE-1: hiding a module in the customizer updates the LIVE sidebar in the same tab (no reload)", async () => {
+    // Regression guard: the live Sidebar and the customizer each call useSidebarPrefs
+    // (two instances). A toggle in the panel must broadcast so the live nav updates
+    // immediately — caught in Chrome (the live links didn't change without a reload).
+    mockPath = "/";
+    const user = userEvent.setup();
+    const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
+    await settleSidebar();
+    // /market link present initially
+    expect(container.querySelector('a[href="/market"]')).toBeTruthy();
+    // open customizer + hide /market
+    await user.click(screen.getByTestId("sb-customize"));
+    await waitFor(() => expect(screen.getByTestId("sbc-toggle-/market")).toBeTruthy());
+    await user.click(screen.getByTestId("sbc-toggle-/market"));
+    // LIVE sidebar nav link disappears WITHOUT a reload (cross-instance sync)
+    await waitFor(() => expect(container.querySelector('a[href="/market"]')).toBeNull());
+    localStorage.clear();
   });
 });
