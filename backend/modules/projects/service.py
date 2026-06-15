@@ -159,7 +159,12 @@ def _tracked_repos() -> dict[str, str]:
                 # tracked project (it would read as dead/commits=0). The config
                 # path is the more reliable source when the recorded one is gone.
                 if not Path(repo).expanduser().is_dir() and pid in repos:
-                    logger.warning(
+                    # NG5: DEBUG, not WARNING — this stale-path→config-path fallback is a
+                    # NORMAL handled case (the config path is the reliable source), not a
+                    # warning-worthy event. At WARNING it fired 5× on every projects_list/
+                    # brief/life_brief call, polluting MCP stderr (which precedes the JSON
+                    # the agent reads). The fallback still works; it's just silent now.
+                    logger.debug(
                         "project %r status.md repo path %r missing — falling back to config path %r",
                         pid, repo, repos[pid],
                     )

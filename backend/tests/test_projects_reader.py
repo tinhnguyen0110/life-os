@@ -510,6 +510,34 @@ def test_stale_status_md_repo_path_falls_back_to_config(monkeypatch, active_repo
     assert st is not None and st.health == "act"
 
 
+def test_stale_path_fallback_logs_at_debug_not_warning(monkeypatch, active_repo, isolated_paths, caplog):
+    """NG5: the stale-path→config-path fallback is a NORMAL handled case — it must NOT
+    leak a WARNING-level log (which polluted MCP stderr 5× per projects_list/brief call,
+    preceding the JSON the agent reads). The fallback still WORKS; it's just silent now:
+    the message lives at DEBUG, and projects still resolve via the config path."""
+    import logging
+    from store import md_store
+    monkeypatch.setattr(service.settings, "project_repos", {"active": str(active_repo)})
+    md_store.write_file(
+        "projects/active/status.md",
+        "---\nname: Active\nrepo: /tmp/this-path-was-moved-and-is-gone\n---\n",
+        "stale path",
+    )
+    # Capture at WARNING — nothing about the fallback should appear at this level.
+    with caplog.at_level(logging.WARNING, logger=service.logger.name):
+        tracked = service._tracked_repos()
+    assert not any("falling back to config path" in r.message for r in caplog.records), \
+        "stale-path fallback must NOT emit a WARNING (NG5: demoted to DEBUG)"
+    # And it's present at DEBUG (the fallback was taken, just quietly).
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger=service.logger.name):
+        tracked = service._tracked_repos()
+    assert any("falling back to config path" in r.message and r.levelno == logging.DEBUG
+               for r in caplog.records), "fallback should log at DEBUG level"
+    # The fallback still RESOLVES the project via the config path (behavior unchanged).
+    assert tracked["active"] == str(active_repo)
+
+
 def test_stale_status_md_path_kept_when_not_in_config(monkeypatch, isolated_paths):
     """A registered-only (non-config) project with a stale path keeps the stale
     path (no config to fall back to) — it'll read dead, which is honest."""
