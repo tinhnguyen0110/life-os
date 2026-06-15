@@ -131,8 +131,35 @@ def test_channel_detail_404(app_client):
 
 
 def test_static_routes_win_over_channel_param(app_client):
-    """/holdings and /golden-path must NOT be captured by /{channel}."""
+    """/holdings, /golden-path, /analytics must NOT be captured by /{channel}."""
     # /holdings → list (200, list), NOT a 404 'channel holdings not found'
     assert isinstance(app_client.get("/finance/holdings").json()["data"], list)
     # /golden-path → targets dict, NOT channel detail
     assert "targets" in app_client.get("/finance/golden-path").json()["data"]
+    # /analytics → analytics payload (has 'rebalance'), NOT a 404 channel lookup
+    body = app_client.get("/finance/analytics")
+    assert body.status_code == 200 and "rebalance" in body.json()["data"]
+
+
+# --- GET /finance/analytics ---
+def test_analytics_envelope_and_shape(app_client):
+    resp = app_client.get("/finance/analytics")
+    assert resp.status_code == 200
+    d = resp.json()["data"]
+    for k in ("totalValue", "rebalance", "risk", "returns", "asOf"):
+        assert k in d
+    # 4 channels in rebalance (crypto/etf/vn/dry) even with an empty portfolio.
+    assert {r["channel"] for r in d["rebalance"]} == {"crypto", "etf", "vn", "dry"}
+
+
+def test_analytics_rebalance_amounts_end_to_end(app_client):
+    """Through the real endpoint: BTC 1 @ $60000 = $60000 all-crypto; baseline target
+    crypto 38% → target value $22800 → SELL $37200."""
+    app_client.post("/finance/holdings", json={"channel": "crypto", "symbol": "BTC", "qty": 1, "avgCost": 50000})
+    d = app_client.get("/finance/analytics").json()["data"]
+    assert d["totalValue"] == 60000.0
+    crypto = next(r for r in d["rebalance"] if r["channel"] == "crypto")
+    assert crypto["targetValue"] == 22800.0  # 38% of 60000
+    assert crypto["action"] == "sell" and crypto["amount"] == 37200.0
+    # concentration: single holding → 100%, HHI 1.0
+    assert d["risk"]["topHoldingPct"] == 100.0 and d["risk"]["hhi"] == 1.0

@@ -87,6 +87,18 @@ def set_crypto_basis(body: CryptoBasisInput):
     return ok(data=payload)
 
 
+# NOTE: registered BEFORE the /{channel} catch-all so "/analytics" routes here,
+# not into get_channel("analytics").
+@router.get("/analytics")
+def get_analytics():
+    """Portfolio analytics: actionable rebalance amounts (per channel: buy/sell |USD|
+    to hit target), risk metrics (concentration HHI + top holdings + total drift), and
+    return/volatility (when a value series exists). NEUTRAL numbers — NOT advice.
+    Empty portfolio → zeroed/None metrics + warning, never a 500."""
+    analytics, warnings = service.get_analytics()
+    return ok(data=analytics.model_dump(), warning="; ".join(warnings) if warnings else None)
+
+
 @router.get("/{channel}")
 def get_channel(channel: str):
     """S6 detail for one channel: alloc + holdings (priced, P&L) + ladder. 404 if unknown."""

@@ -88,6 +88,66 @@ class FinanceOverview(BaseModel):
     series: list[float] = Field(default_factory=list, description="portfolio value over time ([] if none)")
 
 
+# --------------------------------------------------------------------------- #
+# Portfolio analytics (rebalance / risk / return) — NEUTRAL numbers, no advice   #
+# --------------------------------------------------------------------------- #
+class RebalanceAction(BaseModel):
+    """Per-channel: where it is vs target + the actionable amount to get back.
+
+    ``action`` ∈ buy | sell | hold. ``amount`` is the |USD| to move to reach the
+    target weight (0 when on-target). NEUTRAL math — NOT investment advice."""
+
+    channel: Channel
+    currentValue: float
+    currentPct: float
+    targetPct: float
+    targetValue: float = Field(..., description="targetPct% of totalValue")
+    drift: float = Field(..., description="currentPct - targetPct (signed)")
+    action: Literal["buy", "sell", "hold"]
+    amount: float = Field(..., ge=0, description="|USD| to move toward target (0 if on-target)")
+
+
+class ConcentrationItem(BaseModel):
+    """One holding's weight in the portfolio (for the concentration view)."""
+
+    symbol: str
+    channel: Channel
+    value: float
+    pct: float = Field(..., description="% of total portfolio value")
+
+
+class RiskMetrics(BaseModel):
+    """Neutral portfolio-risk numbers (NO advice). All derived, self-describing."""
+
+    topHoldingPct: float | None = Field(None, description="largest single holding as % of total")
+    topHoldingSymbol: str | None = None
+    top3Pct: float | None = Field(None, description="sum of the 3 largest holdings as % of total")
+    hhi: float | None = Field(None, description="Herfindahl index of holding weights (0..1; 1=one asset)")
+    holdingCount: int = Field(0, description="number of distinct holdings")
+    totalAbsDrift: float = Field(0.0, description="Σ|channel drift| across channels (pp)")
+    rebalanceDistance: float = Field(0.0, description="½·Σ|drift| = min turnover % to hit targets")
+
+
+class ReturnMetrics(BaseModel):
+    """Period return + volatility from the portfolio value series. None when there is
+    no series yet (no snapshot routine this build — honest, not fabricated)."""
+
+    points: int = Field(0, description="# series points used")
+    totalReturnPct: float | None = Field(None, description="(last-first)/first*100")
+    volatilityPct: float | None = Field(None, description="stddev of period-over-period % returns")
+    available: bool = Field(False, description="True only when a real series exists")
+
+
+class PortfolioAnalytics(BaseModel):
+    """GET /finance/analytics — rebalance + risk + return. Pure numbers, no advice."""
+
+    totalValue: float
+    rebalance: list[RebalanceAction] = Field(default_factory=list)
+    risk: RiskMetrics
+    returns: ReturnMetrics
+    asOf: str
+
+
 class GoldenPathInput(BaseModel):
     """Body to set the golden-path: target % per channel + per-channel ladder."""
 

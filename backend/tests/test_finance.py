@@ -345,3 +345,112 @@ def test_parse_front_matter_non_dict_yields_empty():
     assert service._parse_front_matter("---\n- a\n- b\n---\n") == {}
     parsed = service._parse_front_matter("---\nkey: value\n---\n")
     assert parsed == {"key": "value"}
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio analytics — rebalance / risk / return (math pinned to hand-calc)     #
+# --------------------------------------------------------------------------- #
+def test_analytics_rebalance_handcalc(isolated_paths, mock_prices):
+    """Rebalance amount = targetPct% · total − currentValue. Crafted portfolio:
+    crypto $6000 + etf $4000 = $10000 total; targets crypto 50 / etf 50.
+    crypto target value 5000 < 6000 → SELL 1000; etf 5000 > 4000 → BUY 1000."""
+    mock_prices["BTC"] = 100.0   # 60 BTC → $6000
+    mock_prices["VOO"] = 100.0   # 40 VOO → $4000
+    service.set_golden_path(GoldenPathInput(targets={"crypto": 50.0, "etf": 50.0}, ladder={}))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=60, avgCost=90))
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=40, avgCost=90))
+
+    a, _ = service.get_analytics()
+    assert a.totalValue == 10000.0
+    by_ch = {r.channel: r for r in a.rebalance}
+    assert by_ch["crypto"].action == "sell" and by_ch["crypto"].amount == 1000.0
+    assert by_ch["crypto"].targetValue == 5000.0 and by_ch["crypto"].drift == 10.0  # 60-50
+    assert by_ch["etf"].action == "buy" and by_ch["etf"].amount == 1000.0
+
+
+def test_analytics_on_target_is_hold(isolated_paths, mock_prices):
+    """A channel exactly on target → action 'hold', amount 0."""
+    mock_prices["BTC"] = 100.0
+    service.set_golden_path(GoldenPathInput(targets={"crypto": 100.0}, ladder={}))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    a, _ = service.get_analytics()
+    crypto = next(r for r in a.rebalance if r.channel == "crypto")
+    assert crypto.action == "hold" and crypto.amount == 0.0 and crypto.drift == 0.0
+
+
+def test_analytics_concentration_hhi_handcalc(isolated_paths, mock_prices):
+    """Concentration: BTC $6000 + ETH $2000 = $8000. weights .75/.25 →
+    HHI = .75²+.25² = 0.625; top holding BTC 75%; top3 = 100%."""
+    mock_prices["BTC"] = 100.0   # 60 → 6000
+    mock_prices["ETH"] = 50.0    # 40 → 2000
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=60, avgCost=90))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="ETH", qty=40, avgCost=45))
+    a, _ = service.get_analytics()
+    assert a.risk.topHoldingSymbol == "BTC" and a.risk.topHoldingPct == 75.0
+    assert a.risk.hhi == 0.625
+    assert a.risk.top3Pct == 100.0 and a.risk.holdingCount == 2
+
+
+def test_analytics_total_drift_and_rebalance_distance(isolated_paths, mock_prices):
+    """totalAbsDrift = Σ|drift|; rebalanceDistance = ½·that. crypto 100% vs 38% target
+    (+62), dry/etf/vn 0% (−20/−24/−18) → Σ|drift| = 124, distance 62."""
+    mock_prices["BTC"] = 100.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    a, _ = service.get_analytics()  # baseline targets crypto38/etf24/vn18/dry20
+    assert a.risk.totalAbsDrift == 124.0
+    assert a.risk.rebalanceDistance == 62.0
+
+
+def test_analytics_empty_portfolio_no_crash(isolated_paths):
+    """EMPTY portfolio → total 0, all channels 'hold', None risk metrics, returns
+    unavailable, a warning — never a 500."""
+    a, warnings = service.get_analytics()
+    assert a.totalValue == 0.0
+    assert all(r.action == "hold" and r.amount == 0.0 for r in a.rebalance)
+    assert a.risk.topHoldingPct is None and a.risk.hhi is None and a.risk.holdingCount == 0
+    assert a.returns.available is False
+    assert any("series" in w for w in warnings)
+
+
+def test_analytics_target_zero_channel(isolated_paths, mock_prices):
+    """A channel with target 0 that HAS value → sell ALL of it (target value 0)."""
+    mock_prices["BTC"] = 100.0   # crypto $1000
+    mock_prices["VOO"] = 100.0   # etf $1000
+    # crypto target 100, etf target 0 → etf should be fully sold.
+    service.set_golden_path(GoldenPathInput(targets={"crypto": 100.0, "etf": 0.0}, ladder={}))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=10, avgCost=90))
+    a, _ = service.get_analytics()
+    etf = next(r for r in a.rebalance if r.channel == "etf")
+    assert etf.targetPct == 0.0 and etf.targetValue == 0.0
+    assert etf.action == "sell" and etf.amount == 1000.0  # divest entirely
+
+
+# --- return metrics (pure math) ---
+def test_return_metrics_handcalc():
+    # series [100,110,99,121] → total return (121-100)/100 = 21%
+    rm = service._return_metrics([100.0, 110.0, 99.0, 121.0])
+    assert rm.totalReturnPct == 21.0
+    assert rm.available is True and rm.volatilityPct is not None  # stddev of period returns
+
+
+def test_return_metrics_empty_unavailable():
+    rm = service._return_metrics([])
+    assert rm.available is False and rm.totalReturnPct is None and rm.volatilityPct is None
+
+
+def test_return_metrics_single_point_unavailable():
+    rm = service._return_metrics([100.0])  # need ≥2 for a return
+    assert rm.available is False
+
+
+def test_analytics_is_neutral_no_advice(isolated_paths, mock_prices):
+    """The analytics payload carries NEUTRAL numbers only — no buy/sell-ADVICE words
+    beyond the mechanical action enum (buy/sell/hold are rebalance directions, not
+    recommendations). Spot-check: no 'recommend'/'should'/'advice' strings leak in."""
+    mock_prices["BTC"] = 100.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=10, avgCost=90))
+    a, _ = service.get_analytics()
+    blob = str(a.model_dump()).lower()
+    for word in ("recommend", "should", "advice", "advise"):
+        assert word not in blob

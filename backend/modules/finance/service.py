@@ -30,6 +30,7 @@ from store import db, md_store
 from .schema import (
     Change,
     ChannelAlloc,
+    ConcentrationItem,
     CryptoBasisInput,
     FinanceOverview,
     GoldenPathInput,
@@ -37,6 +38,10 @@ from .schema import (
     HoldingInput,
     LadderState,
     PnL,
+    PortfolioAnalytics,
+    RebalanceAction,
+    ReturnMetrics,
+    RiskMetrics,
 )
 
 logger = logging.getLogger("life-os.finance.service")
@@ -416,3 +421,92 @@ def get_channel(channel: str) -> tuple[dict | None, list[str]]:
         "ladder": ladder,
     }
     return detail, warnings
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio analytics — rebalance + risk + return (NEUTRAL numbers, NO advice)   #
+# --------------------------------------------------------------------------- #
+def _return_metrics(series: list[float]) -> ReturnMetrics:
+    """Total return + volatility from a portfolio-value series. Honest: no series
+    (the snapshot routine isn't built yet) → available=False, metrics None."""
+    clean = [float(v) for v in series if isinstance(v, (int, float))]
+    if len(clean) < 2:
+        return ReturnMetrics(points=len(clean), totalReturnPct=None, volatilityPct=None, available=False)
+    first, last = clean[0], clean[-1]
+    total_return = round((last - first) / first * 100.0, 4) if first != 0 else None
+    # period-over-period % returns → sample stddev = volatility.
+    rets = [(clean[i] - clean[i - 1]) / clean[i - 1] * 100.0
+            for i in range(1, len(clean)) if clean[i - 1] != 0]
+    vol: float | None = None
+    if len(rets) >= 2:
+        mean = sum(rets) / len(rets)
+        var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)  # sample variance
+        vol = round(var ** 0.5, 4)
+    return ReturnMetrics(points=len(clean), totalReturnPct=total_return,
+                         volatilityPct=vol, available=True)
+
+
+def get_analytics() -> tuple[PortfolioAnalytics, list[str]]:
+    """Portfolio analytics over the live overview: actionable rebalance amounts,
+    concentration / drift risk metrics, and (when a value series exists) return /
+    volatility. All NEUTRAL numbers — NOT investment advice. Returns ``(analytics,
+    warnings)``; an empty portfolio yields zeroed/None metrics, never a crash."""
+    overview, warnings = get_overview()
+    total = overview.totalValue
+
+    # --- rebalance: per channel, the |USD| to move to hit the target weight -----
+    rebalance: list[RebalanceAction] = []
+    for a in overview.allocations:
+        target_value = round(a.target / 100.0 * total, 2)
+        delta = round(target_value - a.value, 2)  # +ve → under target → buy; -ve → sell
+        if abs(delta) < 0.01:
+            action, amount = "hold", 0.0
+        elif delta > 0:
+            action, amount = "buy", round(delta, 2)
+        else:
+            action, amount = "sell", round(-delta, 2)
+        rebalance.append(RebalanceAction(
+            channel=a.channel, currentValue=a.value, currentPct=a.pct,
+            targetPct=a.target, targetValue=target_value, drift=a.drift,
+            action=action, amount=amount,  # type: ignore[arg-type]
+        ))
+
+    # --- risk: per-holding concentration (HHI) + channel drift summary ----------
+    by_channel, agg_warn = _aggregate(list_holdings())
+    warnings += [w for w in agg_warn if w not in warnings]
+    holding_items: list[ConcentrationItem] = []
+    for ch, data in by_channel.items():
+        if ch not in CHANNELS:
+            continue
+        for h in data["holdings"]:
+            val = float(h["value"])
+            holding_items.append(ConcentrationItem(
+                symbol=h["holding"]["symbol"], channel=ch,
+                value=val, pct=round(val / total * 100.0, 2) if total > 0 else 0.0,
+            ))
+    holding_items.sort(key=lambda c: c.value, reverse=True)
+
+    top_pct = holding_items[0].pct if holding_items else None
+    top_sym = holding_items[0].symbol if holding_items else None
+    top3 = round(sum(c.pct for c in holding_items[:3]), 2) if holding_items else None
+    # HHI = Σ(weight²) over holdings (weight = fraction of total); 1 = single asset.
+    hhi: float | None = None
+    if holding_items and total > 0:
+        hhi = round(sum((c.value / total) ** 2 for c in holding_items), 4)
+    total_abs_drift = round(sum(abs(a.drift) for a in overview.allocations), 2)
+
+    risk = RiskMetrics(
+        topHoldingPct=top_pct, topHoldingSymbol=top_sym, top3Pct=top3, hhi=hhi,
+        holdingCount=len(holding_items), totalAbsDrift=total_abs_drift,
+        rebalanceDistance=round(total_abs_drift / 2.0, 2),  # ½Σ|drift| = min turnover
+    )
+
+    returns = _return_metrics(overview.series)
+    if not returns.available:
+        warnings.append("no portfolio value series yet — return/volatility unavailable")
+
+    analytics = PortfolioAnalytics(
+        totalValue=total, rebalance=rebalance, risk=risk, returns=returns,
+        asOf=_now_iso(),
+    )
+    return analytics, warnings
