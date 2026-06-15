@@ -165,6 +165,18 @@ describe("MarketChart", () => {
     expect(screen.getByTestId("mchart-sma")).toBeTruthy();
   });
 
+  it("DEFENSIVE: toggling an overlay OFF removes it cleanly", async () => {
+    const user = userEvent.setup();
+    withClosesData([100, 105, 102, 108]);
+    withIndicators({});
+    render(<MarketChart symbol="BTC" />);
+    await user.click(screen.getByTestId("mchart-ov-sma")); // on
+    expect(screen.getByTestId("mchart-sma")).toBeTruthy();
+    await user.click(screen.getByTestId("mchart-ov-sma")); // off
+    expect(screen.getByTestId("mchart-ov-sma").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("mchart-sma")).toBeNull(); // gone cleanly
+  });
+
   it("toggling Bollinger on draws the three band lines", async () => {
     const user = userEvent.setup();
     withClosesData([100, 105, 102, 108]);
@@ -196,5 +208,21 @@ describe("MarketChart", () => {
     // row still renders; toggling would fetch — but nothing drawn without data
     expect(screen.getByTestId("mchart-overlays")).toBeTruthy();
     expect(screen.queryByTestId("mchart-sma")).toBeNull();
+  });
+
+  it("DEFENSIVE: an indicators API error does NOT break the price chart (overlay is secondary)", async () => {
+    const user = userEvent.setup();
+    withClosesData([100, 105, 102, 108]);
+    // indicator hook errored → no data; the price line/area must still render fully
+    indState.current = { data: null, status: "error", errMsg: "indicators down", reload: vi.fn() };
+    render(<MarketChart symbol="BTC" />);
+    expect(screen.getByTestId("mchart-line")).toBeTruthy();   // price line intact
+    expect(screen.getByTestId("mchart-area")).toBeTruthy();
+    expect(screen.getByTestId("mchart-overlays")).toBeTruthy(); // toggles still offered
+    // toggling SMA on with a failed indicator fetch → simply no overlay (no crash)
+    await user.click(screen.getByTestId("mchart-ov-sma"));
+    expect(screen.queryByTestId("mchart-sma")).toBeNull();
+    // price chart STILL fully rendered after the toggle
+    expect(screen.getByTestId("mchart-line")).toBeTruthy();
   });
 });
