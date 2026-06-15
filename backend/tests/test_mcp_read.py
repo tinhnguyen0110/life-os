@@ -34,9 +34,11 @@ def app_db(isolated_paths):
     """
     from modules.wiki import store as wiki_store
     from modules.wiki import proposals_store as pstore
+    from mcp_servers import proposals_store as agent_pstore
 
     wiki_store.init_wiki_tables()
     pstore.init_proposal_tables()
+    agent_pstore.init_proposal_tables()  # MCP-5: the agent-proposal queue table
     return isolated_paths
 
 
@@ -227,6 +229,70 @@ def test_life_brief_market_uses_tracked_assets_and_indicators(app_db):
 
 
 # --------------------------------------------------------------------------- #
+# Proposal feedback (MCP-5) — the agent reads its own proposals' disposition     #
+# --------------------------------------------------------------------------- #
+def test_check_proposal_status_unknown_is_found_false(app_db):
+    out = rs.check_proposal_status(999999)
+    assert out == {"found": False, "proposalId": 999999}
+
+
+def test_list_my_proposals_empty_is_clean(app_db):
+    out = rs.list_my_proposals()
+    assert out == {"proposals": []}
+
+
+def test_proposal_stats_empty_is_zero(app_db):
+    out = rs.proposal_stats()
+    assert out["counts"] == {"pending": 0, "accepted": 0, "rejected": 0}
+    assert out["acceptanceRate"] is None  # honest: no decided proposals yet
+
+
+def test_feedback_loop_propose_pending_then_accepted(app_db):
+    """The agent-side loop: propose → check=pending → (human accepts via the apply
+    service) → check=accepted + appliedRef set. This is what lets the agent learn."""
+    from mcp_servers import write_server as ws
+    from mcp_servers import proposals_service as psvc
+
+    p = ws.propose_decision("Trim crypto", 60, "portfolio", "over target")
+    pid = p["id"]
+
+    # agent checks: still pending
+    s1 = rs.check_proposal_status(pid)
+    assert s1["found"] is True and s1["status"] == "pending"
+    assert s1["appliedRef"] is None
+
+    # it shows in the agent's pending list + stats
+    assert pid in {x["id"] for x in rs.list_my_proposals(status="pending")["proposals"]}
+    assert rs.proposal_stats()["counts"]["pending"] == 1
+
+    # human accepts (human-only apply path) → applies to the decision module
+    psvc.accept(pid, decided_by="user")
+
+    # agent re-checks: now accepted + appliedRef points at the created entry
+    s2 = rs.check_proposal_status(pid)
+    assert s2["status"] == "accepted"
+    assert s2["appliedRef"] is not None
+    assert s2["decidedBy"] == "user"
+
+    # stats reflect the decision: 1 accepted, acceptanceRate 1.0
+    stats = rs.proposal_stats()
+    assert stats["counts"]["accepted"] == 1
+    assert stats["acceptanceRate"] == 1.0
+
+
+def test_feedback_loop_rejected_visible_to_agent(app_db):
+    from mcp_servers import write_server as ws
+    from mcp_servers import proposals_service as psvc
+
+    p = ws.propose_note("idea", "worth capturing")
+    psvc.reject(p["id"], decided_by="user")
+    s = rs.check_proposal_status(p["id"])
+    assert s["status"] == "rejected"
+    assert s["appliedRef"] is None
+    assert rs.proposal_stats()["counts"]["rejected"] == 1
+
+
+# --------------------------------------------------------------------------- #
 # THE CAPABILITY GATE — no write capability (structural, grep + AST proven)      #
 # --------------------------------------------------------------------------- #
 # Mutation symbols across the wrapped modules: if ANY is reachable from this
@@ -245,6 +311,10 @@ WRITE_SYMBOLS = [
     # wiki write surface must not leak in either
     "create_note", "update_note", "delete_note", "merge_notes",
     "enqueue", "create_proposal", "accept_proposal", "reject_proposal",
+    # MCP-5: the agent-proposal queue's WRITE/DECIDE surface — the read-server reads
+    # proposal STATUS but must NOT import any of these (the agent can't write/decide
+    # its own proposal via the read-server; accept/reject is human-only at REST).
+    "mark_decided", "set_applied_ref", "append_audit", "accept", "reject",
 ]
 
 
@@ -306,4 +376,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 19
+    assert len(rs.TOOLS) == 22

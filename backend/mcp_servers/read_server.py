@@ -32,6 +32,12 @@ the bound names are obviously private wrappers:
   - settings:         get_config                      (read; set_config NOT imported)
   - reliability:      run_suite                       (READ-ONLY suite — verifies
                       against an existing note, never writes)
+  - agent proposals:  get_proposal, list_proposals, count_by_status (MCP-5 — the
+                      agent READS the disposition of its OWN proposals to learn from
+                      accept/reject. ONLY these 3 read fns are imported from
+                      proposals_store — NOT enqueue / mark_decided / set_applied_ref /
+                      append_audit, so the agent cannot write/decide via the read-
+                      server; accept/reject stays human-only at the REST surface.)
 It imports NO mutation symbol (create_/update_/delete_/upsert_/set_/add_/register_/
 abandon_/restore_/refresh_/save_/poll_/sync/enqueue …). ``tests/test_mcp_read.py`` asserts
 (a) no such symbol is bound in this module's namespace and (b) the AST of its imports
@@ -79,6 +85,14 @@ from modules.activity.service import get_run as _activity_run
 from modules.exchange.service import get_overview as _exch_overview
 from modules.settings.service import get_config as _settings_get
 from modules.reliability.service import run_suite as _reliability_suite
+# MCP-5: the agent reads the DISPOSITION of its own proposals (status/applied_ref) so it
+# can learn from accept/reject — READ paths only. We import the SPECIFIC read fns (NOT
+# the proposals_store module), so enqueue / mark_decided / set_applied_ref / append_audit
+# stay unreachable here — the read-server's no-write gate holds (the no-write-symbol AST
+# test asserts it). The agent CANNOT accept/reject its own proposal (human-only, REST).
+from mcp_servers.proposals_store import get_proposal as _proposal_get
+from mcp_servers.proposals_store import list_proposals as _proposal_list
+from mcp_servers.proposals_store import count_by_status as _proposal_counts
 
 
 # --------------------------------------------------------------------------- #
@@ -239,6 +253,61 @@ def reliability_report() -> dict[str, Any]:
     READ-ONLY (verifies against an existing note; never writes). Empty vault → the
     grounding check is reported skipped (honest)."""
     return {"report": _jsonable(_reliability_suite())}
+
+
+# --------------------------------------------------------------------------- #
+# Proposal feedback (MCP-5) — the agent READS the disposition of its own         #
+# proposals so it can learn (a rejected proposal → propose differently next      #
+# time). READ-ONLY: these report the human's verdict; the agent CANNOT accept/   #
+# reject (that is human-only, gated at the /agent-proposals REST surface).       #
+# --------------------------------------------------------------------------- #
+def check_proposal_status(proposal_id: int) -> dict[str, Any]:
+    """One proposal's disposition by id: status (pending|accepted|rejected),
+    appliedRef (the entry id an accept created), applyError (why an accept couldn't
+    apply), decidedBy + decided (who ratified, when). Unknown id → ``{found: False}``
+    (honest, not a crash). READ-ONLY."""
+    p = _proposal_get(int(proposal_id))
+    if p is None:
+        return {"found": False, "proposalId": int(proposal_id)}
+    return {
+        "found": True,
+        "proposalId": p["id"],
+        "module": p["module"],
+        "kind": p["kind"],
+        "status": p["status"],
+        "appliedRef": p.get("appliedRef"),
+        "applyError": p.get("applyError"),
+        "decidedBy": p.get("decidedBy"),
+        "decided": p.get("decided"),
+        "rationale": p.get("rationale"),
+    }
+
+
+def list_my_proposals(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """The agent's proposals (newest-first) with their current disposition — the review
+    queue from the agent's POV, so it can see what's still pending vs accepted/rejected.
+    Optional ``status`` filter (pending|accepted|rejected). Empty → ``{proposals: []}``.
+    READ-ONLY."""
+    proposals = _proposal_list(status=status, limit=int(limit))
+    return {"proposals": _jsonable(proposals)}
+
+
+def proposal_stats() -> dict[str, Any]:
+    """Counts of the agent's proposals by status (pending/accepted/rejected) so the
+    agent can self-assess its acceptance rate. Empty queue → all-zero. READ-ONLY."""
+    counts = _proposal_counts()
+    accepted = counts.get("accepted", 0)
+    rejected = counts.get("rejected", 0)
+    decided = accepted + rejected
+    return {
+        "counts": {
+            "pending": counts.get("pending", 0),
+            "accepted": accepted,
+            "rejected": rejected,
+        },
+        # acceptanceRate over DECIDED proposals (None if none decided yet — honest, not 0)
+        "acceptanceRate": round(accepted / decided, 3) if decided else None,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -407,6 +476,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "app_settings": app_settings,
     "reliability_report": reliability_report,
     "life_brief": life_brief,
+    "check_proposal_status": check_proposal_status,
+    "list_my_proposals": list_my_proposals,
+    "proposal_stats": proposal_stats,
 }
 
 
