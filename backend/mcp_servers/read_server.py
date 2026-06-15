@@ -14,11 +14,13 @@ THE CAPABILITY GATE (least-privilege, STRUCTURAL — not a flag):
 This module imports ONLY read entry-points, each aliased with a leading underscore so
 the bound names are obviously private wrappers:
   - finance:          get_overview, get_channel
-  - market:           get_market, history, compute_indicators, tracked_assets
+  - market:           get_market, history, compute_indicators, tracked_assets,
+                      candles, watchlist_data
                       (READ paths only — NOT poll_once / add_rule / delete_rule;
-                      compute_indicators is the GET /market/indicators TA read path
-                      dev shipped — WRAPPED, never edited; this file does NOT touch
-                      market/service.py or market/ta.py, which dev owns)
+                      compute_indicators/candles/watchlist_data are the GET
+                      /market/indicators //ohlc //watchlist read paths dev shipped —
+                      WRAPPED, never edited; this file does NOT touch market/service.py
+                      or market/ta.py, which dev owns. summarize() stays NEUTRAL.)
   - projects:         list_projects, get_project
   - graveyard:        get_graveyard
   - claude_usage:     get_usage
@@ -72,6 +74,11 @@ from modules.market.service import history as _mkt_history
 # config list of symbols (no asset-mgmt mutation).
 from modules.market.service import compute_indicators as _mkt_indicators
 from modules.market.service import tracked_assets as _mkt_tracked
+# MCP-6: more market READ paths dev shipped — OHLC candles (close-derived, honest
+# warning) + the rich watchlist (price/changePct/sparkline/RSI/trend). READ-only;
+# add_rule/delete_rule/poll_once are NOT imported (they stay in WRITE_SYMBOLS).
+from modules.market.service import candles as _mkt_candles
+from modules.market.service import watchlist_data as _mkt_watchlist
 from modules.projects.service import list_projects as _proj_list
 from modules.projects.service import get_project as _proj_get
 from modules.graveyard.service import get_graveyard as _grave_get
@@ -164,6 +171,43 @@ def market_indicators(symbol: str, indicators: str = "summary",
     names = [n.strip() for n in indicators.split(",") if n.strip()]
     data, warnings = _mkt_indicators(symbol, names, hours=int(hours), full=bool(full))
     return {"indicators": _jsonable(data), "warnings": list(warnings or [])}
+
+
+def _is_tracked(symbol: str) -> bool:
+    return any(a.get("symbol") == symbol for a in _mkt_tracked())
+
+
+def market_ohlc(symbol: str, hours: int = 168, interval: int = 60) -> dict[str, Any]:
+    """OHLC candles for a TRACKED asset, DERIVED from the close-tick series (the feed
+    is close-only, so each bar's O/H/L/C are the first/max/min/last close in the
+    ``interval`` (minutes) bucket — NOT exchange candles; each bar's ``ticks`` count
+    shows how many observations it aggregates). ``{found, symbol, interval, candles,
+    warnings}``. Untracked symbol → ``{found: False}`` (honest, not a crash). Keeps the
+    honest close-derived warning. (Wraps the GET /market/ohlc read path.)"""
+    if not _is_tracked(symbol):
+        return {"found": False, "symbol": symbol}
+    bars, warnings = _mkt_candles(symbol, hours=int(hours), interval_minutes=int(interval))
+    return {"found": True, "symbol": symbol, "interval": int(interval),
+            "candles": _jsonable(bars), "warnings": list(warnings or [])}
+
+
+def market_watchlist() -> dict[str, Any]:
+    """The watchlist with a rich per-symbol view: ``{items:[{symbol,name,price,
+    changePct,source,sparkline[],rsi,trend,warning?}], warnings}``. A symbol with no
+    series yet still appears (price from the live quote, sparkline empty, rsi/trend
+    pending) + a per-row warning — never a crash. RSI/trend are NEUTRAL technical reads
+    (no advice). (Wraps the GET /market/watchlist read path.)"""
+    items, warnings = _mkt_watchlist()
+    return {"items": _jsonable(items), "warnings": list(warnings or [])}
+
+
+def market_summary() -> dict[str, Any]:
+    """ONE-call market read for the agent: the rich watchlist (price/changePct/
+    sparkline) + per-symbol NEUTRAL technical signals (RSI + trend from summarize()).
+    ``{watchlist, warnings}``. NEUTRAL data only — NO buy/sell advice. Fail-open: a
+    symbol with no series still appears with pending technicals + a per-row warning."""
+    items, warnings = _mkt_watchlist()
+    return {"watchlist": _jsonable(items), "warnings": list(warnings or [])}
 
 
 def projects_list() -> dict[str, Any]:
@@ -462,6 +506,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,
+    "market_ohlc": market_ohlc,
+    "market_watchlist": market_watchlist,
+    "market_summary": market_summary,
     "projects_list": projects_list,
     "project_get": project_get,
     "graveyard_overview": graveyard_overview,

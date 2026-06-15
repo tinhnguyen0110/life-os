@@ -58,6 +58,8 @@ NULLARY_TOOLS = [
     "app_settings",
     "reliability_report",
     "life_brief",
+    "market_watchlist",
+    "market_summary",
 ]
 
 # Documented top-level envelope key per nullary tool.
@@ -76,6 +78,8 @@ ENVELOPE_KEY = {
     "app_settings": "settings",
     "reliability_report": "report",
     "life_brief": "brief",
+    "market_watchlist": "items",
+    "market_summary": "watchlist",
 }
 
 
@@ -103,6 +107,7 @@ def test_arg_tools_return_jsonable_dict(app_db):
     for out in (
         rs.market_history("BTC", hours=24, limit=10),
         rs.market_indicators("BTC", indicators="rsi,sma", hours=720),
+        rs.market_ohlc("BTC", hours=24, interval=60),
         rs.brief_history(limit=5),
         rs.activity_feed(routine="x", status="ok", range="today"),
     ):
@@ -121,6 +126,43 @@ def test_market_indicators_shape_and_no_crash(app_db):
     out2 = rs.market_indicators("BTC", indicators="not-a-real-indicator")
     assert isinstance(out2, dict)
     json.dumps(out2)
+
+
+# --------------------------------------------------------------------------- #
+# Market/TA tools (MCP-6) — OHLC + watchlist + summary, READ-ONLY + neutral      #
+# --------------------------------------------------------------------------- #
+def test_market_ohlc_shape_and_honest_warning(app_db):
+    """OHLC candles for a tracked asset: {found, symbol, interval, candles, warnings}.
+    Empty series → honest empty candles + warning, never a crash."""
+    out = rs.market_ohlc("BTC", hours=24, interval=60)
+    assert out["found"] is True
+    assert set(out) >= {"found", "symbol", "interval", "candles", "warnings"}
+    assert isinstance(out["candles"], list)
+    assert isinstance(out["warnings"], list)
+    json.dumps(out)
+
+
+def test_market_ohlc_untracked_is_found_false(app_db):
+    out = rs.market_ohlc("NOPE-NOT-TRACKED")
+    assert out == {"found": False, "symbol": "NOPE-NOT-TRACKED"}
+
+
+def test_market_watchlist_shape(app_db):
+    out = rs.market_watchlist()
+    assert set(out) >= {"items", "warnings"}
+    assert isinstance(out["items"], list)
+    json.dumps(out)
+
+
+def test_market_summary_is_neutral_data(app_db):
+    """One-call market read = watchlist + neutral technicals. Must be DATA, not advice
+    — no recommendation/buy-sell key leaks (summarize() is neutral in ta.py)."""
+    out = rs.market_summary()
+    assert "watchlist" in out and isinstance(out["watchlist"], list)
+    json.dumps(out)
+    flat = json.dumps(out).lower()
+    for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":"):
+        assert banned not in flat, f"market_summary leaked a non-neutral term: {banned}"
 
 
 # --------------------------------------------------------------------------- #
@@ -376,4 +418,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 22
+    assert len(rs.TOOLS) == 25
