@@ -60,6 +60,7 @@ NULLARY_TOOLS = [
     "macro_overview",
     "news_digest",
     "news_list",
+    "wiki_overview",
     "life_brief",
     "market_watchlist",
     "market_summary",
@@ -84,6 +85,7 @@ ENVELOPE_KEY = {
     "macro_overview": "macro",
     "news_digest": "digest",
     "news_list": "news",
+    "wiki_overview": "overview",
     "life_brief": "brief",
     "market_watchlist": "items",
     "market_summary": "watchlist",
@@ -119,6 +121,9 @@ def test_arg_tools_return_jsonable_dict(app_db):
         rs.macro_history("cpi", days=400),
         rs.brief_history(limit=5),
         rs.activity_feed(routine="x", status="ok", range="today"),
+        rs.wiki_search("anything", limit=5),
+        rs.wiki_get(999999),
+        rs.wiki_backlinks(999999),
     ):
         assert isinstance(out, dict)
         json.dumps(out)
@@ -261,6 +266,61 @@ def test_news_mcp_neutral_no_leak(app_db):
     for banned in ("buy", "sell", "bullish", "bearish", "recommend", "forecast",
                    "khuyến nghị", "nên mua", "nên bán"):
         assert banned not in flat, f"news_digest leaked a sentiment/advice term: {banned}"
+
+
+# --------------------------------------------------------------------------- #
+# WIKI-MCP — wrap wiki READ over MCP (mirror news). search/get/overview/        #
+# backlinks; honest-found-false; integer-id citation; 0 write-leak.             #
+# --------------------------------------------------------------------------- #
+def _seed_wiki_note(title="Atomicity", content="a note holds one idea"):
+    from modules.wiki.service import create_note
+    from modules.wiki.schema import NoteCreateInput
+    return create_note(NoteCreateInput(title=title, content=content)).id
+
+
+def test_wiki_search_and_get_roundtrip(app_db):
+    nid = _seed_wiki_note(title="Spaced repetition", content="review on a curve")
+    # search finds it (ranked results, each with an integer id to cite)
+    res = rs.wiki_search("repetition")["results"]
+    assert any(r["id"] == nid for r in res)
+    assert {"id", "title", "snippet", "status"} <= set(res[0].keys())
+    # get by integer id returns the note
+    got = rs.wiki_get(nid)
+    assert got["found"] is True and got["note"]["id"] == nid
+    assert got["note"]["title"] == "Spaced repetition"
+
+
+def test_wiki_get_missing_is_found_false(app_db):
+    assert rs.wiki_get(999999) == {"found": False, "note_id": 999999}
+
+
+def test_wiki_overview_shape_and_empty_honest(app_db):
+    out = rs.wiki_overview()
+    assert "overview" in out
+    ov = out["overview"]
+    assert {"stats", "inbox", "orphans", "recentActivity"} <= set(ov.keys())
+    # empty vault → pctWithLink None (never div-zero), warning present
+    assert ov["stats"].get("pctWithLink") is None
+
+
+def test_wiki_backlinks_shape(app_db):
+    a = _seed_wiki_note(title="Target", content="t")
+    b = _seed_wiki_note(title="Source", content=f"see [[{a}]]")
+    out = rs.wiki_backlinks(a)["backlinks"]
+    assert {"linked", "unlinked", "outbound"} <= set(out.keys())
+    assert any(l["id"] == b for l in out["linked"])  # the inbound link surfaces
+
+
+def test_wiki_mcp_no_write_leak(app_db):
+    # WIKI-MCP capability gate: the read-server must NOT bind any wiki write fn.
+    # (the wiki writes are already in WRITE_SYMBOLS; this asserts 0 leak at the
+    # read-server namespace, the same gate the AST/namespace tests enforce.)
+    ns = set(vars(rs))
+    for w in ("create_note", "update_note", "delete_note", "merge_notes",
+              "enqueue", "create_proposal", "accept_proposal", "reject_proposal"):
+        assert w not in ns, f"read-server leaked a wiki write symbol: {w}"
+    # and the read fns ARE reachable (aliased-private) — wired, not absent
+    assert "_wiki_search" in ns and "_wiki_get_note" in ns
 
 
 # --------------------------------------------------------------------------- #
@@ -581,4 +641,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 30  # +2 NEWS-MCP (news_digest, news_list); was 28
+    assert len(rs.TOOLS) == 34  # +4 WIKI-MCP (search/get/overview/backlinks); was 30 (NEWS-MCP)

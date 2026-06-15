@@ -106,6 +106,14 @@ from modules.macro.service import get_history as _macro_history
 # captured news; it cannot capture/fetch or init the store).
 from modules.news.service import digest as _news_digest
 from modules.news.service import list_news as _news_list
+# WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
+# only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
+# create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
+# agent reads the vault + proposes via the WRITE server, it cannot mutate directly).
+from modules.wiki.reader import search as _wiki_search
+from modules.wiki.reader import overview as _wiki_overview
+from modules.wiki.reader import backlinks as _wiki_backlinks
+from modules.wiki.service import get_note as _wiki_get_note
 # MCP-5: the agent reads the DISPOSITION of its own proposals (status/applied_ref) so it
 # can learn from accept/reject — READ paths only. We import the SPECIFIC read fns (NOT
 # the proposals_store module), so enqueue / mark_decided / set_applied_ref / append_audit
@@ -347,6 +355,38 @@ def news_list(tag: str | None = None, limit: int = 30) -> dict[str, Any]:
     ``tag`` filters by exact tag (unknown tag → empty). NEUTRAL (headlines only, no
     commentary). ``{items, count, asOf, tag}``. (Wraps GET /news — read-only.)"""
     return {"news": _jsonable(_news_list(tag, limit=int(limit)))}
+
+
+def wiki_search(q: str, limit: int = 30) -> dict[str, Any]:
+    """Full-text search the wiki vault → ranked results ``[{id, title, snippet,
+    status}]`` (FTS5). Empty/bad query → ``[]`` (never raises). The agent cites a
+    note by its integer id. ``{results}``. (Wraps GET /wiki/search — read-only.)"""
+    return {"results": _jsonable(_wiki_search(q, limit=int(limit)))}
+
+
+def wiki_get(note_id: int) -> dict[str, Any]:
+    """One wiki note by its INTEGER id (the citation key). A missing note →
+    ``{found: False}`` (honest, not a crash). ``{found, note}``. (Wraps GET
+    /wiki/notes/{id} — read-only.)"""
+    note = _wiki_get_note(int(note_id))
+    if note is None:
+        return {"found": False, "note_id": int(note_id)}
+    return {"found": True, "note": _jsonable(note)}
+
+
+def wiki_overview() -> dict[str, Any]:
+    """Vault overview: ``{stats, inbox, orphans, recentActivity, proposalCount}`` +
+    a warning (empty vault → pctWithLink None, never div-zero). ``{overview, warning}``.
+    (Wraps GET /wiki/overview — read-only.)"""
+    data, warning = _wiki_overview()
+    return {"overview": _jsonable(data), "warning": warning}
+
+
+def wiki_backlinks(note_id: int) -> dict[str, Any]:
+    """Backlinks for a wiki note: ``{linked, unlinked, outbound}`` (B3). The agent
+    sees what references a note (grounding context). ``{backlinks}``. (Wraps GET
+    /wiki/notes/{id}/backlinks — read-only.)"""
+    return {"backlinks": _jsonable(_wiki_backlinks(int(note_id)))}
 
 
 # --------------------------------------------------------------------------- #
@@ -657,6 +697,10 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "macro_history": macro_history,
     "news_digest": news_digest,
     "news_list": news_list,
+    "wiki_search": wiki_search,
+    "wiki_get": wiki_get,
+    "wiki_overview": wiki_overview,
+    "wiki_backlinks": wiki_backlinks,
     "life_brief": life_brief,
     "check_proposal_status": check_proposal_status,
     "list_my_proposals": list_my_proposals,

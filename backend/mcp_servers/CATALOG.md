@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **34 tools** — 30 read · 4 write (propose).
+Totals: **38 tools** — 34 read · 4 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -44,6 +44,10 @@ Totals: **34 tools** — 30 read · 4 write (propose).
 | `macro_history` |  | One macro indicator's time-series over the last ``days`` (oldest→newest) |
 | `news_digest` | ✓ | A NEUTRAL, source-cited roll-up of the grounded news the module has captured |
 | `news_list` | ✓ | Raw captured headlines, newest-first — each with source url + published_ts |
+| `wiki_search` |  | Full-text search the wiki vault → ranked results [{id, title, snippet, status}] |
+| `wiki_get` |  | One wiki note by its INTEGER id (the citation key); missing → {found: False} |
+| `wiki_overview` |  | Vault overview: {stats, inbox, orphans, recentActivity, proposalCount} + warning |
+| `wiki_backlinks` |  | Backlinks for a wiki note: {linked, unlinked, outbound} (grounding context) |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
