@@ -88,6 +88,54 @@ def get_ohlc(symbol: str, hours: int = 168, interval: int = 60):
               warning="; ".join(warnings) if warnings else None)
 
 
+# --- multi-symbol analytics: correlation / comparison / relative strength ----
+def _parse_symbols(symbols: str, *, min_n: int) -> list[str]:
+    """Parse + validate the comma-separated ``symbols`` query. De-duped (order kept),
+    uppercased. <``min_n`` → 422; >10 → 422 (bounded request, N² for correlation)."""
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for s in symbols.split(","):
+        sym = s.strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            parsed.append(sym)
+    if len(parsed) < min_n:
+        raise HTTPException(status_code=422, detail=f"need ≥{min_n} distinct symbols (got {len(parsed)})")
+    if len(parsed) > service.MAX_COMPARE_SYMBOLS:
+        raise HTTPException(status_code=422,
+                            detail=f"too many symbols ({len(parsed)}); max {service.MAX_COMPARE_SYMBOLS}")
+    return parsed
+
+
+@router.get("/correlation")
+def get_correlation(symbols: str, hours: int = 720):
+    """Pairwise Pearson correlation matrix for ≥2 comma-separated symbols (≤10) over
+    the close series. Each cell ∈ [-1, 1] or None (no overlap / flat series — honest,
+    not fabricated). Needs ≥2 symbols → 422 otherwise. NEUTRAL numbers, no advice."""
+    syms = _parse_symbols(symbols, min_n=2)
+    data, warnings = service.correlation(syms, hours=hours)
+    return ok(data=data, warning="; ".join(warnings) if warnings else None)
+
+
+@router.get("/compare")
+def get_compare(symbols: str, hours: int = 720):
+    """Side-by-side comparison table for 1..10 comma-separated symbols: each
+    {changePct, volatility, rsi, trend} over the window, for relative ranking.
+    Short/absent series → honest None fields. NEUTRAL numbers, no advice."""
+    syms = _parse_symbols(symbols, min_n=1)
+    data, warnings = service.compare(syms, hours=hours)
+    return ok(data=data, warning="; ".join(warnings) if warnings else None)
+
+
+@router.get("/relative-strength/{symbol}")
+def get_relative_strength(symbol: str, vs: str = "BTC", hours: int = 720):
+    """``symbol`` vs a ``vs`` benchmark (default BTC): the price-ratio trend + %
+    change. ratioTrend 'up' = outperforming the benchmark (NEUTRAL observation, NOT a
+    recommendation). Thin data → None fields, never fabricated."""
+    data, warnings = service.relative_strength(symbol.strip().upper(), vs=vs.strip().upper(), hours=hours)
+    return ok(data=data, warning="; ".join(warnings) if warnings else None)
+
+
 @router.get("/alerts")
 def list_alerts():
     """All configured alert rules."""

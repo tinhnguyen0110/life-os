@@ -290,3 +290,89 @@ def test_eval_insufficient_data_does_not_fire():
     # too few points for SMA → graceful (False + reason), never a crash.
     fired, detail = _svc._eval_one_indicator(_rule("price_cross_sma_above", period=20), [10, 11])
     assert fired is False and "needs" in detail
+
+
+# --------------------------------------------------------------------------- #
+# Multi-symbol — Pearson correlation + comparison (math pinned)                  #
+# --------------------------------------------------------------------------- #
+def test_pearson_perfect_positive_is_1():
+    assert ta.pearson([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]) == 1.0
+    assert ta.pearson([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) == 1.0  # y=2x still 1.0
+
+
+def test_pearson_perfect_negative_is_minus_1():
+    assert ta.pearson([1, 2, 3, 4, 5], [5, 4, 3, 2, 1]) == -1.0
+
+
+def test_pearson_handcalc():
+    # x=[1,2,3] y=[1,3,2]: mean 2,2. cov=(-1)(-1)+0+0=1. varx=2, vary=2. r=1/√4=0.5
+    assert ta.pearson([1, 2, 3], [1, 3, 2]) == 0.5
+
+
+def test_pearson_flat_series_is_none():
+    # a constant series has zero variance → correlation UNDEFINED (None, not 0).
+    assert ta.pearson([5, 5, 5, 5], [1, 2, 3, 4]) is None
+
+
+def test_pearson_too_few_points_is_none():
+    assert ta.pearson([1], [1]) is None
+    assert ta.pearson([], [1, 2, 3]) is None
+
+
+def test_pearson_tail_aligns_mismatched_lengths():
+    # [1,2,3,4,5] vs [4,5] → aligns to last 2 of x = [4,5] vs [4,5] → 1.0
+    assert ta.pearson([1, 2, 3, 4, 5], [4, 5]) == 1.0
+
+
+def test_correlation_matrix_structure_and_values():
+    m = ta.correlation_matrix({"A": [1, 2, 3, 4, 5], "B": [2, 4, 6, 8, 10], "C": [5, 4, 3, 2, 1]})
+    assert m["symbols"] == ["A", "B", "C"]
+    assert m["matrix"]["A"]["B"] == 1.0   # co-move
+    assert m["matrix"]["A"]["C"] == -1.0  # inverse
+    assert m["matrix"]["A"]["A"] == 1.0   # diagonal
+    assert m["matrix"]["B"]["A"] == m["matrix"]["A"]["B"]  # symmetric
+
+
+def test_correlation_matrix_short_series_warns_none():
+    m = ta.correlation_matrix({"A": [1, 2, 3], "B": [5]})  # B has 1 point
+    assert m["matrix"]["A"]["B"] is None
+    assert m["matrix"]["B"]["B"] is None  # <2 points → diagonal None too
+    assert any("B" in w for w in m["warnings"])
+
+
+def test_compare_metrics_structure_and_handcalc():
+    # [100,...,140] → change (140-100)/100 = 40%; vol present; rsi None (<15 pts);
+    # trend 'flat' because summarize's SMA-50 trend needs ≥50 points (honest partial).
+    c = ta.compare_metrics([100, 110, 99, 121, 130, 125, 140])
+    assert c["changePct"] == 40.0
+    assert c["volatility"] is not None
+    assert c["rsi"] is None  # 7 < 15 points → RSI-14 undefined
+    assert c["trend"] == "flat"  # short series → no SMA-50 trend yet
+    assert c["points"] == 7
+
+
+def test_compare_metrics_trend_up_with_enough_points():
+    # a long RISING series → SMA-50 slope up → trend 'up' (proves trend works given data)
+    c = ta.compare_metrics([float(i) for i in range(1, 80)])  # 79 rising points
+    assert c["trend"] == "up" and c["rsi"] is not None
+
+
+def test_compare_metrics_empty_is_honest_none():
+    c = ta.compare_metrics([])
+    assert c["changePct"] is None and c["volatility"] is None and c["rsi"] is None
+
+
+def test_relative_strength_outperform_is_up():
+    # symbol rises, benchmark flat → ratio rises → outperforming → 'up'
+    rs = ta.relative_strength([100, 110, 120, 140], [100, 100, 100, 100])
+    assert rs["ratioTrend"] == "up" and rs["ratioChangePct"] == 40.0
+
+
+def test_relative_strength_underperform_is_down():
+    rs = ta.relative_strength([100, 90, 80], [100, 100, 100])
+    assert rs["ratioTrend"] == "down"
+
+
+def test_relative_strength_insufficient_overlap():
+    rs = ta.relative_strength([100], [100, 200])
+    assert rs["latestRatio"] is None and "need ≥2" in rs["warning"]

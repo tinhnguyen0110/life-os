@@ -431,3 +431,79 @@ def test_poll_edge_trigger_no_duplicate(app_client):
     hist = app_client.get("/market").json()["data"]["alertHistory"]
     btc_hits = [e for e in hist if e["symbol"] == "BTC"]
     assert len(btc_hits) == 1, f"edge-trigger must not duplicate a standing hit, got {len(btc_hits)}"
+
+
+# --- multi-symbol: GET /market/correlation, /compare, /relative-strength ---
+def test_correlation_endpoint_co_moving_is_1(app_client):
+    """END-TO-END: two perfectly co-moving seeded series → correlation 1.0."""
+    _seed_prices("BTC", [float(i) for i in range(1, 30)])      # rising
+    _seed_prices("ETH", [float(2 * i) for i in range(1, 30)])  # rising 2× (still corr 1)
+    d = app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000").json()["data"]
+    assert d["matrix"]["BTC"]["ETH"] == 1.0
+    assert d["matrix"]["BTC"]["BTC"] == 1.0
+
+
+def test_correlation_endpoint_inverse_is_minus_1(app_client):
+    _seed_prices("BTC", [float(i) for i in range(1, 30)])        # rising
+    _seed_prices("ETH", [float(30 - i) for i in range(1, 30)])   # falling → inverse
+    d = app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000").json()["data"]
+    assert d["matrix"]["BTC"]["ETH"] == -1.0
+
+
+def test_correlation_needs_two_symbols_422(app_client):
+    assert app_client.get("/market/correlation?symbols=BTC").status_code == 422
+    # dedup: BTC,BTC → 1 distinct → 422
+    assert app_client.get("/market/correlation?symbols=BTC,BTC").status_code == 422
+
+
+def test_correlation_too_many_symbols_422(app_client):
+    syms = ",".join(f"S{i}" for i in range(11))  # 11 > cap 10
+    assert app_client.get(f"/market/correlation?symbols={syms}").status_code == 422
+
+
+def test_correlation_short_series_is_none_not_crash(app_client):
+    _seed_prices("BTC", [1.0, 2.0, 3.0])
+    # ETH has no series → correlation None, 200 not 500.
+    resp = app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["data"]["matrix"]["BTC"]["ETH"] is None
+    assert "ETH" in (d.get("warning") or "")
+
+
+def test_compare_endpoint_structure(app_client):
+    _seed_prices("BTC", [100.0 + i for i in range(60)])
+    _seed_prices("ETH", [50.0 + i for i in range(60)])
+    d = app_client.get("/market/compare?symbols=BTC,ETH&hours=100000").json()["data"]
+    rows = {r["symbol"]: r for r in d["comparison"]}
+    assert set(rows) == {"BTC", "ETH"}
+    for r in rows.values():
+        for k in ("changePct", "volatility", "rsi", "trend", "points"):
+            assert k in r
+    assert rows["BTC"]["changePct"] == 59.0  # (159-100)/100
+
+
+def test_compare_single_symbol_ok(app_client):
+    # compare allows 1 symbol (min_n=1); correlation needs 2.
+    _seed_prices("BTC", [100.0 + i for i in range(30)])
+    resp = app_client.get("/market/compare?symbols=BTC&hours=100000")
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]["comparison"]) == 1
+
+
+def test_relative_strength_endpoint(app_client):
+    _seed_prices("ETH", [100.0, 110.0, 120.0, 140.0])  # rising
+    _seed_prices("BTC", [100.0, 100.0, 100.0, 100.0])  # flat benchmark
+    d = app_client.get("/market/relative-strength/ETH?vs=BTC&hours=100000").json()["data"]
+    assert d["ratioTrend"] == "up"  # ETH outperforming flat BTC
+    assert d["ratioChangePct"] == 40.0
+
+
+def test_multi_symbol_endpoints_are_neutral_no_advice(app_client):
+    """The comparison/correlation payloads carry NEUTRAL numbers — no advice words."""
+    _seed_prices("BTC", [100.0 + i for i in range(30)])
+    _seed_prices("ETH", [100.0 + i for i in range(30)])
+    blob = (str(app_client.get("/market/compare?symbols=BTC,ETH&hours=100000").json())
+            + str(app_client.get("/market/correlation?symbols=BTC,ETH&hours=100000").json())).lower()
+    for word in ("recommend", "should", "buy", "sell", "advice"):
+        assert word not in blob

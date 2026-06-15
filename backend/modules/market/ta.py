@@ -459,3 +459,124 @@ def summarize(closes: list, *, rsi_period: int = 14, sma_fast: int = 50,
         },
         "warning": warn,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Multi-symbol — Pearson correlation + comparison (pure math, NEUTRAL)           #
+# --------------------------------------------------------------------------- #
+def pearson(a: list, b: list) -> Optional[float]:
+    """Pearson correlation of two series (cleaned + tail-aligned to equal length).
+
+    Returns a value in [-1, 1], or None when it's undefined: <2 overlapping points,
+    or either aligned series is constant (zero variance → correlation undefined, NOT
+    0). Perfectly co-moving → 1.0; perfectly inverse → -1.0."""
+    ca, _ = _clean(a)
+    cb, _ = _clean(b)
+    m = min(len(ca), len(cb))
+    if m < 2:
+        return None
+    # align to the most-recent ``m`` points of each (tail-align).
+    x, y = ca[-m:], cb[-m:]
+    mean_x = sum(x) / m
+    mean_y = sum(y) / m
+    cov = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(m))
+    var_x = sum((v - mean_x) ** 2 for v in x)
+    var_y = sum((v - mean_y) ** 2 for v in y)
+    if var_x == 0 or var_y == 0:  # a flat series has no correlation to anything
+        return None
+    r = cov / math.sqrt(var_x * var_y)
+    # clamp tiny FP overshoot into [-1, 1].
+    return round(max(-1.0, min(1.0, r)), 4)
+
+
+def correlation_matrix(series_by_symbol: dict[str, list]) -> dict:
+    """Pairwise Pearson correlation matrix over the given symbol→series map.
+
+    Returns ``{symbols:[...], matrix:{a:{b: r|None}}, warnings:[...]}``. Diagonal is
+    1.0 (a symbol vs itself, when it has ≥2 points). A pair with no overlap / a flat
+    series → None (honest, never fabricated). Symbols with <2 points are kept but warn."""
+    symbols = list(series_by_symbol.keys())
+    warnings: list[str] = []
+    cleaned: dict[str, list[float]] = {}
+    for s in symbols:
+        c, _ = _clean(series_by_symbol[s])
+        cleaned[s] = c
+        if len(c) < 2:
+            warnings.append(f"{s}: <2 data points — correlations involving it are None")
+
+    matrix: dict[str, dict[str, Optional[float]]] = {}
+    for a in symbols:
+        matrix[a] = {}
+        for b in symbols:
+            if a == b:
+                matrix[a][b] = 1.0 if len(cleaned[a]) >= 2 else None
+            else:
+                matrix[a][b] = pearson(cleaned[a], cleaned[b])
+    return {"symbols": symbols, "matrix": matrix, "warnings": warnings}
+
+
+def _pct_change(values: list[float]) -> Optional[float]:
+    """% change first→last of a series. None if <2 points or the first is 0."""
+    if len(values) < 2 or values[0] == 0:
+        return None
+    return round((values[-1] - values[0]) / values[0] * 100.0, 4)
+
+
+def _volatility(values: list[float]) -> Optional[float]:
+    """Sample-stddev of period-over-period % returns (the standard volatility proxy).
+    None if <3 points (need ≥2 returns for a sample stddev)."""
+    if len(values) < 3:
+        return None
+    rets = [(values[i] - values[i - 1]) / values[i - 1] * 100.0
+            for i in range(1, len(values)) if values[i - 1] != 0]
+    if len(rets) < 2:
+        return None
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return round(var ** 0.5, 4)
+
+
+def compare_metrics(closes: list) -> dict:
+    """One symbol's comparison metrics (for ranking N symbols side-by-side):
+    ``{changePct, volatility, rsi, trend, points}``. Each is None when the series is
+    too short to compute it — honest partials, never fabricated. NEUTRAL — no advice."""
+    clean, warn = _clean(closes)
+    change = _pct_change(clean)
+    vol = _volatility(clean)
+    rsi_r = rsi(clean, 14)
+    summ = summarize(clean) if clean else None
+    return {
+        "changePct": change,
+        "volatility": vol,
+        "rsi": rsi_r.latest,
+        "trend": (summ["signals"]["trend"] if summ else "flat"),
+        "points": len(clean),
+        "warning": warn,
+    }
+
+
+def relative_strength(closes: list, benchmark: list) -> dict:
+    """Relative strength of a symbol vs a benchmark series: the RATIO series
+    (symbol/benchmark) + its trend + the ratio's % change over the window. A RISING
+    ratio = the symbol is OUTPERFORMING the benchmark (NEUTRAL observation, NOT a
+    recommendation). Returns ``{ratioChangePct, ratioTrend, latestRatio, warning}``;
+    None fields when there's insufficient overlapping data."""
+    cs, _ = _clean(closes)
+    cb, _ = _clean(benchmark)
+    m = min(len(cs), len(cb))
+    if m < 2:
+        return {"ratioChangePct": None, "ratioTrend": "flat", "latestRatio": None,
+                "warning": f"need ≥2 overlapping points (have {m})"}
+    x, y = cs[-m:], cb[-m:]
+    ratio = [x[i] / y[i] for i in range(m) if y[i] != 0]
+    if len(ratio) < 2:
+        return {"ratioChangePct": None, "ratioTrend": "flat", "latestRatio": None,
+                "warning": "benchmark has zero/insufficient prices"}
+    change = _pct_change(ratio)
+    trend = "up" if ratio[-1] > ratio[0] else ("down" if ratio[-1] < ratio[0] else "flat")
+    return {
+        "ratioChangePct": change,
+        "ratioTrend": trend,  # up = outperforming benchmark (neutral)
+        "latestRatio": round(ratio[-1], 6),
+        "warning": None,
+    }

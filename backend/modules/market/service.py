@@ -726,6 +726,79 @@ def compute_indicators(asset: str, names: list[str], *, hours: int = 720,
 
 
 # --------------------------------------------------------------------------- #
+# Multi-symbol analytics — correlation + comparison (over the close series)      #
+# --------------------------------------------------------------------------- #
+MAX_COMPARE_SYMBOLS = 10  # cap so a request stays bounded (N² for correlation)
+
+
+def _series_for(symbols: list[str], hours: int) -> tuple[dict[str, list[float]], list[str]]:
+    """Fetch the close series for each symbol. Returns ``(series_by_symbol, warnings)``.
+    A symbol with no series yields []; warned (the math then degrades honestly)."""
+    series: dict[str, list[float]] = {}
+    warnings: list[str] = []
+    for sym in symbols:
+        closes = [p.price for p in history(sym, hours=hours, limit=10000)]
+        series[sym] = closes
+        if not closes:
+            warnings.append(f"{sym}: no price history")
+    return series, warnings
+
+
+def correlation(symbols: list[str], hours: int = 720) -> tuple[dict, list[str]]:
+    """Pairwise Pearson correlation matrix over the symbols' close series. Needs ≥2
+    symbols (caller enforces); series are tail-aligned per pair. Returns ``(data,
+    warnings)``; a pair with no overlap / a flat series → None (honest, not 0)."""
+    from . import ta
+
+    series, warnings = _series_for(symbols, hours)
+    result = ta.correlation_matrix(series)
+    warnings += [w for w in result["warnings"] if w not in warnings]
+    data = {
+        "symbols": result["symbols"],
+        "matrix": result["matrix"],
+        "window_hours": hours,
+        "asOf": _now().isoformat(),
+    }
+    return data, warnings
+
+
+def compare(symbols: list[str], hours: int = 720) -> tuple[dict, list[str]]:
+    """Side-by-side comparison table: each symbol's {changePct, volatility, rsi, trend}
+    over the window, for relative ranking. NEUTRAL numbers — no advice. A symbol with
+    a short/absent series gets honest None fields, never fabricated values."""
+    from . import ta
+
+    series, warnings = _series_for(symbols, hours)
+    rows = []
+    for sym in symbols:
+        m = ta.compare_metrics(series[sym])
+        rows.append({"symbol": sym, **{k: m[k] for k in ("changePct", "volatility", "rsi", "trend", "points")}})
+    data = {"window_hours": hours, "asOf": _now().isoformat(), "comparison": rows}
+    return data, warnings
+
+
+def relative_strength(symbol: str, vs: str = "BTC", hours: int = 720) -> tuple[dict, list[str]]:
+    """``symbol`` vs a ``vs`` benchmark: the price-ratio trend + % change over the
+    window. ratioTrend 'up' = OUTPERFORMING the benchmark (NEUTRAL observation, NOT a
+    recommendation). Returns ``(data, warnings)``; None fields when data is thin."""
+    from . import ta
+
+    sym_series = [p.price for p in history(symbol, hours=hours, limit=10000)]
+    bench_series = [p.price for p in history(vs, hours=hours, limit=10000)]
+    warnings: list[str] = []
+    if not sym_series:
+        warnings.append(f"{symbol}: no price history")
+    if not bench_series:
+        warnings.append(f"benchmark {vs}: no price history")
+    rs = ta.relative_strength(sym_series, bench_series)
+    data = {"symbol": symbol, "benchmark": vs, "window_hours": hours,
+            "asOf": _now().isoformat(), **rs}
+    if rs.get("warning"):
+        warnings.append(rs["warning"])
+    return data, warnings
+
+
+# --------------------------------------------------------------------------- #
 # Poll (T3 routine code path): fetch → persist → eval → record fired alerts     #
 # --------------------------------------------------------------------------- #
 def _already_hit(symbol: str, op: str) -> bool:
