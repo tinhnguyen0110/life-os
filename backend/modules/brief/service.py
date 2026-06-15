@@ -314,4 +314,63 @@ def get_history(limit: int = 30) -> list[Brief]:
                 briefs.append(Brief(**data))
         except Exception as exc:  # one bad file never breaks the list
             logger.warning("brief history %s skipped: %s", path.name, exc)
-    return briefs
+    # NB1+NB2: read-time sanitize of historical data — old briefs persisted bad numbers
+    # before the source fixes (NG1 clamped claudePct; a finance hiccup could write a
+    # netWorth spike). Clean them at READ time so the history view/agent isn't misled,
+    # WITHOUT mutating the on-disk .md (the file is the historical record; we only
+    # sanitize the in-memory view).
+    return _sanitize_brief_history(briefs)
+
+
+# --------------------------------------------------------------------------- #
+# NB1+NB2 — read-time sanitize. Purely in-memory: returns sanitized COPIES of    #
+# the Brief objects, never touches disk. Two independent guards:                 #
+#   NB1 claudePct: a persisted pct > 100 is stale overflow (pre-NG1) — clamp to   #
+#        None (honest no-data, NOT a fabricated 0 / a misleading 4500%).          #
+#   NB2 netWorth: a value > 3× the median (over the non-None rows, needs ≥4 rows  #
+#        to be meaningful) is a finance-hiccup outlier — null it (honest no-data). #
+# --------------------------------------------------------------------------- #
+_NETWORTH_OUTLIER_FACTOR = 3.0
+_NETWORTH_MIN_ROWS = 4
+
+
+def _sanitize_brief_history(briefs: list[Brief]) -> list[Brief]:
+    """Read-time clean of historical brief numbers (NB1+NB2). Returns sanitized COPIES;
+    does NOT mutate the input objects or the on-disk files (read-only).
+
+    - claudePct > 100 → None (stale overflow persisted before the NG1 source fix).
+    - netWorth > 3× median → None, but ONLY with ≥4 non-None netWorth rows (too few to
+      trust a median below that — skip the guard, leave values as-is). The median is over
+      the present (non-None) netWorth values; if <4 present, the netWorth guard is skipped
+      entirely (claudePct clamp still applies)."""
+    import statistics
+
+    net_values = [
+        b.summary.netWorth for b in briefs
+        if b.summary.netWorth is not None
+    ]
+    net_threshold: float | None = None
+    if len(net_values) >= _NETWORTH_MIN_ROWS:
+        median = statistics.median(net_values)
+        # A non-positive median can't define a multiplicative outlier band — skip then.
+        if median > 0:
+            net_threshold = _NETWORTH_OUTLIER_FACTOR * median
+
+    cleaned: list[Brief] = []
+    for b in briefs:
+        new_net = b.summary.netWorth
+        new_pct = b.summary.claudePct
+        changed = False
+        if (net_threshold is not None and new_net is not None
+                and new_net > net_threshold):
+            new_net, changed = None, True
+        if new_pct is not None and new_pct > 100:
+            new_pct, changed = None, True
+        if not changed:
+            cleaned.append(b)  # unchanged — no copy needed
+        else:
+            new_summary = b.summary.model_copy(
+                update={"netWorth": new_net, "claudePct": new_pct}
+            )
+            cleaned.append(b.model_copy(update={"summary": new_summary}))
+    return cleaned

@@ -416,3 +416,124 @@ def test_morning_pull_persists_brief(isolated_paths, monkeypatch):
     assert "brief" in detail  # the brief step ran + is in the summary
     # the brief file was persisted → history has it
     assert len(service.get_history()) == 1
+
+
+# --------------------------------------------------------------------------- #
+# NB1+NB2 — read-time sanitize of historical brief numbers. Pure-helper unit    #
+# tests (no disk) + a disk-UNCHANGED integration test (read-only invariant).    #
+# --------------------------------------------------------------------------- #
+from modules.brief.schema import Brief, BriefSummary  # noqa: E402
+
+
+def _hist_brief(date, *, net=None, pct=None):
+    """A minimal persisted-shape Brief for sanitize tests."""
+    return Brief(
+        generatedAt=f"{date}T08:00:00+00:00", asOf=f"{date}T08:00:00+00:00",
+        source="template",
+        summary=BriefSummary(netWorth=net, projectsActive=0, claudePct=pct, alertsToday=0),
+    )
+
+
+def test_nb1_claudepct_over_100_clamped_to_none():
+    """NB1: a persisted claudePct > 100 (stale pre-NG1 overflow) → None at read time,
+    NOT left as a misleading 4500%, NOT fabricated to a 0/100."""
+    briefs = [_hist_brief("2026-06-10", pct=4473.0), _hist_brief("2026-06-09", pct=42.0)]
+    out = service._sanitize_brief_history(briefs)
+    assert out[0].summary.claudePct is None  # 4473 → None
+    assert out[1].summary.claudePct == 42.0  # a valid pct is untouched
+
+
+def test_nb1_claudepct_exactly_100_kept():
+    """Boundary: 100 is a VALID quota pct (full) — only > 100 is clamped."""
+    out = service._sanitize_brief_history([_hist_brief("2026-06-10", pct=100.0)])
+    assert out[0].summary.claudePct == 100.0
+
+
+def test_nb2_networth_outlier_nulled_with_enough_rows():
+    """NB2 distinguishing case: with ≥4 non-None netWorth rows, a value > 3× median is a
+    finance-hiccup outlier → None; the in-band values are KEPT (so a correct history is
+    NOT collapsed — only the spike is dropped)."""
+    # medians: [100,110,120,1000] sorted → median (110+120)/2 = 115; 3× = 345; 1000 > 345
+    briefs = [
+        _hist_brief("2026-06-13", net=1000.0),  # the spike
+        _hist_brief("2026-06-12", net=120.0),
+        _hist_brief("2026-06-11", net=110.0),
+        _hist_brief("2026-06-10", net=100.0),
+    ]
+    out = service._sanitize_brief_history(briefs)
+    assert out[0].summary.netWorth is None     # 1000 spike nulled
+    assert [b.summary.netWorth for b in out[1:]] == [120.0, 110.0, 100.0]  # in-band kept
+
+
+def test_nb2_networth_guard_skipped_with_too_few_rows():
+    """With < 4 non-None netWorth rows the median isn't trustworthy → skip the netWorth
+    guard entirely (leave even a large value as-is). Distinguishing case: the SAME 1000
+    value that gets nulled at 4 rows is KEPT at 3 rows."""
+    briefs = [
+        _hist_brief("2026-06-12", net=1000.0),
+        _hist_brief("2026-06-11", net=110.0),
+        _hist_brief("2026-06-10", net=100.0),
+    ]
+    out = service._sanitize_brief_history(briefs)
+    assert [b.summary.netWorth for b in out] == [1000.0, 110.0, 100.0]  # all kept (n<4)
+
+
+def test_nb2_networth_none_rows_ignored_in_median():
+    """None netWorth rows don't count toward the ≥4 threshold nor skew the median."""
+    briefs = [
+        _hist_brief("2026-06-13", net=1000.0),
+        _hist_brief("2026-06-12", net=None),   # ignored
+        _hist_brief("2026-06-11", net=120.0),
+        _hist_brief("2026-06-10", net=110.0),
+    ]
+    # only 3 non-None present (<4) → guard skipped, 1000 KEPT
+    out = service._sanitize_brief_history(briefs)
+    assert out[0].summary.netWorth == 1000.0
+
+
+def test_nb_sanitize_is_pure_does_not_mutate_input():
+    """Read-only invariant (object level): the input Brief objects are NOT mutated;
+    sanitize returns COPIES."""
+    bad = _hist_brief("2026-06-10", net=None, pct=9999.0)
+    service._sanitize_brief_history([bad, _hist_brief("a", pct=1.0)])
+    assert bad.summary.claudePct == 9999.0  # original untouched
+
+
+def test_nb_get_history_sanitizes_but_disk_unchanged(isolated_paths):
+    """END-TO-END + the DISK-UNCHANGED distinguishing case (dispatch MANDATORY): a
+    history .md persisted with a bad claudePct is SANITIZED in the get_history() view,
+    but the on-disk file STILL contains the original bad value (read-time only, no
+    disk mutation)."""
+    from store import md_store
+    # persist a brief file by hand with a stale overflow claudePct
+    rel = "brief/2026-06-10.md"
+    raw = (
+        "---\n"
+        "asOf: '2026-06-10T08:00:00+00:00'\n"
+        "generatedAt: '2026-06-10T08:00:00+00:00'\n"
+        "priorities: []\n"
+        "source: template\n"
+        "stale: false\n"
+        "summary:\n"
+        "  alertsToday: 0\n"
+        "  claudePct: 4473.0\n"
+        "  netWorth: null\n"
+        "  projectsActive: 0\n"
+        "warnings: []\n"
+        "---\n"
+    )
+    md_store.write_file(rel, raw, "seed bad brief")
+    # Capture the on-disk file BYTES + mtime BEFORE the read (the read-only invariant).
+    from core.config import settings
+    disk_path = settings.data_dir / rel
+    bytes_before = disk_path.read_bytes()
+    mtime_before = disk_path.stat().st_mtime_ns
+    # READ via get_history → sanitized (claudePct None, not 4473)
+    hist = service.get_history()
+    assert len(hist) == 1
+    assert hist[0].summary.claudePct is None
+    # but the ON-DISK file is BYTE-IDENTICAL (content + mtime) — read-time sanitize must
+    # NOT rewrite/touch the historical file (dispatch MANDATORY read-only invariant).
+    assert disk_path.read_bytes() == bytes_before, "get_history rewrote the .md content"
+    assert disk_path.stat().st_mtime_ns == mtime_before, "get_history touched the .md mtime"
+    assert b"4473" in bytes_before, "sanity: the bad value was actually persisted"
