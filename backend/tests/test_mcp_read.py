@@ -55,6 +55,7 @@ NULLARY_TOOLS = [
     "exchange_overview",
     "app_settings",
     "reliability_report",
+    "life_brief",
 ]
 
 # Documented top-level envelope key per nullary tool.
@@ -72,6 +73,7 @@ ENVELOPE_KEY = {
     "exchange_overview": "exchange",
     "app_settings": "settings",
     "reliability_report": "report",
+    "life_brief": "brief",
 }
 
 
@@ -98,11 +100,25 @@ def test_arg_tools_return_jsonable_dict(app_db):
     # The arg-taking tools, exercised with explicit args against the empty app.
     for out in (
         rs.market_history("BTC", hours=24, limit=10),
+        rs.market_indicators("BTC", indicators="rsi,sma", hours=720),
         rs.brief_history(limit=5),
         rs.activity_feed(routine="x", status="ok", range="today"),
     ):
         assert isinstance(out, dict)
         json.dumps(out)
+
+
+def test_market_indicators_shape_and_no_crash(app_db):
+    # Neutral TA read path: returns {indicators, warnings}; empty/short series →
+    # per-indicator warning, never a crash.
+    out = rs.market_indicators("BTC", indicators="summary")
+    assert set(out) >= {"indicators", "warnings"}
+    assert isinstance(out["warnings"], list)
+    json.dumps(out)
+    # an unknown indicator name is skipped + warned, not an error
+    out2 = rs.market_indicators("BTC", indicators="not-a-real-indicator")
+    assert isinstance(out2, dict)
+    json.dumps(out2)
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +156,74 @@ def test_journal_parity(app_db):
     out = rs.journal_entries()
     assert out["journal"] == stats.model_dump()
     assert out["warnings"] == warnings
+
+
+# --------------------------------------------------------------------------- #
+# life_brief — the agent data-layer synthesizer (MCP-2)                          #
+# --------------------------------------------------------------------------- #
+BRIEF_SECTIONS = {
+    "portfolio": "finance",
+    "market": "market",
+    "projects": "projects",
+    "claude": "claude_usage",
+    "decisions": "decision_journal",
+}
+
+
+def test_life_brief_full_shape_and_source_tags(app_db):
+    """Every section is present, each carries its source tag, the whole thing is
+    JSON-serialisable — even on an empty/honest app."""
+    out = rs.life_brief()
+    assert set(out) == {"brief"}
+    brief = out["brief"]
+    assert set(brief) == set(BRIEF_SECTIONS), f"unexpected sections: {set(brief)}"
+    for section, source in BRIEF_SECTIONS.items():
+        assert brief[section]["source"] == source, f"{section} wrong source tag"
+    json.dumps(out)
+
+
+def test_life_brief_sections_have_no_error_on_clean_app(app_db):
+    """On a clean initialised app no section should fail-soft to {error} — the read
+    paths are all fail-open, so each section assembles."""
+    brief = rs.life_brief()["brief"]
+    errored = {k: v["error"] for k, v in brief.items() if "error" in v}
+    assert errored == {}, f"sections errored on a clean app: {errored}"
+
+
+def test_life_brief_is_neutral_data_only(app_db):
+    """The brief must be DATA, not advice — no recommendation/signal/action keys leak
+    into any section (the agent reasons; the tool only aggregates)."""
+    brief = rs.life_brief()["brief"]
+    flat = json.dumps(brief).lower()
+    for banned in ("recommendation", "advice", "\"signal\"", "buy_sell", "\"action\":"):
+        assert banned not in flat, f"brief leaked a non-neutral key/term: {banned}"
+
+
+def test_life_brief_section_failsoft_keeps_brief(app_db, monkeypatch):
+    """A single source raising must NOT 500 the brief — that section reports {error}
+    and the other four still assemble (fail-soft per section)."""
+    def boom():
+        raise RuntimeError("simulated source down")
+
+    monkeypatch.setattr(rs, "_brief_portfolio", boom)
+    brief = rs.life_brief()["brief"]
+    # the broken section reports an error but keeps its source tag
+    assert "error" in brief["portfolio"]
+    assert brief["portfolio"]["source"] == "finance"
+    # the rest are unaffected
+    for section in ("market", "projects", "claude", "decisions"):
+        assert "error" not in brief[section], f"{section} should be unaffected"
+
+
+def test_life_brief_market_uses_tracked_assets_and_indicators(app_db):
+    """The market section lists per-tracked-asset entries, each with a quote +
+    (neutral) indicators slot — proving it composes the TA read path, not advice."""
+    market = rs.life_brief()["brief"]["market"]
+    assert "assets" in market
+    assert isinstance(market["assets"], list)
+    if market["assets"]:
+        a = market["assets"][0]
+        assert set(a) >= {"symbol", "quote", "indicators"}
 
 
 # --------------------------------------------------------------------------- #
@@ -222,4 +306,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 17
+    assert len(rs.TOOLS) == 19

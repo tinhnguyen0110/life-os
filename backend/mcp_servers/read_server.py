@@ -1,19 +1,24 @@
 """mcp_servers/read_server.py — WHOLE-APP MCP READ-only server for life-os (MCP-1).
 
 External Claude Code connects over **stdio** and READS the user's life data across
-ALL modules: finance/portfolio, market, projects, Claude-usage, journals (trade +
-decision), the daily brief, the activity feed, the graveyard, the OKX exchange
-overview, app settings, and the reliability report. It synthesises + advises; it
-writes NOTHING (writes, if ever, go through a SEPARATE propose-style write-server —
-the wiki MCP split is the template).
+ALL modules: finance/portfolio, market (+ TA indicators), projects, Claude-usage,
+journals (trade + decision), the daily brief, the activity feed, the graveyard, the
+OKX exchange overview, app settings, and the reliability report. It also exposes
+``life_brief`` — ONE tool that composes the per-module reads into a single neutral,
+source-tagged snapshot of the user's life (the agent data-layer, MCP-2), so an
+external agent gets the whole picture in one call then reasons itself. The agent
+synthesises + advises; this server writes NOTHING (writes, if ever, go through a
+SEPARATE propose-style write-server — the wiki MCP split is the template).
 
 THE CAPABILITY GATE (least-privilege, STRUCTURAL — not a flag):
 This module imports ONLY read entry-points, each aliased with a leading underscore so
 the bound names are obviously private wrappers:
   - finance:          get_overview, get_channel
-  - market:           get_market, history            (READ paths only — NOT poll_once
-                      / add_rule / delete_rule; and this file does NOT touch
-                      market/service.py or market/ta.py, which dev owns this sprint)
+  - market:           get_market, history, compute_indicators, tracked_assets
+                      (READ paths only — NOT poll_once / add_rule / delete_rule;
+                      compute_indicators is the GET /market/indicators TA read path
+                      dev shipped — WRAPPED, never edited; this file does NOT touch
+                      market/service.py or market/ta.py, which dev owns)
   - projects:         list_projects, get_project
   - graveyard:        get_graveyard
   - claude_usage:     get_usage
@@ -56,6 +61,11 @@ from modules.finance.service import get_overview as _fin_overview
 from modules.finance.service import get_channel as _fin_channel
 from modules.market.service import get_market as _mkt_market
 from modules.market.service import history as _mkt_history
+# TA read path shipped by dev (GET /market/indicators) — wrapped, NOT edited. Returns
+# NEUTRAL technical data (no advice) + warnings. tracked_assets is the read-only
+# config list of symbols (no asset-mgmt mutation).
+from modules.market.service import compute_indicators as _mkt_indicators
+from modules.market.service import tracked_assets as _mkt_tracked
 from modules.projects.service import list_projects as _proj_list
 from modules.projects.service import get_project as _proj_get
 from modules.graveyard.service import get_graveyard as _grave_get
@@ -128,6 +138,18 @@ def market_history(asset: str, hours: int = 24, limit: int = 1000) -> dict[str, 
     Empty series if none recorded. ``{asset, points}``."""
     points = _mkt_history(asset, hours=int(hours), limit=int(limit))
     return {"asset": asset, "points": _jsonable(points)}
+
+
+def market_indicators(symbol: str, indicators: str = "summary",
+                      hours: int = 720, full: bool = False) -> dict[str, Any]:
+    """Technical indicators over a tracked asset's close series (NEUTRAL data — no
+    buy/sell advice). ``indicators`` = comma-separated ∈ {sma,ema,rsi,macd,bollinger,
+    atr,summary}. ``{indicators, warnings}``; ``data`` = {symbol, points, asOf,
+    indicators:{...}}. Short/empty series → per-indicator warning, never a crash.
+    (Wraps the GET /market/indicators read path.)"""
+    names = [n.strip() for n in indicators.split(",") if n.strip()]
+    data, warnings = _mkt_indicators(symbol, names, hours=int(hours), full=bool(full))
+    return {"indicators": _jsonable(data), "warnings": list(warnings or [])}
 
 
 def projects_list() -> dict[str, Any]:
@@ -219,6 +241,150 @@ def reliability_report() -> dict[str, Any]:
     return {"report": _jsonable(_reliability_suite())}
 
 
+# --------------------------------------------------------------------------- #
+# life_brief — the AGENT DATA-LAYER synthesizer (MCP-2). ONE tool composes the   #
+# read paths into a single neutral, SOURCE-TAGGED snapshot of the user's life so #
+# an external agent gets the whole picture in one call instead of 10 separate    #
+# ones, then reasons itself. NEUTRAL: it aggregates DATA only — it gives NO       #
+# advice, NO buy/sell signal, NO prioritisation. Every section carries a          #
+# ``source`` (which module the numbers came from) so the agent can trace + cite. #
+# Fail-soft PER SECTION: one source raising must NOT 500 the whole brief — that   #
+# section reports ``{error: <str>, source}`` and the rest still assembles (an     #
+# empty / unconfigured app still yields a full-shaped brief).                     #
+# --------------------------------------------------------------------------- #
+def _section(source: str, build: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run one brief section's builder fail-soft. Always returns a dict carrying a
+    ``source`` tag; on failure → ``{source, error}`` instead of propagating."""
+    try:
+        out = build()
+        out["source"] = source
+        return out
+    except Exception as exc:  # noqa: BLE001 — one bad source must not break the brief
+        return {"source": source, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _brief_portfolio() -> dict[str, Any]:
+    """Neutral finance snapshot: total value, change, P&L, dry powder, per-channel
+    allocation %. Numbers from modules/finance (get_overview)."""
+    ov, warnings = _fin_overview()
+    return {
+        "totalValue": ov.totalValue,
+        "change": _jsonable(ov.change),
+        "pnlTotal": _jsonable(ov.pnlTotal),
+        "dryPowder": ov.dryPowder,
+        "allocations": [
+            {"channel": a.channel, "value": a.value,
+             "pct": getattr(a, "pct", None), "target": getattr(a, "target", None)}
+            for a in ov.allocations
+        ],
+        "holdingCount": len(ov.holdings),
+        "warnings": list(warnings or []),
+    }
+
+
+def _brief_market(indicators: str = "summary", hours: int = 720) -> dict[str, Any]:
+    """Neutral market snapshot: per TRACKED asset, latest quote + its TA indicators
+    (default the ``summary`` block — neutral technical readout, NO advice). Quotes
+    from modules/market (get_market); indicators from the /market/indicators TA read
+    path (compute_indicators)."""
+    data, mkt_warn = _mkt_market()
+    quotes = data.get("quotes", []) if isinstance(data, dict) else []
+    warnings = list(mkt_warn or [])
+    names = [n.strip() for n in indicators.split(",") if n.strip()]
+    per_asset: list[dict[str, Any]] = []
+    for asset in _mkt_tracked():
+        symbol = asset.get("symbol")
+        if not symbol:
+            continue
+        quote = next((q for q in quotes if q.get("symbol") == symbol), None)
+        try:
+            ind_data, ind_warn = _mkt_indicators(symbol, names, hours=int(hours), full=False)
+            indicators_out = ind_data.get("indicators") if isinstance(ind_data, dict) else None
+            warnings.extend(f"{symbol}: {w}" for w in (ind_warn or []))
+        except Exception as exc:  # noqa: BLE001 — a bad TA read must not drop the asset
+            indicators_out = None
+            warnings.append(f"{symbol}: indicators failed ({type(exc).__name__}: {exc})")
+        per_asset.append({
+            "symbol": symbol,
+            "quote": _jsonable(quote),
+            "indicators": _jsonable(indicators_out),
+        })
+    return {"assets": per_asset, "indicatorSet": names, "warnings": warnings}
+
+
+def _brief_projects() -> dict[str, Any]:
+    """Neutral project snapshot: counts by health + the IDLE set (health ∈
+    {slow,stall,dead}) with days-since-commit. From modules/projects (list_projects).
+    No prioritisation — just which projects haven't moved."""
+    statuses, warnings = _proj_list()
+    by_health: dict[str, int] = {}
+    idle: list[dict[str, Any]] = []
+    for s in statuses:
+        by_health[s.health] = by_health.get(s.health, 0) + 1
+        if s.health in ("slow", "stall", "dead"):
+            idle.append({"id": s.id, "name": s.name, "health": s.health,
+                         "lastDays": s.lastDays, "progress": s.progress})
+    return {
+        "total": len(statuses),
+        "byHealth": by_health,
+        "idle": idle,
+        "warnings": list(warnings or []),
+    }
+
+
+def _brief_claude() -> dict[str, Any]:
+    """Neutral Claude-usage snapshot: today's tokens, cap, used %, remaining, 5h/weekly
+    reset. From modules/claude_usage (get_usage). Fail-open to stub if no local stats."""
+    u = _claude_usage()
+    return {
+        "today": u.today, "used": u.used, "cap": u.cap, "pct": u.pct,
+        "remaining": u.remaining, "resetIn": u.resetIn, "weekly": u.weekly,
+        "quotaSource": u.quotaSource, "stale": u.stale,
+    }
+
+
+def _brief_decisions() -> dict[str, Any]:
+    """Neutral decision snapshot: the OPEN (status=open) decisions awaiting an outcome
+    + calibration counts. From modules/decision_journal (list_entries). No advice."""
+    stats, warnings = _decision_list(status="open")
+    return {
+        "openCount": len(stats.entries),
+        "open": [{"id": e.id, "decision": e.decision, "domain": e.domain,
+                  "date": e.date, "confidence": getattr(e, "confidence", None)}
+                 for e in stats.entries],
+        "warnings": list(warnings or []),
+    }
+
+
+def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str, Any]:
+    """THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the
+    user's life composed from the per-module read paths, so an external agent gets the
+    whole picture without firing 10 separate tools, then reasons itself.
+
+    Sections (each tagged with its ``source`` module; each fail-soft — a down source
+    reports ``{error}`` and the brief still assembles):
+      - ``portfolio`` (finance):  total value / change / P&L / dry powder / allocations
+      - ``market``    (market + TA /indicators):  per tracked asset → quote + neutral
+        technical ``summary`` (override via ``indicators`` = comma-list)
+      - ``projects``  (projects): health counts + the IDLE set (slow/stall/dead)
+      - ``claude``    (claude_usage): today's tokens / cap / used% / remaining / reset
+      - ``decisions`` (decision_journal): OPEN decisions awaiting an outcome
+
+    NEUTRAL: aggregates DATA only — NO advice, NO buy/sell signal, NO prioritisation.
+    The agent reads this and decides. An empty / unconfigured app still returns a
+    full-shaped brief (honest-empty sections, never a 500)."""
+    return {
+        "brief": {
+            "portfolio": _section("finance", _brief_portfolio),
+            "market": _section("market",
+                               lambda: _brief_market(indicators=indicators, hours=market_hours)),
+            "projects": _section("projects", _brief_projects),
+            "claude": _section("claude_usage", _brief_claude),
+            "decisions": _section("decision_journal", _brief_decisions),
+        }
+    }
+
+
 # Registry of (name → logic fn) — the single source of truth for what tools exist.
 # Tests iterate this for callability + parity; FastMCP registration iterates it below.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -226,6 +392,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "finance_channel": finance_channel,
     "market_overview": market_overview,
     "market_history": market_history,
+    "market_indicators": market_indicators,
     "projects_list": projects_list,
     "project_get": project_get,
     "graveyard_overview": graveyard_overview,
@@ -239,6 +406,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "exchange_overview": exchange_overview,
     "app_settings": app_settings,
     "reliability_report": reliability_report,
+    "life_brief": life_brief,
 }
 
 
