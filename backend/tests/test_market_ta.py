@@ -238,3 +238,55 @@ def test_summarize_empty_is_honest():
     assert s["warning"] == "empty series"
     assert s["latest"]["close"] is None
     assert s["signals"]["cross"] == "none"
+
+
+# --------------------------------------------------------------------------- #
+# indicator-alert eval (_eval_one_indicator) — the TA-condition rule engine     #
+# --------------------------------------------------------------------------- #
+from modules.market import service as _svc  # noqa: E402
+from modules.market.schema import IndicatorAlertRule  # noqa: E402
+
+
+def _rule(kind: str, value: float = 0.0, period: int = 14) -> IndicatorAlertRule:
+    return IndicatorAlertRule(id="t", symbol="X", kind=kind, value=value, period=period)  # type: ignore[arg-type]
+
+
+def test_eval_rsi_below_fires_on_downtrend():
+    fired, detail = _svc._eval_one_indicator(_rule("rsi_below", 30, 3), list(range(20, 1, -1)))
+    assert fired is True and "RSI" in detail and "≤" in detail
+
+
+def test_eval_rsi_below_does_not_fire_on_uptrend():
+    fired, _ = _svc._eval_one_indicator(_rule("rsi_below", 30, 3), list(range(1, 20)))
+    assert fired is False  # RSI 100 > 30
+
+
+def test_eval_rsi_above_fires_on_uptrend():
+    fired, _ = _svc._eval_one_indicator(_rule("rsi_above", 70, 3), list(range(1, 20)))
+    assert fired is True  # RSI 100 ≥ 70
+
+
+def test_eval_price_cross_sma_above_fires_on_breakout():
+    # close was at/below SMA, then jumps above at the last bar.
+    fired, detail = _svc._eval_one_indicator(_rule("price_cross_sma_above", period=3), [10, 10, 10, 10, 20])
+    assert fired is True and "crossed above" in detail
+
+
+def test_eval_price_cross_sma_above_no_cross_when_already_above():
+    # already above the whole time → not a fresh cross.
+    fired, _ = _svc._eval_one_indicator(_rule("price_cross_sma_above", period=3), [10, 20, 30, 40, 50])
+    assert fired is False
+
+
+def test_eval_macd_cross_bull_fires_on_reversal():
+    # long decline (macd below signal) then a sharp 2-bar spike flips macd above signal
+    # at the final bar (verified: 2nd-last macd==signal, last macd>signal).
+    series = [100.0 - i for i in range(40)] + [60.0, 75.0]
+    fired, detail = _svc._eval_one_indicator(_rule("macd_cross_bull"), series)
+    assert fired is True and "bull cross" in detail
+
+
+def test_eval_insufficient_data_does_not_fire():
+    # too few points for SMA → graceful (False + reason), never a crash.
+    fired, detail = _svc._eval_one_indicator(_rule("price_cross_sma_above", period=20), [10, 11])
+    assert fired is False and "needs" in detail

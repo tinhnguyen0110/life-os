@@ -31,6 +31,8 @@ from .schema import (
     AlertState,
     AlertTrigger,
     AssetQuote,
+    IndicatorAlertRule,
+    IndicatorTrigger,
     MacroSignal,
     PricePoint,
 )
@@ -38,6 +40,7 @@ from .schema import (
 logger = logging.getLogger("life-os.market.service")
 
 ALERTS_MD = "market/alerts.md"
+INDICATOR_ALERTS_MD = "market/indicator_alerts.md"  # separate file from price rules
 NEAR_PCT = 5.0                  # within 5% (|distancePct|) of threshold → "near"
 CHANGE_LOOKBACK_HOURS = 24
 MARKET_POLL_ID = "market-poll"  # run_log routine_id alert events are recorded under
@@ -222,6 +225,158 @@ def eval_alerts(quotes: list[AssetQuote], rules: list[AlertRule]) -> list[AlertT
 
 
 # --------------------------------------------------------------------------- #
+# Indicator alerts — TA-condition rules (persistence + eval via ta.py)          #
+# --------------------------------------------------------------------------- #
+def _parse_indicator_rules(content: str | None) -> list[IndicatorAlertRule]:
+    if not content:
+        return []
+    text = content.lstrip("﻿")
+    if not text.startswith("---"):
+        return []
+    block = text[len("---"):].split("\n---", 1)[0]
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError as exc:
+        logger.warning("malformed indicator_alerts.md, ignoring: %s", exc)
+        return []
+    if not isinstance(data, dict):
+        return []
+    rules: list[IndicatorAlertRule] = []
+    for item in data.get("rules", []) or []:
+        try:
+            rules.append(IndicatorAlertRule(**item))
+        except Exception as exc:  # one bad rule never breaks the rest (fail-open)
+            logger.warning("skipping invalid indicator rule %r: %s", item, exc)
+    return rules
+
+
+def list_indicator_rules() -> list[IndicatorAlertRule]:
+    """All persisted indicator alert rules ([] if none)."""
+    try:
+        content = md_store.read(INDICATOR_ALERTS_MD)
+    except Exception as exc:
+        logger.warning("indicator_alerts.md read failed: %s", exc)
+        return []
+    return _parse_indicator_rules(content)
+
+
+def _write_indicator_rules(rules: list[IndicatorAlertRule]) -> None:
+    payload = {"rules": [r.model_dump() for r in rules]}
+    body = "---\n" + yaml.safe_dump(payload, sort_keys=True, allow_unicode=True).strip() + "\n---\n"
+    md_store.write_file(INDICATOR_ALERTS_MD, body, "update market indicator-alert rules")
+
+
+def add_indicator_rule(symbol: str, kind: str, value: float = 0.0, period: int = 14,
+                       enabled: bool = True) -> IndicatorAlertRule:
+    """UPSERT an indicator rule by (symbol, kind, period): one rule per that triple
+    (re-setting the same condition updates rather than duplicating). Persists + returns."""
+    rules = list_indicator_rules()
+    existing = next(
+        (r for r in rules if r.symbol == symbol and r.kind == kind and r.period == period),
+        None,
+    )
+    rule = IndicatorAlertRule(
+        id=existing.id if existing else _new_indicator_rule_id(symbol, rules),
+        symbol=symbol, kind=kind, value=value, period=period, enabled=enabled,  # type: ignore[arg-type]
+    )
+    others = [
+        r for r in rules
+        if not (r.symbol == symbol and r.kind == kind and r.period == period)
+    ]
+    others.append(rule)
+    _write_indicator_rules(others)
+    return rule
+
+
+def _new_indicator_rule_id(symbol: str, existing: list[IndicatorAlertRule]) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", symbol.lower()).strip("-") or "ind"
+    taken = {r.id for r in existing}
+    n = 1
+    while f"ind-{base}-{n}" in taken:
+        n += 1
+    return f"ind-{base}-{n}"
+
+
+def delete_indicator_rule(rule_id: str) -> bool:
+    rules = list_indicator_rules()
+    kept = [r for r in rules if r.id != rule_id]
+    removed = len(kept) != len(rules)
+    if removed:
+        _write_indicator_rules(kept)
+    return removed
+
+
+def _eval_one_indicator(rule: IndicatorAlertRule, closes: list[float]) -> tuple[bool, str]:
+    """Evaluate ONE indicator rule against an asset's close series via ta.py.
+    Returns ``(fired, detail)``. Insufficient data → (False, '<reason>')."""
+    from . import ta
+
+    if rule.kind in ("rsi_below", "rsi_above"):
+        r = ta.rsi(closes, rule.period)
+        if r.latest is None:
+            return False, f"RSI not computable ({r.warning})"
+        if rule.kind == "rsi_below":
+            return (r.latest <= rule.value), f"RSI {r.latest} {'≤' if r.latest <= rule.value else '>'} {rule.value}"
+        return (r.latest >= rule.value), f"RSI {r.latest} {'≥' if r.latest >= rule.value else '<'} {rule.value}"
+
+    if rule.kind in ("price_cross_sma_above", "price_cross_sma_below"):
+        s = ta.sma(closes, rule.period).series
+        # need the last two points where SMA is defined + the matching closes.
+        idxs = [i for i, v in enumerate(s) if v is not None]
+        if len(idxs) < 2:
+            return False, f"SMA{rule.period} needs ≥2 points (have {len(idxs)})"
+        i_prev, i_now = idxs[-2], idxs[-1]
+        sma_prev, sma_now = s[i_prev], s[i_now]
+        c_prev, c_now = closes[i_prev], closes[i_now]
+        assert sma_prev is not None and sma_now is not None
+        if rule.kind == "price_cross_sma_above":
+            fired = c_prev <= sma_prev and c_now > sma_now
+            return fired, f"close {c_now} vs SMA{rule.period} {round(sma_now, 4)} ({'crossed above' if fired else 'no cross'})"
+        fired = c_prev >= sma_prev and c_now < sma_now
+        return fired, f"close {c_now} vs SMA{rule.period} {round(sma_now, 4)} ({'crossed below' if fired else 'no cross'})"
+
+    if rule.kind in ("macd_cross_bull", "macd_cross_bear"):
+        m = ta.macd(closes)
+        # last two points where BOTH macd + signal are defined.
+        idxs = [i for i in range(len(m.macd)) if m.macd[i] is not None and m.signal[i] is not None]
+        if len(idxs) < 2:
+            return False, "MACD/signal needs ≥2 defined points"
+        i_prev, i_now = idxs[-2], idxs[-1]
+        md_prev, sg_prev = m.macd[i_prev], m.signal[i_prev]
+        md_now, sg_now = m.macd[i_now], m.signal[i_now]
+        assert None not in (md_prev, sg_prev, md_now, sg_now)
+        if rule.kind == "macd_cross_bull":
+            fired = md_prev <= sg_prev and md_now > sg_now  # type: ignore[operator]
+            return fired, f"MACD {md_now} vs signal {sg_now} ({'bull cross' if fired else 'no cross'})"
+        fired = md_prev >= sg_prev and md_now < sg_now  # type: ignore[operator]
+        return fired, f"MACD {md_now} vs signal {sg_now} ({'bear cross' if fired else 'no cross'})"
+
+    return False, f"unknown indicator kind {rule.kind!r}"
+
+
+def eval_indicator_alerts(rules: list[IndicatorAlertRule] | None = None, *,
+                          hours: int = 720) -> list[IndicatorTrigger]:
+    """Evaluate each ENABLED indicator rule against its asset's close series (ta.py).
+    Returns a trigger per rule with ``fired`` + a human ``detail``. Reads the series
+    once per symbol (cached) so N rules on one asset = 1 history read."""
+    if rules is None:
+        rules = list_indicator_rules()
+    series_cache: dict[str, list[float]] = {}
+    out: list[IndicatorTrigger] = []
+    for rule in rules:
+        if not rule.enabled:
+            continue
+        if rule.symbol not in series_cache:
+            series_cache[rule.symbol] = [p.price for p in history(rule.symbol, hours=hours, limit=10000)]
+        fired, detail = _eval_one_indicator(rule, series_cache[rule.symbol])
+        out.append(IndicatorTrigger(
+            id=rule.id, symbol=rule.symbol, kind=rule.kind, value=rule.value,
+            period=rule.period, fired=fired, detail=detail,
+        ))
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Macro stub + alert history (run_log)                                          #
 # --------------------------------------------------------------------------- #
 def macro_signals() -> list[MacroSignal]:
@@ -289,6 +444,66 @@ def history(asset: str, hours: int = 24, limit: int = 1000) -> list[PricePoint]:
     since = (_now() - timedelta(hours=max(1, hours))).isoformat()
     rows = db.prices_for(asset, since=since, limit=limit)
     return [PricePoint(asset=r["asset"], price=float(r["price"]), ts=r["ts"]) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# OHLC candles — HONEST: built from the close-tick series (NO fabricated bars)   #
+# --------------------------------------------------------------------------- #
+# The data source (CoinGecko /simple/price) gives ONE price per poll; price_history
+# stores close-only. There is NO real high/low/open from the feed. So a candle here
+# is the open/high/low/close of the ACTUAL close-ticks that fell inside each time
+# bucket: open = first tick, high = max tick, low = min tick, close = last tick. This
+# is genuine observed price action aggregated to an interval (the standard way to
+# build candles from a tick/trade stream) — NOT fabricated OHLC. A bucket with a
+# single tick yields o==h==l==c (honest: one observation).
+def candles(asset: str, hours: int = 168, interval_minutes: int = 60,
+            limit: int = 10000) -> tuple[list[dict], list[str]]:
+    """Bucket the close-tick series into OHLC candles of ``interval_minutes``.
+
+    Returns ``(candles, warnings)`` where each candle is
+    ``{ts, open, high, low, close, ticks}`` (ts = bucket start, ISO-8601 UTC; ``ticks``
+    = how many real observations the bar aggregates — 1 = a degenerate single-tick bar).
+    ``warnings`` always carries the close-derived disclaimer so the FE renders honestly.
+    """
+    warnings = [
+        "OHLC is derived from the close-tick series (CoinGecko /simple/price is close-only) "
+        "— each bar's O/H/L/C are the first/max/min/last observed close in the interval, "
+        "NOT exchange candles. A bar with ticks=1 is a single observation."
+    ]
+    if interval_minutes <= 0:
+        return [], ["interval_minutes must be > 0"]
+    points = history(asset, hours=hours, limit=limit)
+    if not points:
+        return [], warnings + ["no price history for this asset yet"]
+
+    bucket_ms = interval_minutes * 60
+    buckets: dict[int, list[float]] = {}
+    order: list[int] = []
+    for p in points:
+        try:
+            dt = datetime.fromisoformat(p.ts.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue  # skip an unparseable timestamp (defensive)
+        epoch = int(dt.timestamp())
+        key = (epoch // bucket_ms) * bucket_ms  # floor to the interval start
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(p.price)
+
+    out: list[dict] = []
+    for key in order:
+        ticks = buckets[key]
+        bar_ts = datetime.fromtimestamp(key, tz=timezone.utc).isoformat()
+        out.append({
+            "ts": bar_ts,
+            "open": ticks[0],
+            "high": max(ticks),
+            "low": min(ticks),
+            "close": ticks[-1],
+            "ticks": len(ticks),
+        })
+    return out, warnings
 
 
 # --------------------------------------------------------------------------- #

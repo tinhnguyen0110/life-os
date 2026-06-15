@@ -128,11 +128,13 @@ def test_history_hours_param(app_client):
 
 # --- GET /market/indicators/{symbol} (technical analysis) ---
 def _seed_prices(asset: str, prices: list[float]) -> None:
-    """Seed a price series (oldest→newest) into price_history for an asset."""
+    """Seed a price series (oldest→newest) into price_history for an asset, ending at
+    NOW (so default time-windows like the indicator-alert eval's 720h catch them)."""
     from datetime import datetime, timedelta, timezone
 
     from store import db
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    n = len(prices)
+    base = datetime.now(timezone.utc) - timedelta(minutes=n)  # series ends ~now
     for i, p in enumerate(prices):
         db.record_price(asset, float(p), (base + timedelta(minutes=i)).isoformat())
 
@@ -192,6 +194,116 @@ def test_indicators_atr_close_only_warns(app_client):
     atr = body["data"]["indicators"]["atr"]
     assert atr["latest"] is not None
     assert "close-only" in atr["warning"]
+
+
+# --- GET /market/ohlc/{symbol} (candles derived from close-ticks) ---
+def _seed_prices_at(asset: str, points: list[tuple[int, float]]) -> None:
+    """Seed (minute_offset, price) points — lets a test place ticks into known buckets."""
+    from datetime import datetime, timedelta, timezone
+
+    from store import db
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for minute, price in points:
+        db.record_price(asset, float(price), (base + timedelta(minutes=minute)).isoformat())
+
+
+def test_ohlc_untracked_is_404(app_client):
+    assert app_client.get("/market/ohlc/NOPE").status_code == 404
+
+
+def test_ohlc_empty_series_200_with_warning(app_client):
+    resp = app_client.get("/market/ohlc/BTC")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"]["candles"] == []
+    assert "close-tick" in (body.get("warning") or "")  # honest about close-derived
+
+
+def test_ohlc_buckets_ticks_into_candles_handcalc(app_client):
+    """Two 60-min buckets: bucket0 ticks [10,14,8,12] → o10 h14 l8 c12;
+    bucket1 ticks [20,18] → o20 h20 l18 c18. O/H/L/C are REAL observed closes."""
+    _seed_prices_at("BTC", [
+        (0, 10), (15, 14), (30, 8), (45, 12),  # bucket 0 (00:00–00:59)
+        (60, 20), (75, 18),                     # bucket 1 (01:00–01:59)
+    ])
+    body = app_client.get("/market/ohlc/BTC?hours=100000&interval=60").json()
+    candles = body["data"]["candles"]
+    assert len(candles) == 2
+    b0, b1 = candles
+    assert (b0["open"], b0["high"], b0["low"], b0["close"], b0["ticks"]) == (10, 14, 8, 12, 4)
+    assert (b1["open"], b1["high"], b1["low"], b1["close"], b1["ticks"]) == (20, 20, 18, 18, 2)
+    # OHLC invariant holds for every bar.
+    for b in candles:
+        assert b["high"] >= max(b["open"], b["close"]) and b["low"] <= min(b["open"], b["close"])
+    assert "close-tick" in (body.get("warning") or "")  # always honest
+
+
+def test_ohlc_single_tick_bucket_is_degenerate(app_client):
+    """A bucket with one observation → o==h==l==c, ticks=1 (honest, not fabricated)."""
+    _seed_prices_at("BTC", [(0, 100)])
+    candles = app_client.get("/market/ohlc/BTC?hours=100000&interval=60").json()["data"]["candles"]
+    assert len(candles) == 1
+    c = candles[0]
+    assert c["open"] == c["high"] == c["low"] == c["close"] == 100 and c["ticks"] == 1
+
+
+# --- indicator alerts (TA-condition rules) ---
+def test_indicator_alert_create_list_delete(app_client):
+    # create an RSI rule
+    r = app_client.post("/market/indicator-alerts",
+                        json={"symbol": "BTC", "kind": "rsi_below", "value": 30, "period": 14})
+    assert r.status_code == 200
+    rule = r.json()["data"]
+    assert rule["kind"] == "rsi_below" and rule["value"] == 30 and rule["id"]
+    # list shows it
+    listed = app_client.get("/market/indicator-alerts").json()["data"]
+    assert any(x["id"] == rule["id"] for x in listed["rules"])
+    # delete it
+    d = app_client.delete(f"/market/indicator-alerts/{rule['id']}")
+    assert d.status_code == 200
+    assert app_client.get("/market/indicator-alerts").json()["data"]["rules"] == []
+
+
+def test_indicator_alert_untracked_symbol_404(app_client):
+    r = app_client.post("/market/indicator-alerts",
+                        json={"symbol": "NOPE", "kind": "rsi_above", "value": 70})
+    assert r.status_code == 404
+
+
+def test_indicator_alert_delete_unknown_404(app_client):
+    assert app_client.delete("/market/indicator-alerts/nope-1").status_code == 404
+
+
+def test_indicator_alert_rsi_below_FIRES_on_downtrend(app_client):
+    """END-TO-END: a strictly-falling series → RSI 0 ≤ 30 → the rule fires, with detail."""
+    _seed_prices("BTC", list(range(40, 1, -1)))  # 39 falling points → RSI 0
+    app_client.post("/market/indicator-alerts",
+                    json={"symbol": "BTC", "kind": "rsi_below", "value": 30, "period": 14})
+    triggers = app_client.get("/market/indicator-alerts").json()["data"]["triggers"]
+    rsi_trig = next(t for t in triggers if t["kind"] == "rsi_below")
+    assert rsi_trig["fired"] is True
+    assert "RSI" in rsi_trig["detail"]
+
+
+def test_indicator_alert_rsi_below_does_NOT_fire_on_uptrend(app_client):
+    """Distinguishing: a RISING series → RSI 100 > 30 → the SAME rule does NOT fire."""
+    _seed_prices("BTC", list(range(1, 40)))  # rising → RSI 100
+    app_client.post("/market/indicator-alerts",
+                    json={"symbol": "BTC", "kind": "rsi_below", "value": 30, "period": 14})
+    triggers = app_client.get("/market/indicator-alerts").json()["data"]["triggers"]
+    rsi_trig = next(t for t in triggers if t["kind"] == "rsi_below")
+    assert rsi_trig["fired"] is False
+
+
+def test_indicator_alert_upsert_by_symbol_kind_period(app_client):
+    """Re-creating the same (symbol,kind,period) UPDATES (keeps id), not duplicates."""
+    r1 = app_client.post("/market/indicator-alerts",
+                         json={"symbol": "BTC", "kind": "rsi_below", "value": 30, "period": 14}).json()["data"]
+    r2 = app_client.post("/market/indicator-alerts",
+                         json={"symbol": "BTC", "kind": "rsi_below", "value": 25, "period": 14}).json()["data"]
+    assert r1["id"] == r2["id"] and r2["value"] == 25  # updated in place
+    rules = app_client.get("/market/indicator-alerts").json()["data"]["rules"]
+    assert len([x for x in rules if x["kind"] == "rsi_below"]) == 1
 
 
 # --- alert rules CRUD (id-based) ---

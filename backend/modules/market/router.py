@@ -19,7 +19,7 @@ from core.responses import ok
 from store import db
 
 from . import service
-from .schema import AlertRuleInput
+from .schema import AlertRuleInput, IndicatorAlertRuleInput
 
 logger = logging.getLogger("life-os.market.router")
 
@@ -70,6 +70,24 @@ def get_indicators(symbol: str, indicators: str = "summary", hours: int = 720,
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
 
+@router.get("/ohlc/{symbol}")
+def get_ohlc(symbol: str, hours: int = 168, interval: int = 60):
+    """OHLC candles for a TRACKED asset, DERIVED from the close-tick series.
+
+    ⚠️ The feed is close-only (CoinGecko /simple/price = one price per poll), so these
+    are NOT exchange candles — each bar's O/H/L/C are the first/max/min/last observed
+    close inside the ``interval`` (minutes) bucket. The `warning` says so; a bar's
+    ``ticks`` count shows how many real observations it aggregates. For a true line
+    chart use GET /market/history (raw close points). 404 only if untracked.
+    """
+    tracked = {a.get("symbol") for a in service.tracked_assets()}
+    if symbol not in tracked:
+        raise HTTPException(status_code=404, detail=f"asset {symbol!r} is not tracked")
+    bars, warnings = service.candles(symbol, hours=hours, interval_minutes=interval)
+    return ok(data={"symbol": symbol, "interval": interval, "candles": bars},
+              warning="; ".join(warnings) if warnings else None)
+
+
 @router.get("/alerts")
 def list_alerts():
     """All configured alert rules."""
@@ -88,6 +106,41 @@ def delete_alert(rule_id: str):
     """Delete the alert rule by id. 404 if no such rule."""
     if not service.delete_rule(rule_id):
         raise HTTPException(status_code=404, detail=f"no alert rule {rule_id!r}")
+    return ok(data={"deleted": rule_id})
+
+
+# --- indicator-based alerts (TA conditions: RSI / price×SMA / MACD cross) ----
+@router.get("/indicator-alerts")
+def list_indicator_alerts():
+    """All configured indicator alert rules + their LIVE evaluation (fired + detail).
+
+    Returns ``{rules:[...], triggers:[...]}``: the persisted rules and a live
+    ``IndicatorTrigger`` per enabled rule (fired now? + the current reading).
+    """
+    rules = service.list_indicator_rules()
+    triggers = service.eval_indicator_alerts(rules)
+    return ok(data={
+        "rules": [r.model_dump() for r in rules],
+        "triggers": [t.model_dump() for t in triggers],
+    })
+
+
+@router.post("/indicator-alerts")
+def set_indicator_alert(body: IndicatorAlertRuleInput):
+    """Create an indicator alert rule (id assigned server-side). UPSERT by
+    (symbol, kind, period). 404 if the symbol is not tracked. Returns the rule."""
+    tracked = {a.get("symbol") for a in service.tracked_assets()}
+    if body.symbol not in tracked:
+        raise HTTPException(status_code=404, detail=f"asset {body.symbol!r} is not tracked")
+    rule = service.add_indicator_rule(body.symbol, body.kind, body.value, body.period, body.enabled)
+    return ok(data=rule.model_dump())
+
+
+@router.delete("/indicator-alerts/{rule_id}")
+def delete_indicator_alert(rule_id: str):
+    """Delete the indicator alert rule by id. 404 if no such rule."""
+    if not service.delete_indicator_rule(rule_id):
+        raise HTTPException(status_code=404, detail=f"no indicator alert rule {rule_id!r}")
     return ok(data={"deleted": rule_id})
 
 

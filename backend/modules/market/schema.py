@@ -16,6 +16,20 @@ AssetClass = Literal["crypto", "etf", "vn"]
 AlertOp = Literal["above", "below"]
 AlertState = Literal["hit", "near", "far"]
 
+# --- indicator-based alerts (additive to the price-threshold alerts) ---------
+# kind selects which TA condition the rule fires on:
+#   rsi_below   — RSI(period) <= value           (e.g. oversold RSI < 30)
+#   rsi_above   — RSI(period) >= value           (e.g. overbought RSI > 70)
+#   price_cross_sma_above — latest close crossed ABOVE SMA(period) this step
+#   price_cross_sma_below — latest close crossed BELOW SMA(period) this step
+#   macd_cross_bull — MACD line crossed ABOVE its signal line this step
+#   macd_cross_bear — MACD line crossed BELOW its signal line this step
+IndicatorKind = Literal[
+    "rsi_below", "rsi_above",
+    "price_cross_sma_above", "price_cross_sma_below",
+    "macd_cross_bull", "macd_cross_bear",
+]
+
 
 class AssetQuote(BaseModel):
     """A single asset's current quote. price/changePct derived; source tags origin."""
@@ -71,6 +85,47 @@ class AlertEvent(BaseModel):
     threshold: float
     price: float
     ts: str = Field(..., description="ISO-8601 UTC when it fired")
+
+
+# --------------------------------------------------------------------------- #
+# Indicator-based alert rules (TA conditions, additive to price alerts)         #
+# --------------------------------------------------------------------------- #
+class IndicatorAlertRule(BaseModel):
+    """A technical-indicator alert. Evaluated against the asset's close series via
+    ta.py (NOT a price threshold). ``value`` is the comparison level for the rsi_*
+    kinds (e.g. 30 / 70) and IGNORED for the cross kinds (the cross is self-defining);
+    ``period`` parameterises the indicator (RSI period / SMA period; ignored for MACD,
+    which uses the standard 12/26/9)."""
+
+    id: str = Field(..., min_length=1, description="server-assigned rule id")
+    symbol: str = Field(..., min_length=1)
+    kind: IndicatorKind
+    value: float = Field(0.0, description="threshold for rsi_* kinds; ignored for cross kinds")
+    period: int = Field(14, gt=0, description="RSI/SMA period; ignored for MACD")
+    enabled: bool = Field(True)
+
+
+class IndicatorAlertRuleInput(BaseModel):
+    """POST /market/indicator-alerts body — id assigned server-side."""
+
+    symbol: str = Field(..., min_length=1)
+    kind: IndicatorKind
+    value: float = Field(0.0)
+    period: int = Field(14, gt=0)
+    enabled: bool = Field(True)
+
+
+class IndicatorTrigger(BaseModel):
+    """An evaluated indicator rule — what the user sees live. ``fired`` = the
+    condition is TRUE right now; ``detail`` carries the current indicator reading."""
+
+    id: str
+    symbol: str
+    kind: IndicatorKind
+    value: float
+    period: int
+    fired: bool
+    detail: str = Field(..., description="current reading, e.g. 'RSI 28.4 ≤ 30'")
 
 
 class MacroSignal(BaseModel):
