@@ -6,10 +6,11 @@
    RENDER-ONLY: changePct/distance/state are server-derived; FE formats + colors.
    null changePct → "—". States: loading · error · empty · data.
    ============================================================ */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMarket } from "@/lib/useMarket";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { KpiCard } from "@/components/shared/KpiCard";
+import { MarketChart } from "@/components/MarketChart";
 import { relativeTime } from "@/lib/format";
 import { apiBase, ApiError } from "@/lib/api";
 import { Icon } from "@/lib/icons";
@@ -53,6 +54,15 @@ export default function MarketPage() {
   const macro = data.macro ?? [];
   const alertHistory = data.alertHistory ?? [];
 
+  // FE-2: selected symbol for the price chart. Default to the first quote once
+  // data lands; the user can click any quote row to switch (or use the chart's
+  // own range toggle). Kept in sync only when nothing's chosen yet so a manual
+  // pick isn't clobbered by a reload.
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  useEffect(() => {
+    if (chartSymbol == null && quotes.length > 0) setChartSymbol(quotes[0].symbol);
+  }, [quotes, chartSymbol]);
+
   // Threshold config form state.
   const [fSym, setFSym] = useState("");
   const [fOp, setFOp] = useState<AlertOp>("above");
@@ -81,7 +91,23 @@ export default function MarketPage() {
   }
 
   const quoteColumns: Column<AssetQuote>[] = [
-    { key: "symbol", header: "Mã", className: "pn", cell: (q) => q.symbol },
+    {
+      key: "symbol",
+      header: "Mã",
+      className: "pn",
+      // click a symbol → load it in the price chart (FE-2)
+      cell: (q) => (
+        <button
+          type="button"
+          className={`mchart-pick${chartSymbol === q.symbol ? " on" : ""}`}
+          onClick={() => setChartSymbol(q.symbol)}
+          data-testid={`chart-pick-${q.symbol}`}
+          aria-pressed={chartSymbol === q.symbol}
+        >
+          {q.symbol}
+        </button>
+      ),
+    },
     { key: "name", header: "Tên", className: "mut", cell: (q) => q.name },
     { key: "price", header: "Giá", className: "num", cell: (q) => priceText(q.price) },
     {
@@ -172,6 +198,9 @@ export default function MarketPage() {
           ))}
         </div>
       )}
+
+      {/* FE-2: price chart for the selected symbol (click a Mã to switch). */}
+      <MarketChart symbol={chartSymbol} />
 
       <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
         {/* Quotes (price table) */}

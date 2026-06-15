@@ -711,3 +711,29 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .chip.r { color:var(--red); background:var(--red-dim); }
 [data-screen="CAR"] a.pill { text-decoration:none; }
 [data-screen="CAR"] a.pill:hover { border-color:var(--accent); }
+
+/* ============================================================
+   MarketChart (FE-2) — self-drawn SVG price chart on the Market screen.
+   ============================================================ */
+.mchart { margin-bottom:14px; }
+.mchart .mchart-last { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--tx-0); margin-left:12px; display:inline-flex; align-items:center; gap:8px; }
+.mchart .mchart-delta { font-size:11px; font-weight:600; padding:1px 6px; border-radius:100px; }
+.mchart .mchart-delta.pos { color:var(--green); background:var(--green-dim); }
+.mchart .mchart-delta.neg { color:var(--red); background:var(--red-dim); }
+.mchart-ranges { display:inline-flex; gap:4px; }
+.mchart-range { font-family:var(--mono); font-size:10.5px; padding:4px 9px; border-radius:7px; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); cursor:pointer; }
+.mchart-range:hover { border-color:var(--tx-2); color:var(--tx-0); }
+.mchart-range.on { background:var(--accent); color:#180f04; border-color:transparent; font-weight:600; }
+.mchart-canvas { position:relative; padding:8px 12px 0; }
+.mchart-svg { width:100%; height:240px; display:block; touch-action:none; cursor:crosshair; }
+.mchart-tip { position:absolute; top:6px; pointer-events:none; background:color-mix(in oklch, var(--bg-2) 94%, transparent); border:1px solid var(--line-2); border-radius:8px; padding:6px 9px; font-size:11px; box-shadow:0 8px 24px -10px rgba(0,0,0,.8); white-space:nowrap; z-index:2; }
+.mchart-tip-px { font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--tx-0); }
+.mchart-tip-ts { color:var(--tx-2); font-size:10px; margin-top:1px; }
+.mchart-tip-ohlc { color:var(--tx-1); font-family:var(--mono); font-size:9.5px; margin-top:3px; }
+.mchart-foot { display:flex; align-items:center; justify-content:space-between; padding:4px 14px 8px; }
+.mchart-axis { font-family:var(--mono); font-size:10px; color:var(--tx-2); }
+.mchart-warn { font-size:10.5px; color:var(--tx-2); line-height:1.5; padding:0 14px 12px; border-top:1px solid var(--line); padding-top:9px; }
+/* clickable symbol in the quote table */
+.mchart-pick { font-family:var(--mono); font-weight:600; font-size:12.5px; color:var(--tx-1); background:transparent; border:0; border-bottom:1px dashed transparent; cursor:pointer; padding:0; }
+.mchart-pick:hover { color:var(--accent); border-bottom-color:var(--accent); }
+.mchart-pick.on { color:var(--accent); border-bottom-color:var(--accent); }
