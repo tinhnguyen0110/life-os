@@ -71,6 +71,14 @@ from typing import Any, Callable
 # and the alias keeps the bound names unambiguous for the namespace-scan test.
 from modules.finance.service import get_overview as _fin_overview
 from modules.finance.service import get_channel as _fin_channel
+# NB-FINANCE-MCP: pure-compute analytics READ paths — simulate is a what-if shaper (reads
+# golden-path + current holdings, computes HHI/drift/turnover, mutates NOTHING) and the
+# market correlation/relative-strength are pure reads over the close series. NOT
+# upsert_holding/delete_holding/set_golden_path (those stay in WRITE_SYMBOLS).
+from modules.finance.service import simulate as _fin_simulate
+from modules.market.service import correlation as _mkt_correlation
+from modules.market.service import relative_strength as _mkt_rel_strength
+from modules.market.service import MAX_COMPARE_SYMBOLS as _MAX_CORR_SYMBOLS
 from modules.market.service import get_market as _mkt_market
 from modules.market.service import history as _mkt_history
 # TA read path shipped by dev (GET /market/indicators) — wrapped, NOT edited. Returns
@@ -239,6 +247,77 @@ def market_summary() -> dict[str, Any]:
     symbol with no series still appears with pending technicals + a per-row warning."""
     items, warnings = _mkt_watchlist()
     return {"watchlist": _jsonable(items), "warnings": list(warnings or [])}
+
+
+# --------------------------------------------------------------------------- #
+# NB-FINANCE-MCP — pure-compute analytics, surfaced READ-ONLY. The agent can      #
+# run a what-if allocation + read cross-asset correlation / relative strength.    #
+# Each wraps a pure service fn (NO portfolio/disk mutation). The MCP layer        #
+# bypasses the router, so we replicate the router's INPUT guards here, returning  #
+# an honest ``{error}`` dict (NOT a raised HTTPException/traceback to the agent).  #
+# --------------------------------------------------------------------------- #
+_SIM_VALID_CHANNELS = {"crypto", "etf", "vn", "dry"}
+
+
+def finance_simulate(allocation: dict[str, float]) -> dict[str, Any]:
+    """What-if: shape a HYPOTHETICAL allocation ``{channel: weight}`` and compare it to
+    the CURRENT portfolio — HHI / concentration / drift-vs-golden-path / turnover + the
+    HHI delta + per-channel delta-vs-current. Weights normalize to 100% (pass %s or $s).
+    PURE NUMBERS for the agent to judge — NOT advice, mutates NOTHING (read-only what-if).
+    Channels ∈ {crypto,etf,vn,dry}. Bad input (empty / unknown channel / negative weight)
+    → ``{error: <reason>}`` (honest, no crash). A zero-sum allocation is accepted →
+    None HHI + warning. ``{result, warnings}``. (Wraps the POST /finance/simulate compute.)"""
+    if not isinstance(allocation, dict) or not allocation:
+        return {"error": "allocation must have at least one channel {channel: weight}"}
+    unknown = [ch for ch in allocation if ch not in _SIM_VALID_CHANNELS]
+    if unknown:
+        return {"error": f"unknown channel(s) {unknown}; valid: {sorted(_SIM_VALID_CHANNELS)}"}
+    negative = [ch for ch, w in allocation.items() if w < 0]
+    if negative:
+        return {"error": f"negative weight(s) for {negative} — weights must be ≥0"}
+    result, warnings = _fin_simulate(allocation)
+    return {"result": _jsonable(result), "warnings": list(warnings or [])}
+
+
+def _parse_symbols_mcp(symbols: str | list[str], *, min_n: int) -> tuple[list[str], str | None]:
+    """De-dupe + uppercase the symbols (str CSV or list); enforce min_n..MAX bounds.
+    Returns (parsed, error) — error is a string when invalid, else None (mirrors the
+    router's _parse_symbols 422 guards but as an honest error string, not a raise)."""
+    raw = symbols.split(",") if isinstance(symbols, str) else list(symbols)
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for s in raw:
+        sym = str(s).strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            parsed.append(sym)
+    if len(parsed) < min_n:
+        return parsed, f"need ≥{min_n} distinct symbols (got {len(parsed)})"
+    if len(parsed) > _MAX_CORR_SYMBOLS:
+        return parsed, f"too many symbols ({len(parsed)}); max {_MAX_CORR_SYMBOLS}"
+    return parsed, None
+
+
+def market_correlation(symbols: str, hours: int = 720) -> dict[str, Any]:
+    """Pairwise Pearson correlation matrix over the close series of ≥2 comma-separated
+    symbols (≤10; N² so bounded). Each cell ∈ [-1, 1] or None (no overlap / flat series —
+    honest, not fabricated 0). NEUTRAL numbers — no advice. <2 or >10 symbols →
+    ``{error}`` (honest, no crash). ``{correlation, warnings}``. (Wraps GET
+    /market/correlation — read-only.)"""
+    syms, err = _parse_symbols_mcp(symbols, min_n=2)
+    if err:
+        return {"error": err}
+    data, warnings = _mkt_correlation(syms, hours=int(hours))
+    return {"correlation": _jsonable(data), "warnings": list(warnings or [])}
+
+
+def market_relative_strength(symbol: str, vs: str = "BTC", hours: int = 720) -> dict[str, Any]:
+    """``symbol`` vs a ``vs`` benchmark (default BTC): the price-ratio trend + % change
+    over the window. ratioTrend 'up' = OUTPERFORMING the benchmark (NEUTRAL observation,
+    NOT a recommendation). Thin data → None fields + a warning, never fabricated.
+    ``{relativeStrength, warnings}``. (Wraps GET /market/relative-strength — read-only.)"""
+    data, warnings = _mkt_rel_strength(symbol.strip().upper(), vs=vs.strip().upper(), hours=int(hours))
+    return {"relativeStrength": _jsonable(data), "warnings": list(warnings or [])}
 
 
 def projects_list() -> dict[str, Any]:
@@ -764,12 +843,16 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "finance_overview": finance_overview,
     "finance_channel": finance_channel,
+    # NB-FINANCE-MCP: pure-compute analytics (read-only — no portfolio mutation)
+    "finance_simulate": finance_simulate,
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,
     "market_ohlc": market_ohlc,
     "market_watchlist": market_watchlist,
     "market_summary": market_summary,
+    "market_correlation": market_correlation,
+    "market_relative_strength": market_relative_strength,
     "projects_list": projects_list,
     "project_get": project_get,
     "graveyard_overview": graveyard_overview,

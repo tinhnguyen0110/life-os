@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **46 tools** — 36 read · 10 write (propose).
+Totals: **49 tools** — 39 read · 10 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -21,12 +21,15 @@ Totals: **46 tools** — 36 read · 10 write (propose).
 |---|---|---|
 | `finance_overview` |  | Portfolio overview: per-channel allocations, golden-path targets, total value, |
 | `finance_channel` |  | One portfolio channel's detail (holdings + allocation + sell-ladder state) |
+| `finance_simulate` |  | What-if: shape a HYPOTHETICAL allocation vs the current portfolio (HHI/drift/turnover) — read-only, no mutation |
 | `market_overview` |  | Live market view: quotes (+ change%), alert triggers, macro signals, alert |
 | `market_history` |  | Price-history points for an asset over the last ``hours`` (oldest→newest) |
 | `market_indicators` | ✓ | Technical indicators over a tracked asset's close series (NEUTRAL data — no |
 | `market_ohlc` |  | OHLC candles for a TRACKED asset, DERIVED from the close-tick series (the feed |
 | `market_watchlist` | ✓ | The watchlist with a rich per-symbol view: ``{items:[{symbol,name,price, |
 | `market_summary` | ✓ | ONE-call market read for the agent: the rich watchlist (price/changePct/ |
+| `market_correlation` | ✓ | Pairwise Pearson correlation matrix over ≥2 symbols (≤10) close series — NEUTRAL |
+| `market_relative_strength` | ✓ | A symbol vs a benchmark (price-ratio trend + % change) — NEUTRAL, not a recommendation |
 | `projects_list` |  | All tracked, non-abandoned projects with derived health/commit/lang status |
 | `project_get` |  | One project's status by id (includes abandoned). Unknown id → |
 | `graveyard_overview` |  | The graveyard: abandoned projects + post-mortem pattern aggregates |

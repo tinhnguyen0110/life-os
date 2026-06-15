@@ -124,6 +124,9 @@ def test_arg_tools_return_jsonable_dict(app_db):
         rs.wiki_search("anything", limit=5),
         rs.wiki_get(999999),
         rs.wiki_backlinks(999999),
+        rs.finance_simulate({"crypto": 50, "etf": 50}),
+        rs.market_correlation("BTC,ETH", hours=24),
+        rs.market_relative_strength("ETH", vs="BTC", hours=24),
     ):
         assert isinstance(out, dict)
         json.dumps(out)
@@ -177,6 +180,79 @@ def test_market_summary_is_neutral_data(app_db):
     flat = json.dumps(out).lower()
     for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":"):
         assert banned not in flat, f"market_summary leaked a non-neutral term: {banned}"
+
+
+# --------------------------------------------------------------------------- #
+# NB-FINANCE-MCP — pure-compute analytics surfaced read-only: finance_simulate    #
+# (what-if, zero side-effect) + market_correlation + market_relative_strength.    #
+# --------------------------------------------------------------------------- #
+def test_finance_simulate_shape_and_neutral(app_db):
+    """finance_simulate returns {result, warnings} with the hypothetical+current shape.
+    PURE numbers — no advice key."""
+    out = rs.finance_simulate({"crypto": 60, "etf": 40})
+    assert "result" in out and "warnings" in out
+    assert "hypothetical" in out["result"] and "current" in out["result"]
+    flat = json.dumps(out).lower()
+    for banned in ("recommendation", "\"advice\"", "buy_sell", "\"action\":"):
+        assert banned not in flat
+
+
+def test_finance_simulate_bad_input_is_honest_error_not_crash(app_db):
+    """Bad input → {error}, never a raised HTTPException/traceback to the agent
+    (the MCP layer replicates the router 422 guards as honest error strings)."""
+    assert "error" in rs.finance_simulate({})                       # empty
+    assert "error" in rs.finance_simulate({"bogus": 50})            # unknown channel
+    assert "error" in rs.finance_simulate({"crypto": -10})          # negative weight
+    # zero-sum is ACCEPTED (router contract) → a result with a warning, not an error
+    zero = rs.finance_simulate({"crypto": 0, "etf": 0})
+    assert "result" in zero and any("normalize" in w for w in zero["warnings"])
+
+
+def test_finance_simulate_zero_side_effect_on_holdings(app_db):
+    """DISTINGUISHING / the dispatch's core claim: simulate is a READ-ONLY what-if —
+    it must NOT touch the persisted portfolio. Snapshot the holdings store before/after
+    and assert BYTE + MTIME identical (a what-if that wrote — even a rewrite with the same
+    content, which bumps mtime — would be a serious bug). Same discipline as NB1+NB2."""
+    from core.config import settings
+    from modules.finance import service as fin
+    # seed a real holding so there's persisted state to (not) disturb
+    from modules.finance.schema import HoldingInput
+    fin.upsert_holding(HoldingInput(symbol="BTC", channel="crypto", qty=1, avgCost=100))
+    disk = settings.data_dir / fin.HOLDINGS_MD
+    before = disk.read_bytes()
+    mtime_before = disk.stat().st_mtime_ns
+    rs.finance_simulate({"crypto": 30, "etf": 70})  # a what-if that re-weights crypto
+    assert disk.read_bytes() == before, "finance_simulate rewrote the holdings store — must be read-only"
+    assert disk.stat().st_mtime_ns == mtime_before, "finance_simulate touched holdings.md mtime"
+    # and the live overview still reports the seeded holding unchanged
+    assert any(h.symbol == "BTC" for h in fin.list_holdings())
+
+
+def test_market_correlation_shape_and_bounds(app_db):
+    """market_correlation → {correlation, warnings}; <2 or >10 symbols → {error}."""
+    out = rs.market_correlation("BTC,ETH", hours=24)
+    assert "correlation" in out and "matrix" in out["correlation"]
+    assert "error" in rs.market_correlation("BTC")              # <2
+    assert "error" in rs.market_correlation(",".join(f"S{i}" for i in range(11)))  # >10
+
+
+def test_market_relative_strength_shape(app_db):
+    """market_relative_strength → {relativeStrength, warnings}; thin data → None fields,
+    never a crash."""
+    out = rs.market_relative_strength("ETH", vs="BTC", hours=24)
+    assert "relativeStrength" in out
+    assert out["relativeStrength"]["symbol"] == "ETH"
+    assert out["relativeStrength"]["benchmark"] == "BTC"
+    json.dumps(out)
+
+
+def test_NB_FINANCE_MCP_no_write_leak(app_db):
+    """The 3 new analytics tools wrap ONLY pure-compute reads — no portfolio/market
+    write symbol reachable (the read gate holds)."""
+    ns = set(vars(rs))
+    for w in ("upsert_holding", "delete_holding", "set_golden_path", "set_crypto_basis",
+              "add_rule", "delete_rule", "poll_once"):
+        assert w not in ns, f"NB-FINANCE-MCP leaked a write symbol: {w}"
 
 
 # --------------------------------------------------------------------------- #
@@ -774,4 +850,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 36  # +2 NB3 wiki-proposal read-back (status/list); was 34 (WIKI-MCP)
+    assert len(rs.TOOLS) == 39  # +3 NB-FINANCE-MCP (finance_simulate/market_correlation/market_relative_strength); was 36 (NB3)
