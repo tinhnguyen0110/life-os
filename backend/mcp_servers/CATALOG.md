@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **44 tools** — 34 read · 10 write (propose).
+Totals: **46 tools** — 36 read · 10 write (propose).
 
 ## Capability boundary (the supervision contract)
 
@@ -48,6 +48,8 @@ Totals: **44 tools** — 34 read · 10 write (propose).
 | `wiki_get` |  | One wiki note by its INTEGER id (the citation key); missing → {found: False} |
 | `wiki_overview` |  | Vault overview: {stats, inbox, orphans, recentActivity, proposalCount} + warning |
 | `wiki_backlinks` |  | Backlinks for a wiki note: {linked, unlinked, outbound} (grounding context) |
+| `wiki_proposal_status` |  | One WIKI proposal's disposition by id (the wiki_proposals queue — separate from agent_proposals) |
+| `wiki_list_proposals` |  | The agent's WIKI proposals (newest-first) with their current disposition — the wiki review queue |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |

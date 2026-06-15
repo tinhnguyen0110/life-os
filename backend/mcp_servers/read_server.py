@@ -122,6 +122,15 @@ from modules.wiki.service import get_note as _wiki_get_note
 from mcp_servers.proposals_store import get_proposal as _proposal_get
 from mcp_servers.proposals_store import list_proposals as _proposal_list
 from mcp_servers.proposals_store import count_by_status as _proposal_counts
+# NB3: read-back of the agent's WIKI proposals — the wiki has its OWN proposals queue
+# (wiki_proposals, separate from agent_proposals), so its disposition needs its own read
+# tools. Import ONLY the wiki proposals_service READ fns (get_proposal/list_proposals/
+# count_by_status) — NOT create_proposal/accept_proposal/reject_proposal/batch_accept
+# (those stay in WRITE_SYMBOLS — the agent reads its wiki-proposal verdict, it cannot
+# accept/reject; ratify is human-only at the wiki P1 REST surface).
+from modules.wiki.proposals_service import get_proposal as _wiki_proposal_get
+from modules.wiki.proposals_service import list_proposals as _wiki_proposal_list
+from modules.wiki.proposals_service import count_by_status as _wiki_proposal_counts
 
 
 # --------------------------------------------------------------------------- #
@@ -387,6 +396,53 @@ def wiki_backlinks(note_id: int) -> dict[str, Any]:
     sees what references a note (grounding context). ``{backlinks}``. (Wraps GET
     /wiki/notes/{id}/backlinks — read-only.)"""
     return {"backlinks": _jsonable(_wiki_backlinks(int(note_id)))}
+
+
+# --------------------------------------------------------------------------- #
+# NB3 — WIKI proposal read-back. The wiki has its OWN proposals queue            #
+# (wiki_proposals, separate from agent_proposals), so the agent reads the        #
+# disposition of its WIKI proposals (from wiki_propose_*) through these wiki-      #
+# scoped tools — symmetric to check_proposal_status / list_my_proposals but        #
+# against the wiki queue. READ-ONLY: report the human's verdict; the agent         #
+# CANNOT accept/reject (wiki ratify is human-only at the P1 REST surface).         #
+# --------------------------------------------------------------------------- #
+def wiki_proposal_status(proposal_id: int) -> dict[str, Any]:
+    """One WIKI proposal's disposition by id (the wiki_proposals queue — separate
+    from the generic agent_proposals queue). Reports status (pending|accepted|
+    rejected), appliedNoteId (the note an accept created/edited), decidedBy + decided
+    (who ratified, when), kind + rationale. Unknown / malformed id → ``{found: False}``
+    (honest, not a crash). READ-ONLY — the agent cannot ratify its own wiki proposal."""
+    try:
+        pid = int(proposal_id)
+    except (ValueError, TypeError):
+        return {"found": False, "proposalId": proposal_id}
+    p = _wiki_proposal_get(pid)
+    if p is None:
+        return {"found": False, "proposalId": pid}
+    return {
+        "found": True,
+        "proposalId": p["id"],
+        "kind": p["kind"],
+        "status": p["status"],
+        "targetId": p.get("targetId"),
+        "appliedNoteId": p.get("appliedNoteId"),
+        "decidedBy": p.get("decidedBy"),
+        "decided": p.get("decided"),
+        "rationale": p.get("rationale"),
+    }
+
+
+def wiki_list_proposals(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """The agent's WIKI proposals (newest-first) with their current disposition — the
+    wiki review queue from the agent's POV (what's still pending vs accepted/rejected),
+    plus a ``counts`` roll-up by status. Optional ``status`` filter (pending|accepted|
+    rejected); unknown status → empty list. Empty queue → ``{proposals: [], counts: {}}``.
+    READ-ONLY (the wiki_proposals queue — separate from agent_proposals)."""
+    # The wiki proposals_service.list_proposals(status) has no limit param (it caps at the
+    # store default, newest-first); slice to ``limit`` here for API symmetry with
+    # list_my_proposals without reaching past the service into the store.
+    proposals = _wiki_proposal_list(status=status)[: int(limit)]
+    return {"proposals": _jsonable(proposals), "counts": _wiki_proposal_counts()}
 
 
 # --------------------------------------------------------------------------- #
@@ -735,6 +791,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_get": wiki_get,
     "wiki_overview": wiki_overview,
     "wiki_backlinks": wiki_backlinks,
+    # NB3: wiki-proposal read-back (the wiki_proposals queue — separate from agent_proposals)
+    "wiki_proposal_status": wiki_proposal_status,
+    "wiki_list_proposals": wiki_list_proposals,
     "life_brief": life_brief,
     "check_proposal_status": check_proposal_status,
     "list_my_proposals": list_my_proposals,

@@ -311,6 +311,86 @@ def test_wiki_backlinks_shape(app_db):
     assert any(l["id"] == b for l in out["linked"])  # the inbound link surfaces
 
 
+def test_NB3_wiki_proposal_status_reads_wiki_queue(app_db):
+    """NB3: wiki_proposal_status reads back a wiki proposal's disposition from the
+    wiki_proposals queue (the agent's wiki review loop). Create one via the real
+    consumer path (the whole-app write-server's wiki_propose_note → wiki_proposals),
+    then read its status — it must be found + pending."""
+    from mcp_servers import write_server as ws
+    pid = ws.wiki_propose_note("NB3 note", "body", "because NB3 read-back")["id"]
+    out = rs.wiki_proposal_status(pid)
+    assert out["found"] is True
+    assert out["proposalId"] == pid
+    assert out["status"] == "pending"
+    assert out["kind"] == "note_create"
+    assert out["rationale"] == "because NB3 read-back"
+
+
+def test_NB3_wiki_proposal_status_missing_and_malformed(app_db):
+    """Unknown id → found False; a non-int id must NOT leak a ValueError (honest,
+    mirrors check_proposal_status NG4)."""
+    assert rs.wiki_proposal_status(999999) == {"found": False, "proposalId": 999999}
+    assert rs.wiki_proposal_status("nope") == {"found": False, "proposalId": "nope"}
+
+
+def test_NB3_wiki_list_proposals_and_counts(app_db):
+    """wiki_list_proposals returns the agent's wiki proposals newest-first + a counts
+    roll-up; the status filter scopes it; empty queue is honest-empty."""
+    # empty first
+    empty = rs.wiki_list_proposals()
+    assert empty["proposals"] == [] and empty["counts"].get("pending", 0) == 0
+    from mcp_servers import write_server as ws
+    p1 = ws.wiki_propose_note("first", "b", "r1")["id"]
+    p2 = ws.wiki_propose_note("second", "b", "r2")["id"]
+    out = rs.wiki_list_proposals()
+    ids = [p["id"] for p in out["proposals"]]
+    assert ids == [p2, p1]  # newest-first
+    assert out["counts"]["pending"] == 2
+    # status filter scopes (accepted → none yet)
+    assert rs.wiki_list_proposals(status="accepted")["proposals"] == []
+
+
+def test_NB3_wiki_proposal_readback_is_separate_from_agent_queue(app_db):
+    """The wiki read-back must reflect the wiki_proposals queue, NOT agent_proposals —
+    a wiki_propose appears in wiki_list_proposals but NOT in list_my_proposals."""
+    from mcp_servers import write_server as ws
+    pid = ws.wiki_propose_note("isolated", "b", "queue-separation check")["id"]
+    assert any(p["id"] == pid for p in rs.wiki_list_proposals()["proposals"])
+    # the generic agent queue (list_my_proposals) is untouched by a wiki propose
+    assert rs.list_my_proposals()["proposals"] == []
+
+
+def test_NB3_wiki_overview_proposalCount_is_live(app_db):
+    """NB3: wiki_overview.proposalCount reads the live PENDING wiki-proposal count
+    (was hardcoded 0). 0 on empty, increments as proposals queue."""
+    assert rs.wiki_overview()["overview"]["proposalCount"] == 0
+    from mcp_servers import write_server as ws
+    ws.wiki_propose_note("a", "b", "r")
+    ws.wiki_propose_note("c", "d", "r2")
+    assert rs.wiki_overview()["overview"]["proposalCount"] == 2
+
+
+def test_NB3_distinguishing_case_status_tools_do_not_collapse_queues(app_db):
+    """MANDATORY (dispatch): an id present in wiki_proposals but NOT agent_proposals must
+    resolve found:true via wiki_proposal_status AND found:false via check_proposal_status.
+    If both return found:true the two queues have been collapsed — wrong. (agent_proposals
+    is empty in this fixture, so the wiki id N is guaranteed absent there.)"""
+    from mcp_servers import write_server as ws
+    pid = ws.wiki_propose_note("distinguishing", "b", "queue-scoping proof")["id"]
+    assert rs.wiki_proposal_status(pid)["found"] is True, "wiki id must resolve in the wiki queue"
+    assert rs.check_proposal_status(pid)["found"] is False, \
+        "same id must NOT resolve in the agent queue (queues are scoped, not collapsed)"
+
+
+def test_NB3_wiki_proposal_readback_no_write_leak(app_db):
+    """The NB3 read-back tools import ONLY the wiki proposals READ fns — no
+    accept/reject/create_proposal/batch_accept reachable (the read gate holds)."""
+    ns = set(vars(rs))
+    for w in ("accept_proposal", "reject_proposal", "create_proposal", "batch_accept",
+              "mark_decided"):
+        assert w not in ns, f"NB3 leaked a wiki write/decide symbol: {w}"
+
+
 def test_wiki_mcp_no_write_leak(app_db):
     # WIKI-MCP capability gate: the read-server must NOT bind any wiki write fn.
     # (the wiki writes are already in WRITE_SYMBOLS; this asserts 0 leak at the
@@ -694,4 +774,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 34  # +4 WIKI-MCP (search/get/overview/backlinks); was 30 (NEWS-MCP)
+    assert len(rs.TOOLS) == 36  # +2 NB3 wiki-proposal read-back (status/list); was 34 (WIKI-MCP)

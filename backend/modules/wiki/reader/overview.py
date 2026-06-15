@@ -18,7 +18,8 @@ def overview(activity_limit: int = 20) -> tuple[dict[str, Any], str | None]:
 
     ``pctWithLink`` = notes-with-≥1-resolved-link / total × 100 → **None on an
     empty vault** (totalNotes==0) with a warning, NEVER 0 / div-by-zero (risk-(e)).
-    ``proposalCount`` = 0 (AI proposals are M4)."""
+    ``proposalCount`` = the number of PENDING wiki proposals awaiting human ratification
+    (NB3: was hardcoded 0 — now reads the live wiki_proposals queue)."""
     total = wiki_store.count_notes()
     by_status = wiki_store.count_by_status()
     linked_ids = wiki_store.note_ids_with_resolved_link()
@@ -56,9 +57,21 @@ def overview(activity_limit: int = 20) -> tuple[dict[str, Any], str | None]:
         "inbox": inbox()["items"],
         "orphans": orphans,
         "recentActivity": _recent_activity(activity_limit),
-        "proposalCount": 0,  # AI proposals land at M4
+        # NB3: pending wiki proposals awaiting human ratification (was hardcoded 0).
+        "proposalCount": _pending_proposal_count(),
     }
     return data, warning
+
+
+def _pending_proposal_count() -> int:
+    """Number of PENDING wiki proposals (the queue badge). Fail-soft: a proposals-store
+    hiccup (e.g. table not yet inited on a fresh vault) must NOT break the read-only
+    overview — returns 0, not a 500. Reads the SEPARATE wiki_proposals queue."""
+    try:
+        from .. import proposals_service
+        return int(proposals_service.count_by_status().get("pending", 0))
+    except Exception:
+        return 0
 
 
 def inbox() -> dict[str, Any]:
