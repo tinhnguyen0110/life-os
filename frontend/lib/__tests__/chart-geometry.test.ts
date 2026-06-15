@@ -12,6 +12,10 @@ import {
   linePoints,
   areaPath,
   indexAtX,
+  resampleSeries,
+  linePointsSparse,
+  hasAnyValue,
+  extendScaleRange,
 } from "@/lib/chart-geometry";
 
 describe("buildScale", () => {
@@ -109,5 +113,90 @@ describe("indexAtX (hover lookup)", () => {
   });
   it("zero-width scale → first point", () => {
     expect(indexAtX(10, { w: 0, h: 50, min: 0, max: 1, n: 5 })).toBe(0);
+  });
+});
+
+// ── FE-2A: indicator-overlay helpers ─────────────────────────────────────────
+
+describe("resampleSeries", () => {
+  it("empty src / targetLen<1 → []", () => {
+    expect(resampleSeries([], 5)).toEqual([]);
+    expect(resampleSeries([1, 2, 3], 0)).toEqual([]);
+  });
+  it("targetLen 1 → newest value", () => {
+    expect(resampleSeries([1, 2, 9], 1)).toEqual([9]);
+  });
+  it("downsamples a long series proportionally (first + last preserved)", () => {
+    const src = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const out = resampleSeries(src, 3); // i=0→0, i=1→round(0.5*9)=5, i=2→9
+    expect(out).toEqual([0, 5, 9]);
+  });
+  it("upsamples a short series (repeats by nearest)", () => {
+    const out = resampleSeries([10, 20], 4); // 0→10, .33*1→0→10, .66*1→1→20, 1→20
+    expect(out).toEqual([10, 10, 20, 20]);
+  });
+  it("preserves null warm-up gaps", () => {
+    const out = resampleSeries([null, null, 5, 6], 4);
+    expect(out[0]).toBeNull();
+    expect(out[out.length - 1]).toBe(6);
+  });
+  it("coerces non-finite to null", () => {
+    const out = resampleSeries([NaN as unknown as number, 1, 2], 3);
+    expect(out[0]).toBeNull();
+  });
+});
+
+describe("linePointsSparse", () => {
+  const sc = buildScale([1, 2, 3, 4], 100, 60, 0);
+  it("skips null gaps, connects only defined points", () => {
+    const pts = linePointsSparse([null, 2, null, 4], sc).split(" ").filter(Boolean);
+    expect(pts).toHaveLength(2); // only indices 1 and 3
+  });
+  it("all-null / empty → empty string", () => {
+    expect(linePointsSparse([null, null], sc)).toBe("");
+    expect(linePointsSparse([], sc)).toBe("");
+  });
+  it("indices align to scale x positions", () => {
+    const pts = linePointsSparse([1, 2, 3, 4], sc);
+    expect(pts.startsWith("0.00,")).toBe(true); // first point at x=0
+  });
+});
+
+describe("hasAnyValue", () => {
+  it("true when at least one finite number", () => {
+    expect(hasAnyValue([null, null, 5])).toBe(true);
+  });
+  it("false for all-null / empty / nullish", () => {
+    expect(hasAnyValue([null, null])).toBe(false);
+    expect(hasAnyValue([])).toBe(false);
+    expect(hasAnyValue(null)).toBe(false);
+    expect(hasAnyValue(undefined)).toBe(false);
+  });
+  it("false when only NaN/Infinity present", () => {
+    expect(hasAnyValue([NaN, Infinity as unknown as number])).toBe(false);
+  });
+});
+
+describe("extendScaleRange", () => {
+  it("does NOT change n (x-axis stays the base point count)", () => {
+    const base = buildScale([100, 105, 102], 720, 240); // n=3
+    const out = extendScaleRange(base, [80, 130]);
+    expect(out.n).toBe(3); // CRITICAL: overlay values must not inflate n
+  });
+  it("widens min/max to include extras beyond the base range", () => {
+    const base = buildScale([100, 110], 720, 240, 0); // min~100, max~110
+    const out = extendScaleRange(base, [80, 130], 0);
+    expect(out.min).toBeLessThanOrEqual(80);
+    expect(out.max).toBeGreaterThanOrEqual(130);
+  });
+  it("no-op when extras are all null/non-finite", () => {
+    const base = buildScale([100, 110], 720, 240);
+    expect(extendScaleRange(base, [null, NaN as unknown as number])).toBe(base);
+  });
+  it("keeps w/h unchanged", () => {
+    const base = buildScale([100, 110], 720, 240);
+    const out = extendScaleRange(base, [200]);
+    expect(out.w).toBe(720);
+    expect(out.h).toBe(240);
   });
 });

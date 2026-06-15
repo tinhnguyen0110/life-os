@@ -737,6 +737,15 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .mchart-pick { font-family:var(--mono); font-weight:600; font-size:12.5px; color:var(--tx-1); background:transparent; border:0; border-bottom:1px dashed transparent; cursor:pointer; padding:0; }
 .mchart-pick:hover { color:var(--accent); border-bottom-color:var(--accent); }
 .mchart-pick.on { color:var(--accent); border-bottom-color:var(--accent); }
+/* FE-2A: indicator overlay toggle row */
+.mchart-overlays { display:flex; align-items:center; gap:7px; padding:8px 14px 0; flex-wrap:wrap; }
+.mchart-ov-lbl { font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--tx-2); }
+.mchart-ov { display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px; padding:3px 8px; border-radius:100px; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); cursor:pointer; }
+.mchart-ov:hover { border-color:var(--tx-2); }
+.mchart-ov.on { font-weight:600; }
+.mchart-ov-dot { width:7px; height:7px; border-radius:50%; opacity:.55; }
+.mchart-ov.on .mchart-ov-dot { opacity:1; }
+.mchart-ov-warn { color:var(--tx-2); font-size:9px; }
 
 /* ============================================================
    EquityCurve (FE-3) — portfolio value-over-time chart on the Finance screen.

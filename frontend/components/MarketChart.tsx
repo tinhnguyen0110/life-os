@@ -11,8 +11,12 @@
    never a broken/NaN chart.
    ============================================================ */
 import { useMemo, useRef, useState } from "react";
-import { useMarketChart, type ChartRange } from "@/lib/useMarketChart";
-import { buildScale, linePoints, areaPath, xAt, yAt, indexAtX } from "@/lib/chart-geometry";
+import { useMarketChart, RANGE_PARAMS, type ChartRange } from "@/lib/useMarketChart";
+import { useMarketIndicators } from "@/lib/useMarketIndicators";
+import {
+  buildScale, linePoints, areaPath, xAt, yAt, indexAtX,
+  resampleSeries, linePointsSparse, hasAnyValue, extendScaleRange,
+} from "@/lib/chart-geometry";
 
 const VIEW_W = 720;
 const VIEW_H = 240;
@@ -21,6 +25,14 @@ const RANGES: { key: ChartRange; label: string }[] = [
   { key: "7d", label: "7N" },
   { key: "30d", label: "30N" },
   { key: "all", label: "Tất cả" },
+];
+
+/** Overlay toggles — opt-in (all OFF by default so the chart stays clean). */
+type OverlayKey = "sma" | "ema" | "bollinger";
+const OVERLAYS: { key: OverlayKey; label: string; color: string }[] = [
+  { key: "sma", label: "SMA", color: "var(--amber)" },
+  { key: "ema", label: "EMA", color: "var(--cyan, #38BDF8)" },
+  { key: "bollinger", label: "BB", color: "var(--tx-2)" },
 ];
 
 /** Compact price label — adapts decimals to magnitude (65,563 vs 0.4213). */
@@ -48,9 +60,67 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const candles = data?.candles ?? [];
-  const scale = useMemo(() => buildScale(closes, VIEW_W, VIEW_H), [closes]);
+
+  // FE-2A: indicator overlays — opt-in toggles, all OFF by default.
+  const [overlays, setOverlays] = useState<Record<OverlayKey, boolean>>({ sma: false, ema: false, bollinger: false });
+  const anyOverlay = overlays.sma || overlays.ema || overlays.bollinger;
+  // Indicators are fetched over the SAME hours window as the active range so their
+  // series spans the same time as the candles (then resampled to candle count).
+  const hours = RANGE_PARAMS[range].hours;
+  const { data: indData } = useMarketIndicators(symbol, hours, anyOverlay);
+
+  // The price scale must ALSO contain the overlay values (Bollinger upper/lower can
+  // exceed the close range), else the bands clip. Collect every value that will be
+  // drawn, then build one shared scale.
+  const overlayRaw = useMemo(() => {
+    const ind = indData?.indicators;
+    const out: { sma: (number | null)[]; ema: (number | null)[]; bbU: (number | null)[]; bbM: (number | null)[]; bbL: (number | null)[] } =
+      { sma: [], ema: [], bbU: [], bbM: [], bbL: [] };
+    if (!ind || closes.length === 0) return out;
+    const n = closes.length;
+    if (overlays.sma && ind.sma) out.sma = resampleSeries(ind.sma.series, n);
+    if (overlays.ema && ind.ema) out.ema = resampleSeries(ind.ema.series, n);
+    if (overlays.bollinger && ind.bollinger) {
+      out.bbU = resampleSeries(ind.bollinger.upper, n);
+      out.bbM = resampleSeries(ind.bollinger.middle, n);
+      out.bbL = resampleSeries(ind.bollinger.lower, n);
+    }
+    return out;
+  }, [indData, overlays, closes.length]);
+
+  const scale = useMemo(() => {
+    // x-axis (n) MUST stay the candle count — build from closes only, then WIDEN the
+    // y-range to fit overlay extents (Bollinger bands can exceed the close range)
+    // WITHOUT changing n (else the price line compresses across too many slots).
+    const base = buildScale(closes, VIEW_W, VIEW_H);
+    const extra = [...overlayRaw.sma, ...overlayRaw.ema, ...overlayRaw.bbU, ...overlayRaw.bbM, ...overlayRaw.bbL];
+    return extendScaleRange(base, extra);
+  }, [closes, overlayRaw]);
+
   const line = useMemo(() => linePoints(closes, scale), [closes, scale]);
   const area = useMemo(() => areaPath(closes, scale), [closes, scale]);
+
+  // Overlay polylines (sparse — warm-up nulls skipped). Each is "" when not drawable.
+  const smaLine = useMemo(() => linePointsSparse(overlayRaw.sma, scale), [overlayRaw.sma, scale]);
+  const emaLine = useMemo(() => linePointsSparse(overlayRaw.ema, scale), [overlayRaw.ema, scale]);
+  const bbU = useMemo(() => linePointsSparse(overlayRaw.bbU, scale), [overlayRaw.bbU, scale]);
+  const bbM = useMemo(() => linePointsSparse(overlayRaw.bbM, scale), [overlayRaw.bbM, scale]);
+  const bbL = useMemo(() => linePointsSparse(overlayRaw.bbL, scale), [overlayRaw.bbL, scale]);
+
+  // Per-overlay availability: a toggle ON but the series has no finite value (window
+  // too short for the period) → mark unavailable so the UI hints instead of drawing rubbish.
+  const smaAvail = hasAnyValue(overlayRaw.sma);
+  const emaAvail = hasAnyValue(overlayRaw.ema);
+  const bbAvail = hasAnyValue(overlayRaw.bbM);
+  function overlayUnavailable(k: OverlayKey): boolean {
+    if (!overlays[k]) return false;
+    return k === "sma" ? !smaAvail : k === "ema" ? !emaAvail : !bbAvail;
+  }
+  const anyUnavailable = overlayUnavailable("sma") || overlayUnavailable("ema") || overlayUnavailable("bollinger");
+
+  function toggleOverlay(k: OverlayKey) {
+    setOverlays((prev) => ({ ...prev, [k]: !prev[k] }));
+  }
 
   // Map a pointer event to the nearest data index (viewBox coords via getBoundingClientRect).
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
@@ -132,6 +202,26 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
 
       {symbol && status === "ready" && closes.length > 0 && (
         <>
+          {/* FE-2A: indicator overlay toggles (opt-in). An ON overlay whose window
+              is too short to compute hints "không đủ điểm" instead of drawing rubbish. */}
+          <div className="mchart-overlays" data-testid="mchart-overlays">
+            <span className="mchart-ov-lbl">Chỉ báo:</span>
+            {OVERLAYS.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                className={`mchart-ov${overlays[o.key] ? " on" : ""}`}
+                aria-pressed={overlays[o.key]}
+                onClick={() => toggleOverlay(o.key)}
+                data-testid={`mchart-ov-${o.key}`}
+                style={overlays[o.key] ? { borderColor: o.color, color: o.color } : undefined}
+              >
+                <span className="mchart-ov-dot" style={{ background: o.color }} /> {o.label}
+                {overlayUnavailable(o.key) && <span className="mchart-ov-warn"> ·không đủ điểm</span>}
+              </button>
+            ))}
+          </div>
+
           <div className="mchart-canvas">
             <svg
               ref={svgRef}
@@ -151,6 +241,20 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
                 </linearGradient>
               </defs>
               {area && <path d={area} fill="url(#mchart-grad)" data-testid="mchart-area" />}
+              {/* ── FE-2A overlays (drawn UNDER the price line so price stays on top) ── */}
+              {overlays.bollinger && bbAvail && bbU && bbL && (
+                <g data-testid="mchart-bb">
+                  <polyline points={bbU} fill="none" stroke="var(--tx-2)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" data-testid="mchart-bb-upper" />
+                  <polyline points={bbL} fill="none" stroke="var(--tx-2)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" data-testid="mchart-bb-lower" />
+                  {bbM && <polyline points={bbM} fill="none" stroke="var(--tx-2)" strokeWidth="1" strokeOpacity="0.7" vectorEffect="non-scaling-stroke" data-testid="mchart-bb-mid" />}
+                </g>
+              )}
+              {overlays.sma && smaAvail && smaLine && (
+                <polyline points={smaLine} fill="none" stroke="var(--amber)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" data-testid="mchart-sma" />
+              )}
+              {overlays.ema && emaAvail && emaLine && (
+                <polyline points={emaLine} fill="none" stroke="var(--cyan, #38BDF8)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" data-testid="mchart-ema" />
+              )}
               {line && (
                 <polyline
                   points={line}

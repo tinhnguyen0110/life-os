@@ -20,6 +20,12 @@ vi.mock("@/lib/useMarketChart", async () => {
   };
 });
 
+// FE-2A: mock the indicators hook too — default returns no data (overlays absent).
+const indState: { current: any } = { current: { data: null, status: "idle", errMsg: "", reload: vi.fn() } };
+vi.mock("@/lib/useMarketIndicators", () => ({
+  useMarketIndicators: () => indState.current,
+}));
+
 const CANDLE = (over: Partial<OhlcCandle>): OhlcCandle => ({
   ts: "2026-06-15T02:00:00+00:00", open: 100, high: 110, low: 95, close: 105, ticks: 8, ...over,
 });
@@ -33,7 +39,10 @@ function withClosesData(closes: number[], extra: Partial<UseMarketChart> = {}) {
 }
 
 describe("MarketChart", () => {
-  beforeEach(() => { hookState.current = {}; setRange.mockClear(); reload.mockClear(); });
+  beforeEach(() => {
+    hookState.current = {}; setRange.mockClear(); reload.mockClear();
+    indState.current = { data: null, status: "idle", errMsg: "", reload: vi.fn() };
+  });
   afterEach(cleanup);
 
   it("no symbol → prompt to pick", () => {
@@ -117,5 +126,75 @@ describe("MarketChart", () => {
     render(<MarketChart symbol="BTC" />);
     expect(screen.getByTestId("mchart-axis-first")).toBeTruthy();
     expect(screen.getByTestId("mchart-axis-last")).toBeTruthy();
+  });
+
+  // ── FE-2A: indicator overlays ──────────────────────────────────────────────
+  function withIndicators(over: any) {
+    indState.current = {
+      status: "ready", errMsg: "", reload: vi.fn(),
+      data: {
+        symbol: "BTC", points: 4, asOf: "x",
+        indicators: {
+          sma: { period: 20, latest: 104, warning: null, series: [null, 101, 103, 104] },
+          ema: { period: 20, latest: 105, warning: null, series: [null, 102, 104, 105] },
+          bollinger: { period: 20, numStd: 2, latestUpper: 110, latestMiddle: 104, latestLower: 98, warning: null, upper: [null, 108, 110, 111], middle: [null, 102, 104, 105], lower: [null, 96, 98, 99] },
+          ...over,
+        },
+      },
+    };
+  }
+
+  it("overlay toggle row renders with data (all OFF by default → no overlay drawn)", () => {
+    withClosesData([100, 105, 102, 108]);
+    render(<MarketChart symbol="BTC" />);
+    expect(screen.getByTestId("mchart-overlays")).toBeTruthy();
+    expect(screen.getByTestId("mchart-ov-sma").getAttribute("aria-pressed")).toBe("false");
+    // nothing drawn while OFF
+    expect(screen.queryByTestId("mchart-sma")).toBeNull();
+    expect(screen.queryByTestId("mchart-ema")).toBeNull();
+    expect(screen.queryByTestId("mchart-bb")).toBeNull();
+  });
+
+  it("toggling SMA on draws the SMA overlay polyline", async () => {
+    const user = userEvent.setup();
+    withClosesData([100, 105, 102, 108]);
+    withIndicators({});
+    render(<MarketChart symbol="BTC" />);
+    await user.click(screen.getByTestId("mchart-ov-sma"));
+    expect(screen.getByTestId("mchart-ov-sma").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("mchart-sma")).toBeTruthy();
+  });
+
+  it("toggling Bollinger on draws the three band lines", async () => {
+    const user = userEvent.setup();
+    withClosesData([100, 105, 102, 108]);
+    withIndicators({});
+    render(<MarketChart symbol="BTC" />);
+    await user.click(screen.getByTestId("mchart-ov-bollinger"));
+    expect(screen.getByTestId("mchart-bb")).toBeTruthy();
+    expect(screen.getByTestId("mchart-bb-upper")).toBeTruthy();
+    expect(screen.getByTestId("mchart-bb-lower")).toBeTruthy();
+    expect(screen.getByTestId("mchart-bb-mid")).toBeTruthy();
+  });
+
+  it("DEFENSIVE: an ON overlay with insufficient points hides gracefully + hints", async () => {
+    const user = userEvent.setup();
+    withClosesData([100, 105, 102, 108]);
+    // SMA series all-null (window too short for the period) → not drawable
+    withIndicators({ sma: { period: 20, latest: null, warning: "series (4) shorter than period (20)", series: [null, null, null, null] } });
+    render(<MarketChart symbol="BTC" />);
+    await user.click(screen.getByTestId("mchart-ov-sma"));
+    // toggle is ON but NO polyline drawn (no rubbish), and a "không đủ điểm" hint shows
+    expect(screen.queryByTestId("mchart-sma")).toBeNull();
+    expect(screen.getByTestId("mchart-ov-sma")).toHaveTextContent("không đủ điểm");
+  });
+
+  it("overlays absent entirely when no indicator data yet (fetch pending)", () => {
+    withClosesData([100, 105, 102, 108]);
+    indState.current = { data: null, status: "loading", errMsg: "", reload: vi.fn() };
+    render(<MarketChart symbol="BTC" />);
+    // row still renders; toggling would fetch — but nothing drawn without data
+    expect(screen.getByTestId("mchart-overlays")).toBeTruthy();
+    expect(screen.queryByTestId("mchart-sma")).toBeNull();
   });
 });
