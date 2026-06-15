@@ -413,12 +413,21 @@ select.finput { cursor:pointer; }
 #sbcust .sbc-lbl { flex:1; font-size:12.5px; color:var(--tx-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #sbcust .sbc-row.off .sbc-lbl { text-decoration:line-through; }
 #sbcust .sbc-move { display:flex; flex-direction:column; gap:1px; flex-shrink:0; }
-#sbcust .sbc-mbtn { width:18px; height:13px; display:grid; place-items:center; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); border-radius:4px; cursor:pointer; font-size:7px; line-height:1; padding:0; }
-#sbcust .sbc-mbtn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
-#sbcust .sbc-mbtn:disabled { opacity:.3; cursor:not-allowed; }
-#sbcust .sbc-pin { font-family:var(--mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-2); padding:3px 7px; border:1px solid var(--line-2); border-radius:100px; flex-shrink:0; }
+/* sbc-mbtn + sbc-pin are SHARED: used by the customizer panel AND the Settings
+   Modules registry panel (ModulesPanel) — de-scoped so both render correctly. */
+.sbc-mbtn { width:18px; height:13px; display:grid; place-items:center; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); border-radius:4px; cursor:pointer; font-size:7px; line-height:1; padding:0; }
+.sbc-mbtn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+.sbc-mbtn:disabled { opacity:.3; cursor:not-allowed; }
+.sbc-pin { font-family:var(--mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-2); padding:3px 7px; border:1px solid var(--line-2); border-radius:100px; flex-shrink:0; }
 #sbcust .sbc-row .toggle { flex-shrink:0; }
 #sbcust .sbc-foot { margin-top:12px; padding-top:11px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; }
+
+/* ── Modules registry panel (Settings → Modules) — reuses set-row + sbc-mbtn ── */
+.mod-ic { display:grid; place-items:center; color:var(--accent); width:18px; height:18px; flex-shrink:0; }
+.mod-ic svg { width:17px; height:17px; }
+.mod-move { display:flex; flex-direction:column; gap:1px; flex-shrink:0; }
+.set-row[data-enabled="0"] { opacity:.55; }
+.set-row[data-enabled="0"] .sr-t { text-decoration:line-through; }
 
 /* ============================================================
    WIKI (W1–W5) — PORTED from template/Life Command/app/wiki.css.
@@ -694,3 +703,11 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wmd th { background:var(--bg-2); font-weight:600; }
 .wmd .wmd-quote { border-left:3px solid var(--accent); margin:0 0 12px; padding:4px 14px; color:var(--tx-1); background:color-mix(in oklch,var(--accent) 4%,transparent); border-radius:0 8px 8px 0; }
 .wmd a.wlink { color:var(--accent); }
+
+/* career cockpit (CAR-1) — status chip on blog/demo cards (reuses token colors) */
+.chip { font-family:var(--mono); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:100px; display:inline-flex; align-items:center; gap:5px; color:var(--tx-1); background:var(--bg-3); }
+.chip.g { color:var(--green); background:var(--green-dim); }
+.chip.a { color:var(--amber); background:var(--amber-dim); }
+.chip.r { color:var(--red); background:var(--red-dim); }
+[data-screen="CAR"] a.pill { text-decoration:none; }
+[data-screen="CAR"] a.pill:hover { border-color:var(--accent); }

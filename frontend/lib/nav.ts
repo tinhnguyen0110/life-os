@@ -70,6 +70,13 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    sec: "Sự nghiệp",
+    items: [
+      // CAR-1 — career / personal-brand cockpit: living CV + blog manager + demo showcase.
+      { route: "/career", label: "CV · Blog · Demo", icon: "i-doc", screen: "CAR" },
+    ],
+  },
+  {
     sec: "Hệ thống",
     items: [
       { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "5", cls: "g" } },
@@ -102,6 +109,7 @@ export const CRUMB: Record<string, string> = {
   "/settings": "Cài đặt",
   "/routines": "Automation / Routines",
   "/activity": "Activity Feed",
+  "/career": "Sự nghiệp · CV / Blog / Demo",
   // Wiki (W1–W5) — detail route /wiki/[id] resolves to the parent crumb (TopBar
   // crumbFor falls back to the first path segment). Full "Tri thức" NAV group = T3.
   "/wiki": "Vault · Tri thức",

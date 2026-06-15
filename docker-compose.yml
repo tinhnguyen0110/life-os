@@ -50,6 +50,11 @@ services:
       # S9 tokens: PRIMARY source — live session transcripts (.jsonl) under the
       # mounted host ~/.claude/projects. Real tokens/cost/byProject (stats-cache died).
       LIFEOS_CLAUDE_PROJECTS_DIR: /claude-home/projects
+      # CAR-1: the career module seeds the living CV from the user's real source CV,
+      # which sits at the tinhdev root (mounted :ro at /tinhdev above). Without this
+      # the container's derived path resolves to "/" and the CV falls back to the
+      # embedded stub (host-file-source-must-mount lesson).
+      LIFEOS_CAREER_CV_SOURCE: /tinhdev/CV_v3_Trustworthy_AI.md
     # Resource caps — safety against host-takedown. The host hit load 188 once
     # (multiple apps + a uvicorn reload-storm). These caps confine any future
     # leak/storm to THIS container (OOM-killed in isolation), never the host.

@@ -1,25 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { NAV, CRUMB, ALL_ROUTES } from "../nav";
 
-describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", () => {
-  it("has exactly 7 groups in SPEC §1 order (+ Tri thức for Wiki)", () => {
+describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no AI)", () => {
+  it("has exactly 8 groups in SPEC §1 order (+ Tri thức for Wiki, + Sự nghiệp for Career)", () => {
     expect(NAV.map((g) => g.sec)).toEqual([
       "Tổng quan",
       "Dự án",
       "Tài chính",
       "Hằng ngày",
       "Tri thức",
+      "Sự nghiệp",
       "Hệ thống",
       "Cấu hình",
     ]);
   });
 
-  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W3/W4/P1/W5/A1c) across nav items", () => {
+  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W3/W4/P1/W5/A1c) + Career across nav items", () => {
     const screens = NAV.flatMap((g) => g.items.map((i) => i.screen));
     const unique = new Set(screens);
     // 14 foundation entries (S1..S14 minus S3 detail, PLUS S-okx) + Wiki nav group:
     // W1 Vault Home · W3 Inbox · W4 Graph. (S3/S6 + /wiki/[id] detail views + P1
     // Proposals (M4) resolve/land elsewhere — not linked here, no dead links.)
+    // + CAR — the Career cockpit (CV · Blog · Demo) under "Sự nghiệp" (CAR-1).
     expect(screens).toContain("S1");
     expect(screens).toContain("S14");
     expect(screens).toContain("S-okx");
@@ -30,7 +32,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki, 7 groups, no AI)", ()
     expect(screens).toContain("W5");
     expect(screens).toContain("A1c");
     expect(screens).toContain("DJ");
-    expect(unique.size).toBe(21);
+    expect(screens).toContain("CAR");
+    expect(unique.size).toBe(22);
   });
 
   it("every nav route has a breadcrumb entry", () => {
