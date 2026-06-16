@@ -276,6 +276,106 @@ def test_S2_stablecoin_and_dust_excluded(s2_holdings, isolated_paths):
     assert "BTC" in held
 
 
+# =========================================================================== #
+# FINANCE-AUDIT-S1B (#61) — close the cadence half-fix in macro_cycle.          #
+# S1 made freshness cadence-aware in confidence_q (macro_overview) but NOT in   #
+# macro_cycle's _axis_q_input (it passed the axis LABEL, not the indicator, as   #
+# the cadence-lookup key). So the SAME CPI had DIFFERENT freshness in the 2      #
+# tools. Fix: thread the indicator name → the two tools now AGREE (the spine).   #
+# =========================================================================== #
+@pytest.fixture
+def s1b_macro(isolated_paths, monkeypatch):
+    """Seed a deterministic macro store (all axes real-fred) + neutralize the network so
+    get_overview reads the seeded points, not a live/mock refresh."""
+    from modules.macro import store as ms, reader as mr
+    from datetime import datetime, timezone, timedelta
+    ms.init_macro_tables()
+    # block the network so cold-start refresh can't overwrite the seeded points
+    monkeypatch.setattr(mr.httpx, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network off in s1b")))
+    now = datetime.now(timezone.utc)
+    return ms, now
+
+
+def _seed_macro(ms, now, indicator, *, days_ago, source="fred", prev_days=None):
+    from datetime import timedelta
+    if prev_days is None:
+        prev_days = days_ago + 30
+    ms.record_point(indicator, 100.0, (now - timedelta(days=prev_days)).strftime("%Y-%m-%d"), source)
+    ms.record_point(indicator, 101.0, (now - timedelta(days=days_ago)).strftime("%Y-%m-%d"), source)
+
+
+def test_S1B_GATE1_same_cpi_same_freshness_cross_tool(s1b_macro, monkeypatch):
+    """(1) THE SPINE (CROSS-TOOL MATCH): the SAME CPI (obs ~46d ago) → macro_overview's CPI
+    confidence AND macro_cycle's inflation-axis (cpi) freshness must AGREE (both cadence-aware
+    ~0.58). Proves the two tools now report the SAME freshness for the SAME indicator — NOT just
+    that macro_cycle rose."""
+    from modules.macro import service as macro_svc
+    ms, now = s1b_macro
+    for ind in ("cpi", "industrial_production", "yield_curve_10y2y", "unemployment",
+                "fed_funds_rate", "dxy", "m2_liquidity"):
+        _seed_macro(ms, now, ind, days_ago=46)
+    # macro_overview CPI confidence (the S1 confidence_q path)
+    ov, _ = macro_svc.get_overview()
+    overview_cpi = next(v for v in ov.indicators if v.indicator == "cpi").confidence
+    # macro_cycle CPI(inflation) freshness (the S1B _axis path — keyed on indicator "cpi")
+    cyc = dec.macro_cycle()
+    cycle_cpi = next(b.freshness for b in cyc.qCycle.breakdown if b.name == "cpi")
+    assert cycle_cpi is not None
+    assert abs(overview_cpi - cycle_cpi) < 0.02, \
+        f"cross-tool MISMATCH: overview CPI {overview_cpi} vs cycle CPI {cycle_cpi}"
+    assert cycle_cpi > 0.5, "the cycle CPI freshness must be cadence-aware (~0.58), not 0.21"
+
+
+def test_S1B_GATE3_overdue_axis_still_drops_in_cycle(s1b_macro):
+    """(3) 'không tháo phanh' in macro_cycle TOO: a CPI obs 90d ago (cadence 30 → 60d over) →
+    the inflation-axis freshness MATERIALLY DROPS (< 0.2), like S1's overdue test but on the
+    cycle path. The brake works in BOTH tools now."""
+    ms, now = s1b_macro
+    _seed_macro(ms, now, "cpi", days_ago=90)   # 60d overdue
+    for ind in ("industrial_production", "yield_curve_10y2y", "unemployment",
+                "fed_funds_rate", "dxy", "m2_liquidity"):
+        _seed_macro(ms, now, ind, days_ago=5)  # the others fresh
+    cyc = dec.macro_cycle()
+    cpi_fresh = next(b.freshness for b in cyc.qCycle.breakdown if b.name == "cpi")
+    assert cpi_fresh is not None and cpi_fresh < 0.2, \
+        f"overdue CPI must drop materially in macro_cycle (brake), got {cpi_fresh}"
+
+
+def test_S1B_GATE4_macro_overview_unchanged_and_display_labels(s1b_macro):
+    """(4) macro_overview S1 behavior UNCHANGED + the display labels stay the AXIS names (clean
+    separation: only the internal cadence-key became the indicator, NOT CycleAxis.axis)."""
+    ms, now = s1b_macro
+    for ind in ("cpi", "industrial_production", "yield_curve_10y2y", "unemployment",
+                "fed_funds_rate", "dxy", "m2_liquidity"):
+        _seed_macro(ms, now, ind, days_ago=46)
+    cyc = dec.macro_cycle()
+    # the DISPLAY labels are the axis names (growth/inflation/yield_curve) — UNCHANGED
+    assert [a.axis for a in cyc.axes] == ["growth", "inflation", "yield_curve"]
+
+
+def test_S1B_GATE4_gate1_045_byte_identical():
+    """(4) GATE1 0.45 byte-identical — the cycle-axis cadence change is additive; the compute_q
+    contract on cadence-free synthetic axes is untouched."""
+    age = -30.0 * math.log(0.90)
+    r = compute_q([QInput("axis_a", True, 1.0, age_days=age, data_type="cycle"),
+                   QInput("axis_b", True, 1.0, age_days=age, data_type="cycle"),
+                   QInput("axis_c", False), QInput("axis_d", False)], needed=4)
+    assert abs(r.q - 0.45) < 0.01
+
+
+def test_S1B_paramsUsed_per_indicator_in_cycle(s1b_macro):
+    """paramsUsed echoes the per-indicator tau (once the QInput keys on the indicator, the
+    cadence/tau echoes through the same as macro_overview). Present in qCycle's result."""
+    ms, now = s1b_macro
+    for ind in ("cpi", "industrial_production", "yield_curve_10y2y", "unemployment",
+                "fed_funds_rate", "dxy", "m2_liquidity"):
+        _seed_macro(ms, now, ind, days_ago=46)
+    cyc = dec.macro_cycle()
+    assert cyc.qCycle.paramsUsed, "qCycle must echo paramsUsed (transparency)"
+    assert cyc.qCycle.paramsUsed.get("combine") == "multiply"
+
+
 # --------------------------------------------------------------------------- #
 # HARD GATE 2 — decision_weight PURE PRODUCT, NO clamp (DISTINGUISHING)          #
 # --------------------------------------------------------------------------- #

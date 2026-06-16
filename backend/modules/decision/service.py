@@ -312,14 +312,22 @@ _CYCLE_AXES_NEEDED = 3
 
 
 def _axis_q_input(name: str, value: float | None, ts: str | None, source: str | None,
-                  direction: str) -> QInput:
+                  direction: str, indicator_name: str | None = None) -> QInput:
     """One cycle axis as a compute_q input. present = it has REAL (non-mock) data with a
     direction — a mock axis or a flat/unknown trend lowers coverage honestly. ``value`` for
     agreement = a signed direction code (+1 up / −1 down / 0 flat) so 'do the axes agree on
-    the phase' is measurable as low dispersion of the direction codes."""
+    the phase' is measurable as low dispersion of the direction codes.
+
+    FINANCE-AUDIT-S1B (#61): the QInput.name keys on the INDICATOR (cpi/industrial_production/
+    yield_curve_10y2y) — NOT the axis LABEL (growth/inflation) — so _freshness looks up the
+    publication cadence in CADENCE_LAG_DAYS and macro_cycle's freshness is CADENCE-AWARE, the
+    SAME way macro_overview's confidence_q already is (the two tools now AGREE on a given
+    indicator's freshness — S1 only reached confidence_q; this closes the half-fix). The display
+    LABEL (CycleAxis.axis) stays the axis name — only the cadence-lookup key becomes the indicator."""
     present = (value is not None) and (source != "mock") and (direction in ("up", "down"))
     dir_code = {"up": 1.0, "down": -1.0}.get(direction, 0.0)
-    return QInput(name=name, present=present, value=(dir_code if present else None),
+    return QInput(name=(indicator_name or name), present=present,
+                  value=(dir_code if present else None),
                   age_days=_age_days_from_ts(ts), data_type="cycle", source=source)
 
 
@@ -346,7 +354,9 @@ def macro_cycle() -> MacroCycle:
         if invert:
             trend = cast("Literal['up','down','flat']", {"up": "down", "down": "up"}.get(trend, trend))
         is_real = v.source != "mock"
-        qi = _axis_q_input(name, v.latest, v.asOf, v.source, trend)
+        # FINANCE-AUDIT-S1B (#61): pass the INDICATOR (not the axis label) so freshness is
+        # cadence-aware (the cadence lookup keys on cpi/industrial_production/etc).
+        qi = _axis_q_input(name, v.latest, v.asOf, v.source, trend, indicator_name=indicator)
         direction = cast("Literal['up','down','flat','unknown']", trend)
         return trend, qi, CycleAxis(axis=name, direction=direction, present=is_real,
                                     detail=f"{indicator} {v.trend}{' (mock)' if not is_real else ''}"), \
