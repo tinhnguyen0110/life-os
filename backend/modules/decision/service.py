@@ -10,6 +10,7 @@ NEUTRAL: outputs are data + q only — no advice verb anywhere.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,9 +24,14 @@ from .schema import (
     GuardianReport,
     LayerView,
     MacroCycle,
+    NavHistory,
+    NavPoint,
+    NavRange,
     QInputView,
     QResult,
 )
+
+logger = logging.getLogger("life-os.decision.service")
 
 # --------------------------------------------------------------------------- #
 # τ (tau) — the freshness decay constant per DATA TYPE, in DAYS. freshness =     #
@@ -39,8 +45,24 @@ TAU_DAYS = {
     "cycle": 30.0,             # the Investment-Clock axes
     "yield": 30.0,             # yield-curve (daily but slow-moving regime)
     "flow": 1.0,               # sentiment (F&G/BTC.d) — daily
+    "nav": 30.0,               # daily NAV series — a monthly-ish trend window
 }
 _DEFAULT_TAU = 30.0
+
+# FINANCE-ASSISTANT P4 (#56) — the q-engine's DEFAULT params, in ONE place (spec §2.5: "không
+# hardcode rải rác"). tau is in SECONDS here (the spec §2.5 form) — compute_q converts
+# seconds→days internally (the engine stays days-based, so TAU_DAYS + the 0.45-falls-out stay
+# byte-identical). A caller passing params={} or no params gets EXACTLY this → P2 unaffected.
+# ⚠️ These are UN-backtested placeholders (spec §2.5) — centralized so a future calibration
+# changes them in ONE spot. _SEC_PER_DAY converts.
+_SEC_PER_DAY = 86400.0
+DEFAULT_Q_PARAMS: dict = {
+    # tau per data type, in SECONDS (= TAU_DAYS × 86400, so defaults are byte-identical).
+    "tau": {k: round(v * _SEC_PER_DAY) for k, v in TAU_DAYS.items()},
+    "weights": {"freshness": 1.0, "coverage": 1.0, "agreement": 1.0},
+    "combine": "multiply",   # multiply (default) | min | weighted_geomean
+}
+_COMBINE_MODES = ("multiply", "min", "weighted_geomean")
 
 
 @dataclass
@@ -62,10 +84,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _freshness(age_days: float, data_type: str) -> float:
-    """freshness = exp(-age/τ) ∈ (0, 1]. age in days; τ from the data type. age<0 (a future
-    ts, clock skew) clamps to 0 → freshness 1 (treat as fresh, never >1)."""
-    tau = TAU_DAYS.get(data_type, _DEFAULT_TAU)
+def _freshness(age_days: float, data_type: str, tau_days: dict | None = None) -> float:
+    """freshness = exp(-age/τ) ∈ (0, 1]. age in days; τ (DAYS) from ``tau_days`` (the effective
+    per-type map) or the TAU_DAYS default. age<0 (a future ts, clock skew) clamps to 0 →
+    freshness 1 (never >1). (FINANCE-ASSISTANT P4: tau_days lets compute_q override τ from
+    params; default None → TAU_DAYS, byte-identical to P2.)"""
+    src = tau_days if tau_days is not None else TAU_DAYS
+    tau = src.get(data_type, _DEFAULT_TAU)
     age = max(0.0, float(age_days))
     return math.exp(-age / tau)
 
@@ -88,8 +113,53 @@ def _age_days_from_ts(ts: str | None) -> float | None:
     return (_now() - dt).total_seconds() / 86400.0
 
 
-def compute_q(inputs: list[QInput], *, needed: int | None = None) -> QResult:
-    """THE q-engine (the single shared contract). q = freshness × coverage × agreement.
+def _resolve_params(params: dict | None) -> tuple[dict, dict, str, dict]:
+    """Merge a partial ``params`` onto DEFAULT_Q_PARAMS → (tau_days, weights, combine,
+    params_used). tau IN is SECONDS (spec §2.5); converted to a DAYS map for the engine.
+    ``params_used`` echoes the effective config (transparency, spec §2.4). A None / {} params
+    → exactly the defaults → byte-identical to P2. An unknown combine → defaults to multiply
+    (never a free-eval — the enum is closed)."""
+    p = params or {}
+    tau_sec = {**DEFAULT_Q_PARAMS["tau"], **(p.get("tau") or {})}
+    weights = {**DEFAULT_Q_PARAMS["weights"], **(p.get("weights") or {})}
+    combine = p.get("combine", DEFAULT_Q_PARAMS["combine"])
+    if combine not in _COMBINE_MODES:
+        combine = "multiply"   # closed enum — never eval an arbitrary formula
+    tau_days = {k: (v / _SEC_PER_DAY) for k, v in tau_sec.items()}
+    params_used = {
+        "tauSeconds": tau_sec, "tauUnit": "seconds-in/days-internal",
+        "weights": weights, "combine": combine,
+    }
+    return tau_days, weights, combine, params_used
+
+
+def _combine(freshness: float, coverage: float, agreement: float,
+             combine: str, weights: dict) -> float:
+    """Combine the 3 components by the closed-enum mode (spec §2.4):
+      - multiply (default): f × c × a — strict, one low component dims q.
+      - min: min(f, c, a) — the weakest link.
+      - weighted_geomean: f^wf · c^wc · a^wa normalized — softer, weighted."""
+    if combine == "min":
+        return min(freshness, coverage, agreement)
+    if combine == "weighted_geomean":
+        wf, wc, wa = (weights.get("freshness", 1.0), weights.get("coverage", 1.0),
+                      weights.get("agreement", 1.0))
+        wsum = wf + wc + wa
+        if wsum <= 0:
+            return freshness * coverage * agreement   # degenerate weights → fall back to product
+        # geometric mean with weights: (f^wf · c^wc · a^wa)^(1/Σw). A 0 component → 0 (blind).
+        if freshness <= 0 or coverage <= 0 or agreement <= 0:
+            return 0.0
+        log_g = (wf * math.log(freshness) + wc * math.log(coverage)
+                 + wa * math.log(agreement)) / wsum
+        return math.exp(log_g)
+    # multiply (default)
+    return freshness * coverage * agreement
+
+
+def compute_q(inputs: list[QInput], *, needed: int | None = None,
+              params: dict | None = None) -> QResult:
+    """THE q-engine (the single shared contract). q = combine(freshness, coverage, agreement).
 
       freshness = mean over PRESENT inputs of exp(-age/τ). No age-bearing present input → 1.0
                   (can't penalize freshness we can't measure; coverage/agreement still apply).
@@ -98,11 +168,16 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None) -> QResult:
                   reflect the ones it's MISSING — that's how a missing axis lowers coverage).
       agreement = 1 - dispersion of the present VALUES (population stddev / |mean|, bounded
                   [0,1]). A single present value (or all-equal) → dispersion 0 → agreement 1.0.
-                  This is per-COMPUTE-CALL: one source over agreeing inputs → 1.0; inputs that
-                  point different ways → <1.
 
-    Returns QResult{q, freshness, coverage, agreement, breakdown, needed/present counts}.
+    FINANCE-ASSISTANT P4 (#56): ``params`` (optional) overrides τ (SECONDS-in, days-internal),
+    the per-component weights, and the combine mode (multiply default | min | weighted_geomean —
+    a CLOSED enum, never a free-eval). DEFAULT (None / {} params) → DEFAULT_Q_PARAMS → BYTE-
+    IDENTICAL to P2 (the 0.45-falls-out contract is unaffected). ``paramsUsed`` is ALWAYS echoed
+    in the result (mandatory transparency, spec §2.4).
+
+    Returns QResult{q, freshness, coverage, agreement, breakdown, counts, paramsUsed}.
     NOTHING hardcoded — every component falls out of the inputs (HARD GATE 1)."""
+    tau_days, weights, combine, params_used = _resolve_params(params)
     n_needed = needed if needed is not None else len(inputs)
     present = [i for i in inputs if i.present]
     n_present = len(present)
@@ -116,7 +191,7 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None) -> QResult:
     for i in inputs:
         f: float | None = None
         if i.present and i.age_days is not None:
-            f = _freshness(i.age_days, i.data_type)
+            f = _freshness(i.age_days, i.data_type, tau_days)
             fresh_vals.append(f)
         views.append(QInputView(
             name=i.name, present=i.present, value=i.value,
@@ -137,11 +212,11 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None) -> QResult:
         dispersion = min(1.0, std / denom)   # coefficient of variation, bounded [0,1]
         agreement = 1.0 - dispersion
 
-    q = freshness * coverage * agreement   # PURE product, NO clamp
+    q = _combine(freshness, coverage, agreement, combine, weights)
     return QResult(
         q=round(q, 4), freshness=round(freshness, 4), coverage=round(coverage, 4),
         agreement=round(agreement, 4), breakdown=views,
-        neededInputs=n_needed, presentInputs=n_present,
+        neededInputs=n_needed, presentInputs=n_present, paramsUsed=params_used,
     )
 
 
@@ -601,3 +676,65 @@ def finance_guardian() -> GuardianReport:
         alerts=alerts, confidence=confidence, asOf=_now().isoformat(),
         note=(None if alerts else "nothing notable in the proactive scan right now"),
     )
+
+
+# --------------------------------------------------------------------------- #
+# T1 — nav_history reader (FINANCE-ASSISTANT P4, spec §1.6). Thin read over the   #
+# EXISTING portfolio_snapshot table (the writer take_snapshot already runs in    #
+# morning_pull). day=date, total_value=nav. confidence via the shared compute_q  #
+# (coverage = points / NAV_POINTS_FOR_TREND). Fail-open: empty → series:[] +      #
+# confidence 0 + warning, never a crash. NEUTRAL.                                 #
+# --------------------------------------------------------------------------- #
+# decide-and-log (#56): how many daily points before a NAV TREND is trustworthy. ~30 ≈ a month
+# of daily snapshots — enough to read a direction without one outlier dominating. Below that the
+# series is "accumulating" (low confidence). Configurable later if calibration suggests another.
+NAV_POINTS_FOR_TREND = 30
+
+
+def nav_history(date_from: str | None = None, date_to: str | None = None) -> NavHistory:
+    """The daily NAV series (spec §1.6) over portfolio_snapshot, oldest→newest. ``date_from``/
+    ``date_to`` ('YYYY-MM-DD', both optional → full series). nav = the row's total_value.
+    confidence rises with point count (coverage = points / NAV_POINTS_FOR_TREND via compute_q —
+    a short series can't be trusted for a trend). Fail-open: no data → series:[], points:0,
+    confidence:0 + a warning, never a crash. NEUTRAL — data + confidence."""
+    from store import db
+
+    try:
+        rows = db.snapshots(since=date_from)   # oldest→newest; from-filter at the db layer
+    except Exception as exc:  # noqa: BLE001 — fail-open: a store read error → empty + warning
+        logger.warning("nav_history snapshot read failed: %s", exc)
+        rows = []
+
+    # upper-bound (to) filter in the reader (db.snapshots has only a since/from filter).
+    to_day = date_to[:10] if date_to else None
+    series: list[NavPoint] = []
+    for r in rows:
+        day = r["day"]
+        if to_day is not None and day > to_day:
+            continue
+        series.append(NavPoint(date=day, nav=round(float(r["total_value"]), 2)))
+
+    points = len(series)
+    # confidence via the shared q-engine: coverage = points / points-needed; freshness from the
+    # NEWEST point's age (a stale-tail series is less trustworthy); single value → agreement 1.
+    if points == 0:
+        confidence = 0.0
+        warning: str | None = "no NAV snapshots in range yet — the daily series is still accumulating"
+        rng = NavRange(from_=None, to=None)
+    else:
+        newest_age = _age_days_from_ts(series[-1].date)
+        # coverage = points / NAV_POINTS_FOR_TREND (spec §1.7) — built via the shared q-engine
+        # by passing `min(points, needed)` PRESENT inputs (each a real day; capped so coverage
+        # ≤ 1 when the series already exceeds the trend window). freshness from the newest point.
+        n_for_q = min(points, NAV_POINTS_FOR_TREND)
+        qinputs = [QInput(name=f"d{i}", present=True, value=1.0,
+                          age_days=newest_age, data_type="nav") for i in range(n_for_q)]
+        qr = compute_q(qinputs, needed=NAV_POINTS_FOR_TREND)
+        confidence = round(qr.q, 4)
+        warning = (None if points >= NAV_POINTS_FOR_TREND else
+                   f"{points} point(s) — short series, a trend needs ~{NAV_POINTS_FOR_TREND}; "
+                   f"still accumulating")
+        rng = NavRange(from_=series[0].date, to=series[-1].date)
+
+    return NavHistory(series=series, points=points, range=rng,
+                      confidence=confidence, warning=warning)

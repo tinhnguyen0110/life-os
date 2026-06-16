@@ -1005,4 +1005,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 45  # +2 allocation_target/finance_guardian (#55 P3); was 43 (#54 macro_cycle/decision_weight)
+    assert len(rs.TOOLS) == 46  # +1 nav_history (#56 P4); was 45 (#55 allocation/guardian)

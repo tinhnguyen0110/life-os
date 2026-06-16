@@ -60,6 +60,17 @@ def get_allocation_target(capital: float, phase: str | None = None,
     return ok(data=at.model_dump())
 
 
+@router.get("/nav-history")
+def get_nav_history(date_from: str | None = None, date_to: str | None = None):
+    """The daily NAV series (FINANCE-ASSISTANT P4) over the existing portfolio_snapshot table:
+    ``series`` oldest→newest + ``points`` + ``range`` + a ``confidence`` (few points → low, a
+    short series can't be trusted for a trend). ``?date_from&date_to`` ('YYYY-MM-DD', optional →
+    full series). Fail-open: no data → empty series + confidence 0 + warning, never 500. NEUTRAL
+    — data + confidence (CAGR/drawdown/vol need a longer series, out of scope)."""
+    nav = service.nav_history(date_from=date_from, date_to=date_to)
+    return ok(data=nav.model_dump(by_alias=True), warning=nav.warning)
+
+
 @router.get("/guardian")
 def get_finance_guardian():
     """The proactive scan (FINANCE-ASSISTANT P3): NEUTRAL observations the user hasn't asked

@@ -425,3 +425,169 @@ def test_P3_GATE4_calibration_still_computes(isolated_paths):
     assert stats.resolvedCount == 3
     assert stats.brier is not None              # calibration still computes
     assert isinstance(stats.calibration, list)  # bands still derived
+
+
+# =========================================================================== #
+# FINANCE-ASSISTANT P4 (#56) — nav_history reader + compute_q param-ization     #
+# =========================================================================== #
+
+# --------------------------------------------------------------------------- #
+# HARD GATE (a) — 0.45 STILL falls out on DEFAULT params (the L58 contract is    #
+# byte-identical). [The existing GATE1 test above ALSO covers this — it runs     #
+# UNCHANGED. This pins the explicit default==no-params equality.]                #
+# --------------------------------------------------------------------------- #
+def test_P4_GATEa_default_params_byte_identical():
+    """compute_q with NO params == compute_q with default/empty params == the P2 0.45. The
+    param-ization must NOT perturb the default path (the byte-identical lock)."""
+    age = -30.0 * math.log(0.90)
+    inputs = [QInput("yc", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("cpi", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("pmi", False), QInput("unrate", False)]
+    r_none = compute_q(inputs, needed=4)
+    r_empty = compute_q(inputs, needed=4, params={})
+    r_explicit = compute_q(inputs, needed=4, params={"combine": "multiply"})
+    assert r_none.q == r_empty.q == r_explicit.q
+    assert abs(r_none.q - 0.45) < 0.01           # the 0.45 contract holds
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE (b) — combine="min" ≠ "multiply" (the enum actually switches)        #
+# --------------------------------------------------------------------------- #
+def test_P4_GATEb_min_differs_from_multiply():
+    """The SAME input through combine='min' gives a DIFFERENT q than 'multiply' — proving the
+    enum is a real switch, not a no-op param. min(f,c,a) ≥ f×c×a (for components ≤1) so they
+    diverge whenever any component < 1."""
+    age = -30.0 * math.log(0.90)
+    inputs = [QInput("yc", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("cpi", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("pmi", False), QInput("unrate", False)]
+    q_mult = compute_q(inputs, needed=4, params={"combine": "multiply"}).q
+    q_min = compute_q(inputs, needed=4, params={"combine": "min"}).q
+    assert q_mult != q_min, "min must differ from multiply (the enum switches behavior)"
+    # min = min(freshness 0.9, coverage 0.5, agreement 1.0) = 0.5; multiply = 0.45
+    assert abs(q_min - 0.5) < 0.01 and abs(q_mult - 0.45) < 0.01
+
+
+def test_P4_combine_modes_each_unit_tested():
+    """Each of the 3 closed-enum modes computes its documented formula (multiply/min/geomean)."""
+    inputs = [QInput("a", True, 1.0, age_days=0.0, data_type="cycle"),
+              QInput("b", False), QInput("c", False), QInput("d", False)]
+    # f=1.0 (age 0), coverage=1/4=0.25, agreement=1.0
+    mult = compute_q(inputs, needed=4, params={"combine": "multiply"}).q
+    mn = compute_q(inputs, needed=4, params={"combine": "min"}).q
+    wg = compute_q(inputs, needed=4, params={"combine": "weighted_geomean"}).q
+    assert abs(mult - 0.25) < 0.01            # 1.0 × 0.25 × 1.0
+    assert abs(mn - 0.25) < 0.01              # min(1.0, 0.25, 1.0)
+    assert abs(wg - (0.25 ** (1 / 3))) < 0.01  # (1·0.25·1)^(1/3) ≈ 0.63
+    # an UNKNOWN combine falls back to multiply (closed enum, never free-eval)
+    bad = compute_q(inputs, needed=4, params={"combine": "rm -rf /"}).q
+    assert abs(bad - mult) < 1e-9
+
+
+def test_P4_tau_seconds_converts_to_days():
+    """tau IN is SECONDS (spec §2.5); the engine converts to days internally. Passing the
+    default macro tau in seconds (2_592_000 = 30d) gives the same q as the default."""
+    age = -30.0 * math.log(0.90)
+    inputs = [QInput("x", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("y", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("z", False), QInput("w", False)]
+    default = compute_q(inputs, needed=4).q
+    explicit_sec = compute_q(inputs, needed=4, params={"tau": {"cycle": 2_592_000}}).q
+    assert abs(default - explicit_sec) < 0.001
+    # a SHORTER tau (1 day) → much staler → lower freshness → lower q
+    short = compute_q(inputs, needed=4, params={"tau": {"cycle": 86_400}}).q
+    assert short < default
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE (c) — paramsUsed ALWAYS present (transparency, every call)           #
+# --------------------------------------------------------------------------- #
+def test_P4_GATEc_params_used_always_present():
+    """Every QResult carries paramsUsed (default or custom) — mandatory transparency (§2.4)."""
+    inputs = [QInput("a", True, 1.0, age_days=0.0, data_type="cycle")]
+    for params in (None, {}, {"combine": "min"}, {"tau": {"cycle": 100}}):
+        r = compute_q(inputs, needed=1, params=params)
+        assert r.paramsUsed, f"paramsUsed missing for params={params}"
+        assert "combine" in r.paramsUsed and "tauSeconds" in r.paramsUsed
+        assert r.paramsUsed["tauUnit"] == "seconds-in/days-internal"
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE (d) — a P2 surface is byte-unchanged on default params               #
+# --------------------------------------------------------------------------- #
+def test_P4_GATEd_macro_cycle_unchanged_on_default_params(monkeypatch, isolated_paths):
+    """macro_cycle (a P2 surface) must produce the SAME qCycle with the param-ized compute_q on
+    default params as the pre-P4 formula. Pin via a deterministic fixture → exact q."""
+    from modules.macro import service as macro_svc
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    inds = [MacroIndicatorView(indicator=i, label=i, unit="", latest=1.0, asOf="2026-06-01",
+                               trend="up", source="fred", points=2, confidence=0.9)
+            for i in ("industrial_production", "cpi", "yield_curve_10y2y", "unemployment")]
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (MacroOverview(indicators=inds, source="fred"), []))
+    cyc = dec.macro_cycle()
+    # the q is a real number from the (default-param) engine — coverage 3/3, all present.
+    assert cyc.qCycle.coverage == 1.0
+    # paramsUsed flows through to the cycle q (proving the default path is used)
+    assert cyc.qCycle.paramsUsed.get("combine") == "multiply"
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE (e) — nav reader values match portfolio_snapshot rows                #
+# --------------------------------------------------------------------------- #
+def test_P4_GATEe_nav_matches_snapshot_rows(isolated_paths):
+    """The series nav == the stored total_value (<$0.01) — the reader is a thin pass-through."""
+    from store import db
+    db.init_db()
+    db.record_snapshot("2026-06-15T23:50:00+00:00", 10000.50)
+    db.record_snapshot("2026-06-16T23:50:00+00:00", 10652.31)
+    nav = dec.nav_history()
+    rows = db.snapshots()
+    assert nav.points == 2
+    for p, r in zip(nav.series, rows):
+        assert p.date == r["day"]
+        assert abs(p.nav - float(r["total_value"])) < 0.01
+
+
+def test_P4_nav_empty_is_honest_no_crash(isolated_paths):
+    """Empty range (no snapshots) → series:[], points:0, confidence:0 + warning, NO crash."""
+    from store import db
+    db.init_db()
+    nav = dec.nav_history()
+    assert nav.series == [] and nav.points == 0 and nav.confidence == 0.0
+    assert nav.warning is not None
+    assert nav.range.from_ is None and nav.range.to is None
+
+
+def test_P4_nav_confidence_scales_with_points(isolated_paths):
+    """confidence rises with the point count (a longer series is more trustworthy for a trend)."""
+    from store import db
+    db.init_db()
+    db.record_snapshot("2026-06-01T23:50:00+00:00", 10000.0)
+    one = dec.nav_history().confidence
+    for d in range(2, 12):  # add 10 more days
+        db.record_snapshot(f"2026-06-{d:02d}T23:50:00+00:00", 10000.0 + d)
+    eleven = dec.nav_history().confidence
+    assert eleven > one, "more points → higher confidence"
+
+
+def test_P4_nav_range_filter(isolated_paths):
+    """date_from/date_to filter the series (the `to` upper bound is applied in the reader)."""
+    from store import db
+    db.init_db()
+    for d in range(1, 11):
+        db.record_snapshot(f"2026-06-{d:02d}T23:50:00+00:00", 10000.0 + d)
+    # range 06-03 .. 06-07 → 5 points
+    nav = dec.nav_history(date_from="2026-06-03", date_to="2026-06-07")
+    assert nav.points == 5
+    assert nav.series[0].date == "2026-06-03" and nav.series[-1].date == "2026-06-07"
+
+
+def test_P4_nav_neutral_no_advice_verb(isolated_paths):
+    """NEUTRAL — nav_history is data + confidence, no advice verb."""
+    import json
+    from store import db
+    db.init_db()
+    db.record_snapshot("2026-06-16T23:50:00+00:00", 10652.31)
+    flat = json.dumps(dec.nav_history().model_dump()).lower()
+    for verb in ("should", "buy", "sell", "rebalance", "recommend", "deploy"):
+        assert verb not in flat, f"nav_history leaked an advice verb: {verb}"

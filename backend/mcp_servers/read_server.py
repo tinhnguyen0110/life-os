@@ -89,6 +89,9 @@ from modules.decision.service import decision_weight as _decision_weight
 # (proactive NEUTRAL observations). Pure read/compute → aliased-private, the no-write gate holds.
 from modules.decision.service import allocation_target as _decision_allocation
 from modules.decision.service import finance_guardian as _decision_guardian
+# FINANCE-ASSISTANT P4 (#56): the NAV-series reader (daily total-value history + confidence).
+# Pure read over portfolio_snapshot → aliased-private, the no-write gate holds.
+from modules.decision.service import nav_history as _decision_nav_history
 from modules.market.service import correlation as _mkt_correlation
 from modules.market.service import relative_strength as _mkt_rel_strength
 from modules.market.service import MAX_COMPARE_SYMBOLS as _MAX_CORR_SYMBOLS
@@ -336,6 +339,18 @@ def finance_guardian() -> dict[str, Any]:
     (a note, not a fabricated alert) when nothing notable. The agent reads the observations and
     reasons — the tool never tells the user what to DO. ``{guardian}``."""
     return {"guardian": _jsonable(_decision_guardian())}
+
+
+def nav_history(date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+    """The daily NET-ASSET-VALUE series (FINANCE-ASSISTANT P4): your total portfolio value per
+    day → ``{series:[{date, nav}], points, range, confidence, warning}``. ``date_from``/
+    ``date_to`` ('YYYY-MM-DD', optional → full series). ``confidence`` rises with the point count
+    — a SHORT series can't be trusted for a trend (few points → low confidence + a warning).
+    Honest-empty: no snapshots yet → series:[], points:0, confidence:0 + a warning (the daily
+    series is still accumulating), never a crash. NEUTRAL — data + confidence; long-term metrics
+    (CAGR/drawdown/volatility) need a longer series (not in this tool). ``{navHistory}``."""
+    # by_alias so range carries `from`/`to` (the spec §1.6 shape), not `from_`.
+    return {"navHistory": _decision_nav_history(date_from=date_from, date_to=date_to).model_dump(by_alias=True)}
 
 
 def finance_analytics() -> dict[str, Any]:
@@ -1091,6 +1106,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     # FINANCE-ASSISTANT P3 (#55): policy (reference weighting) + proactive scan (NEUTRAL)
     "allocation_target": allocation_target,
     "finance_guardian": finance_guardian,
+    # FINANCE-ASSISTANT P4 (#56): the daily NAV-series reader (total-value history + confidence)
+    "nav_history": nav_history,
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,

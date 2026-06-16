@@ -38,6 +38,12 @@ class QResult(BaseModel):
         default_factory=list, description="per-input detail (present/value/age/freshness/source)")
     neededInputs: int = Field(..., ge=0, description="#inputs the consumer declared it needs (coverage denom)")
     presentInputs: int = Field(..., ge=0, description="#inputs that had data (coverage numer)")
+    # FINANCE-ASSISTANT P4 (#56) — MANDATORY transparency (spec §2.4): echo the EFFECTIVE
+    # params used for this compute (tau in SECONDS-in / days-internal, weights, combine). Always
+    # present so a reader knows exactly how this q was formed. Defaults echo DEFAULT_Q_PARAMS.
+    paramsUsed: dict = Field(
+        default_factory=dict,
+        description="the effective params: {tauSeconds:{type:sec}, tauUnit, weights, combine}")
 
 
 class CycleAxis(BaseModel):
@@ -146,3 +152,40 @@ class GuardianReport(BaseModel):
     confidence: float = Field(..., description="data quality behind the scan (∈ [0,1])")
     asOf: str = Field(..., description="ISO-8601 UTC of the scan")
     note: str | None = Field(None, description="honest note when nothing fired (vs a fabricated alert)")
+
+
+# --------------------------------------------------------------------------- #
+# T1 — nav_history (FINANCE-ASSISTANT P4, spec §1.6). The daily NAV series read   #
+# over the EXISTING portfolio_snapshot table (day=date, total_value=nav). Few     #
+# points → low confidence (a short series can't be trusted for a trend). NEUTRAL  #
+# — data + confidence, never advice. Fail-open: empty range → series:[] no crash. #
+# --------------------------------------------------------------------------- #
+class NavPoint(BaseModel):
+    """One day's NAV (total portfolio value)."""
+
+    date: str = Field(..., description="'YYYY-MM-DD' (UTC) — one point per day")
+    nav: float = Field(..., description="total portfolio value USD that day (= portfolio_snapshot.total_value)")
+
+
+class NavRange(BaseModel):
+    """The series' date span (None/None when empty). Uses a ``from_`` field name (``from`` is a
+    Python keyword) with a serialization alias so the JSON carries ``from`` (the spec §1.6 shape)
+    when dumped with ``by_alias=True``."""
+
+    from_: str | None = Field(None, serialization_alias="from", description="oldest date in the series (None if empty)")
+    to: str | None = Field(None, description="newest date in the series (None if empty)")
+
+
+class NavHistory(BaseModel):
+    """The daily NAV series (spec §1.6): ``series`` oldest→newest + ``points`` + ``range`` +
+    a ``confidence`` (via compute_q — coverage = points / points-needed-for-a-trend; few points
+    → low). Honest-empty: no data → series:[], points:0, confidence:0 + a warning, never a
+    crash. NEUTRAL — data + confidence; CAGR/drawdown/vol are out of scope (need a longer
+    series → finance_analytics later)."""
+
+    series: list[NavPoint] = Field(default_factory=list, description="oldest→newest")
+    points: int = Field(..., ge=0, description="# points in the range")
+    range: NavRange = Field(default_factory=lambda: NavRange(),  # type: ignore[call-arg]  # both NavRange fields default (no pydantic mypy plugin)
+                            description="the series' date span")
+    confidence: float = Field(..., description="trust in a trend over this series (∈ [0,1]); few points → low")
+    warning: str | None = Field(None, description="honest note (short series / empty / range)")

@@ -38,10 +38,10 @@ def app_db(isolated_paths):
 
 
 def test_finance_analytics_tool_registered_and_count_41(app_db):
-    """finance_analytics is in the read-server registry; total tool count is 45 (43 + #55 P3 allocation/guardian)."""
+    """finance_analytics is in the read-server registry; total tool count is 46 (45 + #56 P4 nav_history)."""
     from mcp_servers import read_server as rs
     assert "finance_analytics" in rs.TOOLS
-    assert len(rs.TOOLS) == 45
+    assert len(rs.TOOLS) == 46
 
 
 def test_finance_analytics_envelope_and_jsonable(app_db, monkeypatch):
