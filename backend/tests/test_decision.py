@@ -33,11 +33,16 @@ def test_GATE1_q_cycle_045_falls_out_by_computation():
     track the inputs — so we ALSO assert that changing an input MOVES the output."""
     # pick age so exp(-age/30) == 0.90 exactly → age = -30*ln(0.9)
     age = -30.0 * math.log(0.90)
+    # FINANCE-AUDIT-S1 (#59): these are CADENCE-FREE synthetic axes (names a/b not in
+    # CADENCE_LAG_DAYS) — they probe the ABSOLUTE-age freshness formula, NOT real indicators.
+    # Do NOT rename to "cpi"/"yield_curve" (those carry a publication cadence → freshness would
+    # subtract it → this 0.45 byte-identical contract would shift). The cadence model is teeth-
+    # tested separately on real indicator names (test_S1_cadence_*).
     inputs = [
-        QInput(name="yield_curve", present=True, value=1.0, age_days=age, data_type="cycle"),
-        QInput(name="cpi", present=True, value=1.0, age_days=age, data_type="cycle"),
-        QInput(name="pmi", present=False),            # MISSING → lowers coverage
-        QInput(name="unemployment", present=False),   # MISSING
+        QInput(name="axis_a", present=True, value=1.0, age_days=age, data_type="cycle"),
+        QInput(name="axis_b", present=True, value=1.0, age_days=age, data_type="cycle"),
+        QInput(name="axis_c", present=False),         # MISSING → lowers coverage
+        QInput(name="axis_d", present=False),         # MISSING
     ]
     r = compute_q(inputs, needed=4)
     assert r.coverage == 0.5                          # 2/4
@@ -69,6 +74,93 @@ def test_GATE1_components_each_tested_in_isolation():
     agree = compute_q([QInput("a", True, 1.0, age_days=0.0), QInput("b", True, 1.0, age_days=0.0)], needed=2)
     disagree = compute_q([QInput("a", True, 1.0, age_days=0.0), QInput("b", True, -1.0, age_days=0.0)], needed=2)
     assert agree.agreement == 1.0 and disagree.agreement < 1.0
+
+
+# =========================================================================== #
+# FINANCE-AUDIT-S1 (#59) — cadence-aware freshness + mock-excluded (the fix)     #
+# The bug: freshness=exp(-age/τ) (ABSOLUTE age) rewarded a stamped-today MOCK    #
+# 4.6× over real lagged FRED data. Fix the PIPE (penalize real LATENESS vs the   #
+# publication cadence), keep the BRAKES (overdue real STILL drops). Mock EXCLUDED.#
+# =========================================================================== #
+from datetime import datetime, timezone, timedelta  # noqa: E402
+from modules.decision.service import confidence_q, CADENCE_LAG_DAYS  # noqa: E402
+
+
+def _ts_days_ago(days: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def test_S1_GATEa_real_cpi_on_time_is_fresh():
+    """(a) a REAL CPI observed WITHIN its cadence (~30d, cadence 30 → age_effective ~0) →
+    freshness ≈ 1.0 — no longer punished like stale data (was 0.21 absolute-age)."""
+    assert CADENCE_LAG_DAYS.get("cpi") == 30.0
+    # obs exactly at the cadence boundary → age_effective ≈ 0 → freshness ≈ 1.0
+    conf = confidence_q(314.0, _ts_days_ago(30.0), "fred", indicator_name="cpi")
+    assert conf > 0.95, f"on-time CPI must be fresh (~1.0), got {conf}"
+
+
+def test_S1_GATEc_overdue_real_cpi_STILL_drops():
+    """(c) DISTINGUISHING / the 'không tháo phanh' spine (TEETH-Y): a REAL CPI observed 90d ago
+    (cadence 30 → 60d OVERDUE) → freshness MATERIALLY < 1.0 (< ~0.2). The fix penalizes real
+    LATENESS; it does NOT floor real at 1.0. A blanket-floor impl would pass (a)+(b) but FAIL
+    this. Pair with (a): on-time→high, overdue→low."""
+    on_time = confidence_q(314.0, _ts_days_ago(30.0), "fred", indicator_name="cpi")
+    overdue = confidence_q(314.0, _ts_days_ago(90.0), "fred", indicator_name="cpi")
+    # age_effective = 90 - 30 = 60d; τ=30 → exp(-60/30) = exp(-2) ≈ 0.135
+    assert overdue < 0.2, f"overdue real CPI must drop materially, got {overdue} (brakes removed?)"
+    assert overdue < on_time, "overdue must score below on-time (the brakes are intact)"
+
+
+def test_S1_GATEb_mock_never_beats_real_on_time():
+    """(b) the 4.6× inversion is GONE: a mock indicator (excluded → q 0) NEVER out-scores a real
+    on-time indicator. (Mock is the ABSENCE of real data — it must never raise confidence.)"""
+    real_on_time = confidence_q(314.0, _ts_days_ago(30.0), "fred", indicator_name="cpi")
+    mock = confidence_q(121.0, _ts_days_ago(0.0), "mock", indicator_name="dxy")  # stamped today
+    assert mock < real_on_time, f"mock {mock} must NOT beat real on-time {real_on_time} (inversion gone)"
+    assert mock == 0.0, "an excluded mock → coverage 0 → q 0 (honestly low via coverage, not a floor)"
+
+
+def test_S1_GATEe_mock_excluded_via_coverage_not_floor():
+    """(e) excluding mock DROPS COVERAGE (not a hidden floor): 2 real + 2 mock axes → coverage
+    2/4 = 0.5 (NOT 4/4), q reflects only the real axes. The drop is via the coverage NUMBER."""
+    age = 5.0
+    pts = [
+        {"name": "cpi", "value": 1.0, "ts": _ts_days_ago(age), "source": "fred"},
+        {"name": "unemployment", "value": 1.0, "ts": _ts_days_ago(age), "source": "fred"},
+        {"name": "dxy", "value": 1.0, "ts": _ts_days_ago(0), "source": "mock"},     # excluded
+        {"name": "m2_liquidity", "value": 1.0, "ts": _ts_days_ago(0), "source": "mock"},  # excluded
+    ]
+    qr = dec.q_from_points(pts, needed=4, data_type="macro", mock_is_present=False)
+    assert qr.coverage == 0.5, f"2 real / 4 needed → coverage 0.5, got {qr.coverage}"
+    assert qr.presentInputs == 2   # only the 2 real axes count
+
+
+def test_S1_GATEf_all_mock_honest_empty_no_crash():
+    """(f) ALL axes mock → coverage 0 → q low + (no crash). Honest-empty, not an exception."""
+    pts = [{"name": n, "value": 1.0, "ts": _ts_days_ago(0), "source": "mock"}
+           for n in ("cpi", "dxy", "m2_liquidity", "unemployment")]
+    qr = dec.q_from_points(pts, needed=4, data_type="macro", mock_is_present=False)  # MUST NOT raise
+    assert qr.coverage == 0.0 and qr.presentInputs == 0
+    assert qr.q == 0.0   # nothing real → q 0 (honest, via coverage)
+
+
+def test_S1_GATEd_gate1_byte_identical_on_cadence_free_names():
+    """(d) the byte-identical guard: a cadence-FREE synthetic input (name not in CADENCE_LAG_DAYS)
+    → exp(-age/τ) EXACTLY as before (no cadence subtraction). This is what keeps GATE1's 0.45."""
+    age = -30.0 * math.log(0.90)
+    # 'axis_a' is NOT a registered indicator → cadence 0 → freshness = exp(-age/30) = 0.90
+    r = compute_q([QInput(name="axis_a", present=True, value=1.0, age_days=age, data_type="cycle")], needed=1)
+    assert abs(r.freshness - 0.90) < 0.005, "cadence-free input → absolute-age freshness (byte-identical)"
+    # a REGISTERED indicator at the same age → cadence subtracted → HIGHER freshness (the fix)
+    r2 = compute_q([QInput(name="cpi", present=True, value=1.0, age_days=age, data_type="cycle")], needed=1)
+    assert r2.freshness > r.freshness, "cpi (cadence 30) at the same age → fresher than cadence-free"
+
+
+def test_S1_two_tool_consistency_macro_overview_vs_cycle():
+    """Q3 fix: confidence_q (macro_overview seam) and q_from_points (macro_cycle) now handle a
+    mock IDENTICALLY — both exclude it. A mock indicator → confidence_q returns 0 (present:false)."""
+    mock_conf = confidence_q(121.0, _ts_days_ago(0), "mock", indicator_name="dxy")
+    assert mock_conf == 0.0, "confidence_q must exclude a mock (consistent with macro_cycle)"
 
 
 # --------------------------------------------------------------------------- #
@@ -440,9 +532,10 @@ def test_P4_GATEa_default_params_byte_identical():
     """compute_q with NO params == compute_q with default/empty params == the P2 0.45. The
     param-ization must NOT perturb the default path (the byte-identical lock)."""
     age = -30.0 * math.log(0.90)
-    inputs = [QInput("yc", True, 1.0, age_days=age, data_type="cycle"),
-              QInput("cpi", True, 1.0, age_days=age, data_type="cycle"),
-              QInput("pmi", False), QInput("unrate", False)]
+    # #59: cadence-FREE synthetic axes (not real indicator names) → absolute-age freshness.
+    inputs = [QInput("axis_a", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("axis_b", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("axis_c", False), QInput("axis_d", False)]
     r_none = compute_q(inputs, needed=4)
     r_empty = compute_q(inputs, needed=4, params={})
     r_explicit = compute_q(inputs, needed=4, params={"combine": "multiply"})
@@ -458,9 +551,10 @@ def test_P4_GATEb_min_differs_from_multiply():
     enum is a real switch, not a no-op param. min(f,c,a) ≥ f×c×a (for components ≤1) so they
     diverge whenever any component < 1."""
     age = -30.0 * math.log(0.90)
-    inputs = [QInput("yc", True, 1.0, age_days=age, data_type="cycle"),
-              QInput("cpi", True, 1.0, age_days=age, data_type="cycle"),
-              QInput("pmi", False), QInput("unrate", False)]
+    # #59: cadence-FREE synthetic axes (not real indicator names) → absolute-age freshness.
+    inputs = [QInput("axis_a", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("axis_b", True, 1.0, age_days=age, data_type="cycle"),
+              QInput("axis_c", False), QInput("axis_d", False)]
     q_mult = compute_q(inputs, needed=4, params={"combine": "multiply"}).q
     q_min = compute_q(inputs, needed=4, params={"combine": "min"}).q
     assert q_mult != q_min, "min must differ from multiply (the enum switches behavior)"

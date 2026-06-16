@@ -64,6 +64,26 @@ DEFAULT_Q_PARAMS: dict = {
 }
 _COMBINE_MODES = ("multiply", "min", "weighted_geomean")
 
+# FINANCE-AUDIT-S1 (#59) — CADENCE-AWARE freshness. The bug: freshness=exp(-age/τ) measures
+# ABSOLUTE age, so a naturally-lagged REAL indicator (CPI is ~30-46d old at publication) scored
+# as low as stale data, while a mock stamped "today" scored ~1.0 — a 4.6× inversion that
+# corrupts the q premise. FIX: subtract the indicator's PUBLICATION CADENCE before decaying, so
+# an on-time real indicator → age_effective ~0 → freshness ~1.0, while LATENESS BEYOND the
+# cadence still penalizes (the brakes stay: fix the pipe, don't remove the brakes). Per-indicator
+# (= Q2's per-indicator τ, bundled). An indicator NOT in this map → cadence 0 → exp(-age/τ)
+# EXACTLY as before (the byte-identical guard for synthetic/cadence-free inputs).
+CADENCE_LAG_DAYS: dict[str, float] = {
+    "cpi": 30.0,                    # monthly, ~2wk FRED lag → ~30d at publication
+    "fed_funds_rate": 30.0,         # monthly
+    "m2_liquidity": 45.0,           # monthly, ~6wk FRED lag
+    "industrial_production": 45.0,  # monthly, ~6wk lag
+    "unemployment": 30.0,           # monthly
+    "yield_curve_10y2y": 1.0,       # daily (T10Y2Y) — fresh within a day
+    "dxy": 1.0,                     # daily
+    "fear_greed": 1.0,              # daily sentiment
+    "btc_dominance": 1.0,           # daily
+}
+
 
 @dataclass
 class QInput:
@@ -84,15 +104,21 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _freshness(age_days: float, data_type: str, tau_days: dict | None = None) -> float:
-    """freshness = exp(-age/τ) ∈ (0, 1]. age in days; τ (DAYS) from ``tau_days`` (the effective
-    per-type map) or the TAU_DAYS default. age<0 (a future ts, clock skew) clamps to 0 →
-    freshness 1 (never >1). (FINANCE-ASSISTANT P4: tau_days lets compute_q override τ from
-    params; default None → TAU_DAYS, byte-identical to P2.)"""
+def _freshness(age_days: float, data_type: str, tau_days: dict | None = None,
+               cadence_lag: float = 0.0) -> float:
+    """freshness = exp(-age_effective/τ) ∈ (0, 1]. age in days; τ (DAYS) from ``tau_days`` or
+    the TAU_DAYS default. age<0 (clock skew) clamps to 0 → freshness 1 (never >1).
+
+    FINANCE-AUDIT-S1 (#59) — CADENCE-AWARE: ``age_effective = max(0, age − cadence_lag)``. A
+    real indicator observed WITHIN its publication cadence (e.g. CPI ~46d old, cadence 30) →
+    age_effective small → freshness high (ON-TIME, not punished like stale). Lateness BEYOND the
+    cadence still decays (the brakes stay). cadence_lag 0 (a cadence-free/synthetic input) →
+    age_effective = age → exp(-age/τ) EXACTLY as before (the byte-identical guard)."""
     src = tau_days if tau_days is not None else TAU_DAYS
     tau = src.get(data_type, _DEFAULT_TAU)
     age = max(0.0, float(age_days))
-    return math.exp(-age / tau)
+    age_effective = max(0.0, age - max(0.0, float(cadence_lag)))
+    return math.exp(-age_effective / tau)
 
 
 def _age_days_from_ts(ts: str | None) -> float | None:
@@ -191,7 +217,11 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None,
     for i in inputs:
         f: float | None = None
         if i.present and i.age_days is not None:
-            f = _freshness(i.age_days, i.data_type, tau_days)
+            # FINANCE-AUDIT-S1 (#59): subtract the indicator's publication cadence (by name) so a
+            # naturally-lagged real indicator isn't punished like stale data. A name not in the
+            # cadence map → 0 lag → exp(-age/τ) byte-identical to before.
+            cadence = CADENCE_LAG_DAYS.get(i.name, 0.0)
+            f = _freshness(i.age_days, i.data_type, tau_days, cadence_lag=cadence)
             fresh_vals.append(f)
         views.append(QInputView(
             name=i.name, present=i.present, value=i.value,
@@ -244,14 +274,19 @@ def q_from_points(points: list[dict], *, needed: int, data_type: str = "macro",
 # T4 seam — the macro module's _confidence_for delegates here (single source).   #
 # --------------------------------------------------------------------------- #
 def confidence_q(value: float | None, ts: str | None, source: str | None,
-                 *, data_type: str = "macro") -> float:
+                 *, data_type: str = "macro", indicator_name: str | None = None) -> float:
     """The macro-confidence seam (replaces P1's source-stub): a SINGLE-input compute_q for one
-    macro indicator. coverage = 1 (the indicator is the only needed input and it's present when
-    value is not None), agreement = 1 (single source), freshness from the point's ts. A mock
-    point still computes a real freshness/coverage q (honest — a mock value IS present, just
-    flagged elsewhere by source). Returns just the scalar q (the call-site wants a float)."""
-    present = value is not None
-    qi = QInput(name="indicator", present=present, value=value,
+    macro indicator. coverage = 1 (present), agreement = 1 (single source), freshness from the
+    point's ts — now CADENCE-AWARE via ``indicator_name`` (FINANCE-AUDIT-S1 #59: the indicator's
+    publication cadence is looked up by name, so an on-time CPI scores high not stale-low).
+
+    FINANCE-AUDIT-S1 (#59) — MOCK EXCLUDED (team-lead LOCKED = A): a ``source=='mock'`` point
+    counts as NOT covered (present:false) — same as q_from_points, fixing the Q3 two-tool
+    inconsistency (macro_overview ↔ macro_cycle now agree). A mock is the ABSENCE of real data;
+    it must NEVER raise confidence. CONSEQUENCE: a mock indicator → coverage 0 → q 0 (honestly
+    low via COVERAGE, not a hidden floor). Returns the scalar q (the call-site wants a float)."""
+    present = (value is not None) and (source != "mock")
+    qi = QInput(name=(indicator_name or "indicator"), present=present, value=value,
                 age_days=_age_days_from_ts(ts), data_type=data_type, source=source)
     return compute_q([qi], needed=1).q
 

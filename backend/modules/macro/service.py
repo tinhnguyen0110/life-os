@@ -58,13 +58,16 @@ def tracked_indicators() -> list[str]:
 # contract (HARD GATE 5): this does NOT reimplement q — it delegates. Flag-2 option (a): the
 # call-site passes the point's ts so freshness=exp(−age/τ) is REAL (a source-only proxy would
 # fake freshness).
-def _confidence_for(value: float | None, ts: str | None, source: str | None) -> float:
-    """Confidence for one macro indicator = a single-input compute_q (coverage 1 when present,
-    agreement 1 single-source, freshness from the point's ts). Delegates to the shared
-    decision.confidence_q — the q-engine is the single source of truth, never reimplemented
-    here. A mock point still gets a real freshness/coverage q (honest)."""
+def _confidence_for(value: float | None, ts: str | None, source: str | None,
+                    indicator: str | None = None) -> float:
+    """Confidence for one macro indicator = a single-input compute_q. Delegates to the shared
+    decision.confidence_q — the q-engine is the single source of truth, never reimplemented here.
+
+    FINANCE-AUDIT-S1 (#59): pass the ``indicator`` key so confidence_q's freshness is CADENCE-
+    AWARE (an on-time CPI scores high, not stale-low) AND a mock indicator is EXCLUDED (counts
+    as not-covered → q honestly low via coverage, consistent with macro_cycle)."""
     from modules.decision.service import confidence_q
-    return confidence_q(value, ts, source, data_type="macro")
+    return confidence_q(value, ts, source, data_type="macro", indicator_name=indicator)
 
 
 def _trend(latest: float | None, previous: float | None) -> Trend:
@@ -131,7 +134,8 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
         source=latest_row["source"],
         points=n,
         # FINANCE-ASSISTANT P2 (#54): pass value + ts + source → real compute_q freshness.
-        confidence=_confidence_for(latest_val, latest_row["ts"], latest_row["source"]),
+        # FINANCE-AUDIT-S1 (#59): pass the indicator key → cadence-aware freshness + mock-excluded.
+        confidence=_confidence_for(latest_val, latest_row["ts"], latest_row["source"], indicator),
     )
 
 

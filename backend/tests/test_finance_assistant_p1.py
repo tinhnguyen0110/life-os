@@ -223,11 +223,12 @@ def test_fred_000_fails_open_to_mock_never_500(macro_db, monkeypatch):
 
     ov, warnings = ms.get_overview()  # MUST NOT raise
     yc = next(v for v in ov.indicators if v.indicator == "yield_curve_10y2y")
-    assert yc.source == "mock"            # fell open (the honesty signal — NOT the confidence value)
-    # P2 (#54): confidence is now the REAL compute_q (a mock point still has a real freshness q;
-    # the source='mock' tag + the warning are the honesty signals, not a magic 0.2). Just assert
-    # it's a real q in range — the mock-vs-real distinction is carried by `source`, not the number.
-    assert 0.0 < yc.confidence <= 1.0
+    assert yc.source == "mock"            # fell open (the honesty signal)
+    # FINANCE-AUDIT-S1 (#59): a MOCK indicator is now EXCLUDED from confidence (mock = the
+    # ABSENCE of real data → coverage 0 → confidence 0). This is the audit fix: a mock must
+    # NEVER raise confidence (the 4.6× inversion is gone). So a mock's confidence is 0, not a
+    # "real q in range" — the honesty is the source='mock' tag + the warning + the now-0 conf.
+    assert yc.confidence == 0.0, "a mock indicator must be excluded → confidence 0 (#59)"
     assert yc.latest is not None          # still has a (mock) value — honest, present
     assert any("mock" in w.lower() for w in warnings)
 
