@@ -285,3 +285,42 @@ def test_d3a_real_crypto_keeps_plain_drift_distinguishing(mock_okx, mock_prices,
         "real-exposure crypto keeps the plain drift warning"
     assert not any("UNDEPLOYED stablecoin" in w for w in crypto_warns), \
         "a 10%-stable crypto channel must NOT be reframed as undeployed"
+
+
+# --------------------------------------------------------------------------- #
+# PERF #68 seam (A): the OKX symbol-discovery pre-read CANNOT drift a number.    #
+# get_overview reads OKX up front (to learn which symbols to batch-prefetch),    #
+# then _okx_crypto_holdings reads OKX again for the VALUES. In prod both return  #
+# the SAME cached _last_snapshot. This test proves the WORST case — even if the  #
+# two reads return DIFFERENT snapshots — is correctness-NEUTRAL: the per-coin    #
+# VALUE always comes from _okx_crypto_holdings' own read (never the discovery    #
+# read, which only yields symbol strings → can't corrupt a value).               #
+# --------------------------------------------------------------------------- #
+def test_perf68_okx_discovery_read_does_not_drift_value(monkeypatch, mock_prices, isolated_paths):
+    """Two DIFFERENT snapshots on successive exchange reads (simulated drift) → the
+    crypto VALUE is internally consistent with the LAST read that built the holdings
+    (_okx_crypto_holdings), not corrupted by the earlier symbol-discovery read."""
+    snaps = [
+        # 1st read (symbol discovery in get_overview): BTC @ 60k
+        (ExchangeOverview(configured=True, totalUsdValue=60000.0, balances=[
+            OkxBalance(symbol="BTC", available=1.0, frozen=0, total=1.0, usdValue=60000.0)]), None),
+        # 2nd+ reads (_okx_crypto_value + _okx_crypto_holdings): BTC @ 61k (a tick happened)
+        (ExchangeOverview(configured=True, totalUsdValue=61000.0, balances=[
+            OkxBalance(symbol="BTC", available=1.0, frozen=0, total=1.0, usdValue=61000.0)]), None),
+    ]
+    calls = [0]
+
+    def drifting_get_overview():
+        i = min(calls[0], len(snaps) - 1)
+        calls[0] += 1
+        return snaps[i]
+
+    monkeypatch.setattr(service.exchange_service, "get_overview", drifting_get_overview)
+    overview, _ = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    # the VALUE reflects the holdings-building read (61k), is a single self-consistent
+    # snapshot — the discovery read's 60k did NOT leak in. No mixed/torn number.
+    assert crypto.value == 61000.0
+    assert overview.totalValue == 61000.0
+    # and the discovery read happened (proves get_overview DID pre-read for symbols)
+    assert calls[0] >= 2

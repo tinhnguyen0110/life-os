@@ -254,8 +254,9 @@ def _price_of(symbol: str, avg_cost: float) -> tuple[float, str, str | None]:
 
 def _change_pct_of(symbol: str, price: float, *, priced: bool) -> float | None:
     """FINANCE-CORRECTNESS (#49): per-holding 24h %, via market.derive_change_pct — the
-    SAME path the watchlist uses (one consistent feed). The feed is TTL-cached, so the
-    quote re-fetch here is served from cache within the request (no double network hit).
+    SAME path the watchlist uses (one consistent feed). PERF #68: get_overview opens a
+    request-scoped quote memo, so this get_quote re-fetch (same symbol _price_of already
+    priced) is served from the memo within the request — NO double network hit.
 
     ``priced`` = the price came from a REAL market quote. When False (cost-fallback price,
     or an OKX value-only coin) there is no live quote to fall back on AND price is an
@@ -676,8 +677,37 @@ def _basis_known_pnl(by_channel: dict, total_value: float) -> tuple[PnL, PnlScop
     return _pnl(known_cost, known_value), PnlScope(basis="known-cost-only", coveragePct=coverage_pct, note=note)
 
 
+def _overview_priced_symbols(holdings: list[Holding]) -> list[str]:
+    """PERF #68: every symbol get_overview will price → so prefetch_quotes can fetch
+    them all in ONE batched read_quotes. = manual-holding symbols + the OKX held-coin
+    symbols (the OKX balance read is cheap/idempotent — _okx_crypto_holdings re-reads
+    the SAME snapshot, so no number changes). Fail-soft: OKX read error → just the
+    manual symbols (the batch is an optimization, never a correctness dependency)."""
+    symbols = [h.symbol for h in holdings]
+    try:
+        snap, _ = exchange_service.get_overview()
+        if snap.configured and snap.balances:
+            symbols += [b.symbol for b in snap.balances if b.total > 0]
+    except Exception as exc:  # noqa: BLE001 — prefetch is best-effort; never fail the overview
+        logger.debug("OKX symbol pre-read for quote prefetch failed (non-fatal): %s", exc)
+    return symbols
+
+
 def get_overview() -> tuple[FinanceOverview, list[str]]:
+    """PERF #68: open a request-scoped quote memo + batch-prefetch every priced symbol
+    in ONE read_quotes call, so the N held coins (each get_quote'd twice) cost 1 network
+    fetch, not 2×N. The memo is ALWAYS reset in finally → never leaks across requests.
+    The body (numbers) is unchanged — get_quote serves identical quotes from the memo."""
     holdings = list_holdings()
+    token = market_service.begin_quote_batch()
+    try:
+        market_service.prefetch_quotes(_overview_priced_symbols(holdings))
+        return _get_overview_impl(holdings)
+    finally:
+        market_service.end_quote_batch(token)
+
+
+def _get_overview_impl(holdings: list[Holding]) -> tuple[FinanceOverview, list[str]]:
     targets, _ladder, by_channel, warnings = _finance_warnings(holdings)
 
     # OKX override: if configured, replace crypto channel value with live OKX totalUsdValue.

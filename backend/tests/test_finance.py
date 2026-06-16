@@ -169,6 +169,128 @@ def test_dry_powder_is_dry_channel(isolated_paths, mock_prices):
     assert overview.dryPowder == 10000.0
 
 
+# --- PERF #68: request-scoped quote memo → batch the N held-coin fetches into 1 ---
+# The bug it kills: get_overview prices N coins, each get_quote'd TWICE (_price_of +
+# _change_pct_of) → 2×N single-asset CoinGecko fetches (each a distinct reader-cache
+# key → all cold misses). The fix pre-fetches every symbol in ONE read_quotes call +
+# memoizes → 2×N network calls → 1. THE SPINE: the /finance numbers must NOT change —
+# same quotes, just fetched once.
+
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def _count_coingecko_fetches(monkeypatch):
+    """Spy on the reader's network boundary (_fetch_coingecko). Clears the reader's
+    process-global TTL feed-cache first so prior tests don't mask a real fetch. Yields
+    a 1-element list whose [0] is the call count; returns a deterministic feed."""
+    from modules.market import reader
+
+    reader._FEED_CACHE.clear()  # TTL cache is process-global — start cold
+    count = [0]
+
+    def fake_fetch(cg_ids):
+        count[0] += 1
+        return {cid: {"usd": 100.0, "usd_24h_change": 1.5} for cid in cg_ids}
+
+    monkeypatch.setattr(reader, "_fetch_coingecko", fake_fetch)
+    yield count
+
+
+def _seed_multi_coin_book():
+    """3 crypto holdings in distinct symbols → 3 priced symbols, each get_quote'd 2×."""
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="ETH", qty=10, avgCost=2000))
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="SOL", qty=100, avgCost=120))
+
+
+def test_perf68_overview_batches_to_one_coingecko_fetch(isolated_paths, monkeypatch):
+    """CALL-COUNT (6→1): a 3-coin book priced 2× each = up to 6 single-asset fetches
+    WITHOUT the memo. WITH the batch prefetch + memo → _fetch_coingecko fires ONCE."""
+    _seed_multi_coin_book()
+    with _count_coingecko_fetches(monkeypatch) as count:
+        overview, _ = service.get_overview()
+    assert count[0] == 1, f"expected ONE batched CoinGecko fetch, got {count[0]}"
+    # and the numbers came through (3 priced holdings)
+    assert len(overview.holdings) == 3
+
+
+def test_perf68_identical_payload_memo_vs_no_memo(isolated_paths, monkeypatch):
+    """IDENTICAL PAYLOAD (the spine): the overview built WITH the batch memo is byte-
+    identical to one built WITHOUT it (memo disabled → the old per-call path). A perf
+    fix must not change a single number."""
+    _seed_multi_coin_book()
+
+    # WITH the memo (the shipped path)
+    with _count_coingecko_fetches(monkeypatch) as c1:
+        ov_memo, w_memo = service.get_overview()
+    assert c1[0] == 1
+
+    # WITHOUT the memo: disable the batch (begin returns a no-op) → get_quote does its
+    # own per-call fetch. Same deterministic feed → MUST produce the identical payload.
+    monkeypatch.setattr(service.market_service, "begin_quote_batch", lambda: None)
+    monkeypatch.setattr(service.market_service, "end_quote_batch", lambda token: None)
+    monkeypatch.setattr(service.market_service, "prefetch_quotes", lambda syms: None)
+    with _count_coingecko_fetches(monkeypatch) as c2:
+        ov_plain, w_plain = service.get_overview()
+    assert c2[0] > 1, "control: without the memo the per-call path fetches more than once"
+
+    assert ov_memo.model_dump() == ov_plain.model_dump(), "memo changed a number — REGRESSION"
+    assert w_memo == w_plain
+
+
+def test_perf68_memo_is_request_scoped_resets_after_call(isolated_paths, monkeypatch):
+    """REQUEST-SCOPED (no cross-request staleness): the ContextVar memo is None after
+    get_overview returns — it does NOT persist as a process-global cache."""
+    _seed_multi_coin_book()
+    with _count_coingecko_fetches(monkeypatch):
+        service.get_overview()
+    assert service.market_service._quote_memo.get() is None, "memo leaked past the request"
+
+
+def test_perf68_two_sequential_calls_each_fetch_fresh(isolated_paths, monkeypatch):
+    """No stale sharing: two sequential get_overview calls each open + reset their own
+    memo. With the reader TTL-cache cleared between, each does its own (single) fetch —
+    the memo is NOT a long-lived cache that would serve call-2 stale data."""
+    _seed_multi_coin_book()
+    from modules.market import reader
+
+    with _count_coingecko_fetches(monkeypatch) as c1:
+        service.get_overview()
+    assert c1[0] == 1
+    reader._FEED_CACHE.clear()  # force call-2 to actually fetch (not the reader TTL)
+    with _count_coingecko_fetches(monkeypatch) as c2:
+        service.get_overview()
+    assert c2[0] == 1  # call-2 fetched fresh on its own — not served stale by a leaked memo
+
+
+def test_perf68_fail_open_intact_when_coingecko_down(isolated_paths, monkeypatch):
+    """FAIL-OPEN intact: CoinGecko raising inside the batch prefetch degrades the whole
+    batch to read_quotes' own fail-open (last-known/mock, as a GROUP) — the overview
+    still assembles, never 500s + carries a CG-unavailable warning. Same behavior as
+    before, just ONE fetch attempt instead of N (the batch fails open once)."""
+    from modules.market import reader
+
+    reader._FEED_CACHE.clear()
+    fetch_count = [0]
+
+    def boom(ids):
+        fetch_count[0] += 1
+        raise RuntimeError("CG 429")
+
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    monkeypatch.setattr(reader, "_fetch_coingecko", boom)
+    overview, warnings = service.get_overview()  # MUST NOT raise — fail-open, not 500
+    # assembled with a fallback total (read_quotes degrades the crypto group to mock/
+    # last-known as a GROUP; the prefetch's failed batch is memoized so get_quote serves
+    # the same fallback quote — no second network attempt).
+    assert overview.totalValue is not None and overview.totalValue > 0
+    assert len(overview.holdings) == 1  # BTC still present, just fallback-priced
+    # the CoinGecko failure was ONE batched attempt (the prefetch), then a memo hit —
+    # NOT N separate failing fetches. (Was the whole point: fail open ONCE, not N times.)
+    assert fetch_count[0] == 1, f"fail-open should be ONE batched attempt, got {fetch_count[0]}"
+
+
 # --- FINANCE-AUDIT2 (#66): pnlTotal from the BASIS-KNOWN per-coin sum, not the snapshot cost ---
 # The bug it pins: a snapshot-cost pnlTotal showed +$7 (a gain) while the real per-coin loss
 # was −$617. The fix aggregates ONLY holdings with a real cost basis; no-basis (OKX value-only /

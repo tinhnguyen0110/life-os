@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextvars import ContextVar, Token
 from datetime import datetime, timedelta, timezone
 
 import yaml
@@ -58,8 +59,75 @@ def tracked_assets() -> list[dict]:
     return list(settings.market_assets or [])
 
 
+# --------------------------------------------------------------------------- #
+# Request-scoped quote memo (PERF #68 — NO Redis, in-process, no cross-request) #
+# --------------------------------------------------------------------------- #
+# A get_overview() call prices N held coins, each hitting get_quote() (twice —
+# _price_of + _change_pct_of). Without a memo that's 2×N fresh single-asset
+# CoinGecko fetches. A request-scoped memo (ContextVar) lets get_overview()
+# pre-fetch every symbol in ONE batched read_quotes() and serve all subsequent
+# get_quote() calls from memory: 2×N network calls → 1. Default None = NO batch
+# active → get_quote behaves exactly as before (zero change for other callers).
+# ALWAYS reset in a finally (end_quote_batch) so it NEVER leaks across requests —
+# a leaked memo would serve stale prices, which is worse than slow.
+_quote_memo: ContextVar[dict[str, AssetQuote] | None] = ContextVar("quote_memo", default=None)
+
+
+def _asset_for(symbol: str) -> dict:
+    """The asset dict get_quote/prefetch price a symbol with. Tracked universe →
+    its assetClass/cgId; else crypto-by-symbol best-effort (cgId=lowercased). ONE
+    place so a memoized quote is built byte-identically to a fresh get_quote."""
+    asset = next((a for a in tracked_assets() if a.get("symbol") == symbol), None)
+    if asset is None:
+        # Best-effort: assume crypto, cgId = lowercased symbol. Reader fail-opens
+        # to mock/last-known if that id is unknown to CoinGecko.
+        asset = {"symbol": symbol, "name": symbol, "assetClass": "crypto", "cgId": symbol.lower()}
+    return asset
+
+
+def begin_quote_batch() -> Token:
+    """Open a request-scoped quote memo. Returns the token to pass to
+    end_quote_batch() in a finally. Use prefetch_quotes() right after to fill it."""
+    return _quote_memo.set({})
+
+
+def end_quote_batch(token: Token) -> None:
+    """Close the memo opened by begin_quote_batch — ALWAYS in a finally. Resets the
+    ContextVar to its prior state so the memo can't leak to the next request."""
+    _quote_memo.reset(token)
+
+
+def prefetch_quotes(symbols: list[str]) -> None:
+    """Batch-fetch every symbol in ONE read_quotes() call and populate the active
+    memo. No-op if no batch is active or no symbols. Fail-open is the reader's (a
+    CoinGecko failure degrades the whole batch to last-known/mock — same as before,
+    just once). The memoized AssetQuote objects are the reader's own, so the feed's
+    _feed_change_pct rides along → get_quote serves an IDENTICAL quote."""
+    memo = _quote_memo.get()
+    if memo is None or not symbols:
+        return
+    # de-dup, preserve order; build each asset the SAME way get_quote does
+    seen: set[str] = set()
+    assets = []
+    for s in symbols:
+        if s and s not in seen:
+            seen.add(s)
+            assets.append(_asset_for(s))
+    if not assets:
+        return
+    quotes, _warnings = reader.read_quotes(assets)
+    for q in quotes:
+        memo[q.symbol] = q
+
+
 def get_quote(symbol: str) -> AssetQuote | None:
     """Single-asset quote for cross-module callers (e.g. finance pricing).
+
+    PERF #68: when a request-scoped batch is active (begin_quote_batch), a memo HIT
+    returns the pre-fetched quote with NO network call; a MISS does the single-asset
+    read and stores it in the memo (so the 2nd same-symbol call within the request —
+    _price_of then _change_pct_of — is also a hit). With NO batch active, behaves
+    exactly as before: one fresh single-asset read.
 
     Reuses the reader (fail-open: CoinGecko down → last-known/mock). Looks the
     symbol up in the tracked universe for its assetClass/cgId; if it's not tracked,
@@ -67,13 +135,14 @@ def get_quote(symbol: str) -> AssetQuote | None:
     ad-hoc holding can still be priced. Returns None only if the reader yields
     nothing. Does NOT re-fetch beyond the reader's own one batched call.
     """
-    asset = next((a for a in tracked_assets() if a.get("symbol") == symbol), None)
-    if asset is None:
-        # Best-effort: assume crypto, cgId = lowercased symbol. Reader fail-opens
-        # to mock/last-known if that id is unknown to CoinGecko.
-        asset = {"symbol": symbol, "name": symbol, "assetClass": "crypto", "cgId": symbol.lower()}
-    quotes, _ = reader.read_quotes([asset])
-    return quotes[0] if quotes else None
+    memo = _quote_memo.get()
+    if memo is not None and symbol in memo:
+        return memo[symbol]  # request-memo hit — no network
+    quotes, _ = reader.read_quotes([_asset_for(symbol)])
+    quote = quotes[0] if quotes else None
+    if memo is not None and quote is not None:
+        memo[symbol] = quote  # populate so the 2nd same-symbol call this request is a hit
+    return quote
 
 
 # --------------------------------------------------------------------------- #

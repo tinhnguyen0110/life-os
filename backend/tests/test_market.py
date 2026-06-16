@@ -329,6 +329,7 @@ from modules.market.service import (  # noqa: E402
     eval_alerts,
     list_rules,
 )
+from modules.market import service as _svc  # noqa: E402  — PERF #68 memo tests
 
 
 def _isolated_service(tmp_path, monkeypatch):
@@ -499,6 +500,90 @@ class TestServiceMath:
         result = delete_rule("nonexistent-id-xyz")
         assert result is False
         db.close_db()
+
+
+# ---------------------------------------------------------------------------
+# Section C2 — PERF #68: request-scoped quote memo (begin/prefetch/get_quote/end)
+# ---------------------------------------------------------------------------
+
+class TestQuoteBatchMemo:
+    """The market-side memo that lets finance batch N×2 get_quote calls into 1 fetch.
+    Default-None = no batch active = unchanged behavior; a batch dedups + memoizes."""
+
+    def _spy(self, monkeypatch):
+        """Count + serve _fetch_coingecko; clear the reader TTL so each test is cold."""
+        from modules.market import reader
+
+        reader._FEED_CACHE.clear()
+        count = [0]
+
+        def fake_fetch(cg_ids):
+            count[0] += 1
+            return {cid: {"usd": 100.0, "usd_24h_change": 1.0} for cid in cg_ids}
+
+        monkeypatch.setattr(reader, "_fetch_coingecko", fake_fetch)
+        return count
+
+    def test_no_batch_active_behaves_as_before(self, tmp_path, monkeypatch):
+        """Default None memo → get_quote does its own single fetch (no behavior change
+        for get_channel + every non-overview caller)."""
+        _isolated_service(tmp_path, monkeypatch)
+        count = self._spy(monkeypatch)
+        assert _svc._quote_memo.get() is None  # no batch
+        q = _svc.get_quote("BTC")
+        assert q is not None and count[0] == 1
+
+    def test_prefetch_then_get_quote_is_a_hit_no_extra_fetch(self, tmp_path, monkeypatch):
+        """A prefetched symbol → get_quote serves it from the memo, NO extra network."""
+        _isolated_service(tmp_path, monkeypatch)
+        count = self._spy(monkeypatch)
+        token = _svc.begin_quote_batch()
+        try:
+            _svc.prefetch_quotes(["BTC", "ETH"])
+            assert count[0] == 1  # ONE batched fetch for both
+            q1 = _svc.get_quote("BTC")
+            q2 = _svc.get_quote("ETH")
+            assert q1 is not None and q2 is not None
+            assert count[0] == 1  # both served from memo — still ONE fetch total
+        finally:
+            _svc.end_quote_batch(token)
+
+    def test_store_on_miss_dedups_adhoc_symbol(self, tmp_path, monkeypatch):
+        """STORE-ON-MISS (the subtle bit): an ad-hoc symbol NOT in the prefetch, called
+        2× within a batch (mirrors _price_of then _change_pct_of) → _fetch_coingecko
+        fires ONCE: the 1st call misses+stores, the 2nd is a memo hit."""
+        _isolated_service(tmp_path, monkeypatch)
+        count = self._spy(monkeypatch)
+        token = _svc.begin_quote_batch()
+        try:
+            # no prefetch for ADHOC → 1st get_quote misses, fetches, stores
+            a1 = _svc.get_quote("ADHOC")
+            assert a1 is not None and count[0] == 1
+            # 2nd call same symbol → memo hit, NO extra fetch
+            a2 = _svc.get_quote("ADHOC")
+            assert a2 is not None and count[0] == 1, "store-on-miss failed: 2nd call re-fetched"
+        finally:
+            _svc.end_quote_batch(token)
+
+    def test_end_quote_batch_resets_memo_to_none(self, tmp_path, monkeypatch):
+        """end_quote_batch resets the ContextVar → no leak to the next request."""
+        _isolated_service(tmp_path, monkeypatch)
+        self._spy(monkeypatch)
+        token = _svc.begin_quote_batch()
+        assert _svc._quote_memo.get() == {}  # active, empty
+        _svc.prefetch_quotes(["BTC"])
+        assert "BTC" in _svc._quote_memo.get()  # populated
+        _svc.end_quote_batch(token)
+        assert _svc._quote_memo.get() is None  # reset — no cross-request leak
+
+    def test_prefetch_noop_without_active_batch(self, tmp_path, monkeypatch):
+        """prefetch_quotes is a no-op when no batch is open (defensive — never fetches
+        into a dead memo)."""
+        _isolated_service(tmp_path, monkeypatch)
+        count = self._spy(monkeypatch)
+        assert _svc._quote_memo.get() is None
+        _svc.prefetch_quotes(["BTC", "ETH"])  # no active memo
+        assert count[0] == 0  # nothing fetched
 
 
 # ---------------------------------------------------------------------------
