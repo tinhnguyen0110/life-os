@@ -376,6 +376,149 @@ def test_S1B_paramsUsed_per_indicator_in_cycle(s1b_macro):
     assert cyc.qCycle.paramsUsed.get("combine") == "multiply"
 
 
+# =========================================================================== #
+# FINANCE-AUDIT-S3 (#62) — capture held-coin OHLC so RSI computes → s_asset/W    #
+# light up. PRIMARY OKX public candles (close/ascending) → CoinGecko fallback →  #
+# honest-skip. Idempotent. The S2 read path + the W=0 valve are REUSED unchanged.#
+# =========================================================================== #
+@pytest.fixture
+def s3_held(isolated_paths, monkeypatch):
+    """Two held coins worth >$1 (not dust): HASOKX (gets OKX candles) + NOSRC (no source).
+    Returns (finance_svc, market_svc, now)."""
+    from store import db
+    db.init_db()
+    from modules.finance import service as fin
+    from modules.finance.schema import HoldingInput
+    from modules.market import service as mkt
+    from modules.market.schema import AssetQuote
+    from datetime import datetime, timezone
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (None, None))
+    monkeypatch.setattr(mkt, "get_quote",
+                        lambda s: AssetQuote(symbol=s, name=s, assetClass="crypto", price=100.0,
+                                             currency="USD", ts="2026-06-16T00:00:00+00:00", source="mock"))
+    fin.upsert_holding(HoldingInput(channel="crypto", symbol="HASOKX", qty=10, avgCost=80))  # $1000
+    fin.upsert_holding(HoldingInput(channel="crypto", symbol="NOSRC", qty=10, avgCost=80))
+    return fin, mkt, datetime.now(timezone.utc)
+
+
+def _mock_okx_rising(mkt, monkeypatch, only_symbol, now, n=30):
+    """Patch _fetch_okx_candles to return n ascending rising closes for one symbol, [] else."""
+    from datetime import timedelta
+    def fake(symbol, *, limit=100):
+        if symbol.upper() != only_symbol:
+            return []
+        return [((now - timedelta(days=n - 1 - i)).strftime("%Y-%m-%dT%H:%M:%S+00:00"), 90.0 + i)
+                for i in range(n)]
+    monkeypatch.setattr(mkt, "_fetch_okx_candles", fake)
+    import modules.market.reader as rdr
+    monkeypatch.setattr(rdr, "fetch_market_chart",
+                        lambda cg, days=365: (_ for _ in ()).throw(RuntimeError("no CG")))
+
+
+def test_S3_GATE1_held_coins_get_real_rows_honest_source(s3_held, monkeypatch):
+    """(1) held coins get REAL rows with an honest source (okx-candles); a coin on NEITHER
+    source → honest-skip (NO fabrication)."""
+    fin, mkt, now = s3_held
+    _mock_okx_rising(mkt, monkeypatch, "HASOKX", now)
+    summary = mkt.capture_held_history(days=30)
+    assert summary["HASOKX"]["inserted"] == 30 and summary["HASOKX"]["source"] == "okx-candles"
+    assert summary["NOSRC"]["inserted"] == 0 and summary["NOSRC"]["source"] is None  # honest-skip
+
+
+def test_S3_GATE5_okx_parse_close_ascending_sanity(s3_held, monkeypatch):
+    """(5) LOCK #2: the stored series uses CLOSE, stored ASCENDING, and the latest stored price
+    ≈ the live quote (±sane band) — catches an open-vs-close or reversed-order bug."""
+    from store import db
+    fin, mkt, now = s3_held
+    _mock_okx_rising(mkt, monkeypatch, "HASOKX", now, n=30)   # closes 90..119 ascending
+    mkt.capture_held_history(days=30)
+    rows = db.prices_for("HASOKX")
+    prices = [r["price"] for r in rows]
+    assert prices == sorted(prices), "stored series must be ASCENDING (oldest→newest) for RSI"
+    assert prices[-1] == 119.0, "latest stored = the last close (not open, not reversed)"
+    # sanity vs the live quote (mocked 100.0) — within a sane band (the rising series ends near it)
+    assert abs(prices[-1] - 100.0) / 100.0 < 0.25   # ±25% band (a reversed/open bug would blow this)
+
+
+def test_S3_GATE2_after_capture_rsi_real_and_s_asset_lights(s3_held, monkeypatch):
+    """(2) end-to-end: after capture, compute_indicators(HASOKX) → REAL RSI (not None); s_asset
+    goes 0/N → >0 (the tower can escape 0). Behavior-test the whole chain."""
+    fin, mkt, now = s3_held
+    # before: no history → RSI None → s_asset 0
+    assert dec._asset_signal("HASOKX") is None
+    _mock_okx_rising(mkt, monkeypatch, "HASOKX", now)
+    mkt.capture_held_history(days=30)
+    data, _ = mkt.compute_indicators("HASOKX", ["rsi", "summary"], hours=24 * 40)
+    rsi = (data.get("indicators", {}).get("summary", {}) or {}).get("latest", {}).get("rsi")
+    assert rsi is not None, "after capture, RSI must compute (real series)"
+    q, _ = dec._s_asset()
+    assert q > 0, "s_asset must light up after the held coin gets price-history"
+
+
+def test_S3_GATE3_distinguishing_valve_holds(s3_held, monkeypatch):
+    """(3) DISTINGUISHING (the spine, SAME call): HASOKX (got history → contributes >0) AND
+    NOSRC (no source → 0) — no fake data forces the tower on. Genuinely divergent fixtures."""
+    fin, mkt, now = s3_held
+    _mock_okx_rising(mkt, monkeypatch, "HASOKX", now)
+    mkt.capture_held_history(days=30)
+    assert dec._asset_signal("HASOKX") is not None and dec._asset_signal("HASOKX") > 0
+    assert dec._asset_signal("NOSRC") is None    # no source → still absent (valve holds for it)
+    q, note = dec._s_asset()
+    assert "1/2" in note, f"one real, one absent: {note}"
+
+
+def test_S3_GATE4_idempotent_run_twice_stable(s3_held, monkeypatch):
+    """(4) IDEMPOTENT (LOCK #1): run the capture TWICE → row count STABLE (dedup by asset+day)."""
+    from store import db
+    fin, mkt, now = s3_held
+    _mock_okx_rising(mkt, monkeypatch, "HASOKX", now)
+    mkt.capture_held_history(days=30)
+    n1 = len(db.prices_for("HASOKX"))
+    mkt.capture_held_history(days=30)   # re-run
+    n2 = len(db.prices_for("HASOKX"))
+    assert n1 == n2 == 30, f"backfill must be idempotent (one row/day): {n1} -> {n2}"
+
+
+def test_S3_GATE6_fail_soft_per_coin(s3_held, monkeypatch):
+    """(6) fail-soft per coin: one coin's fetch raising → that coin errors but the OTHERS still
+    capture (never aborts the batch)."""
+    fin, mkt, now = s3_held
+    from datetime import timedelta
+    def flaky(symbol, *, limit=100):
+        if symbol.upper() == "NOSRC":
+            raise RuntimeError("OKX exploded for NOSRC")
+        return [((now - timedelta(days=29 - i)).strftime("%Y-%m-%dT%H:%M:%S+00:00"), 90.0 + i)
+                for i in range(30)]
+    monkeypatch.setattr(mkt, "_fetch_okx_candles", flaky)
+    import modules.market.reader as rdr
+    monkeypatch.setattr(rdr, "fetch_market_chart",
+                        lambda cg, days=365: (_ for _ in ()).throw(RuntimeError("no CG")))
+    summary = mkt.capture_held_history(days=30)   # MUST NOT raise
+    assert summary["HASOKX"]["inserted"] == 30          # the good coin captured
+    assert "error" in summary["NOSRC"]                  # the bad coin errored, didn't abort
+
+
+def test_S3_okx_candle_parse_uses_close_index4_ascending(monkeypatch):
+    """Unit: _fetch_okx_candles picks CLOSE (index 4), converts ts ms→ISO, sorts ascending.
+    (Behavior-test the parse directly with a mocked OKX body — the real-but-wrong-RSI guard.)"""
+    from modules.market import service as mkt
+    import modules.market.service as ms
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self):
+            # newest-first; [ts_ms, open, high, low, CLOSE, vol, ...]
+            return {"code": "0", "data": [
+                ["1718600000000", "1.0", "9.0", "0.5", "4.4", "100"],   # newest, close 4.4
+                ["1718500000000", "1.0", "9.0", "0.5", "3.3", "100"],   # older, close 3.3
+            ]}
+    # monkeypatch (auto-restores) — a bare `ms._httpx.get = ...` would LEAK into later tests
+    # (httpx is a shared module → poisons every other test's HTTP mock).
+    monkeypatch.setattr(ms._httpx, "get", lambda *a, **k: _Resp())
+    out = mkt._fetch_okx_candles("PEPE")
+    assert [p[1] for p in out] == [3.3, 4.4], "must take CLOSE (idx4) + sort ASCENDING (older→newer)"
+
+
 # --------------------------------------------------------------------------- #
 # HARD GATE 2 — decision_weight PURE PRODUCT, NO clamp (DISTINGUISHING)          #
 # --------------------------------------------------------------------------- #

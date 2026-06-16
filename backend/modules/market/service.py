@@ -674,6 +674,102 @@ def backfill(symbols: list[str] | None = None, days: int = 365) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# FINANCE-AUDIT-S3 (#62) — capture real daily price-history for the user's HELD  #
+# coins (PEPE/ICP/ARB/...) so compute_indicators → real RSI → s_asset (S2) lights #
+# up → the tower can escape W=0. Held coins aren't in tracked_assets, so backfill #
+# (CoinGecko-tracked-only) doesn't reach them. PRIMARY = OKX PUBLIC candles       #
+# (no-auth); FALLBACK = CoinGecko; honest-skip if neither. Writes price_history    #
+# via record_price (REUSE), deduped by (asset, day) like backfill. NEUTRAL.        #
+# --------------------------------------------------------------------------- #
+import httpx as _httpx  # noqa: E402 — local alias for the unsigned public candles GET
+
+OKX_PUBLIC_BASE = "https://www.okx.com"
+_OKX_CANDLE_TIMEOUT_S = 10.0
+
+
+def _fetch_okx_candles(symbol: str, *, limit: int = 100) -> list[tuple[str, float]]:
+    """OKX PUBLIC daily candles for ``<SYMBOL>-USDT`` → ``[(iso_ts_utc, close), ...]`` ASCENDING
+    (oldest→newest). PUBLIC no-auth — a plain unsigned GET (NOT exchange.reader._get, which signs
+    every request). LOCK #2: OKX candle = [ts_ms, open, high, low, CLOSE(idx4), vol, ...] returned
+    NEWEST-first → we take close (idx 4) + REVERSE to ascending + convert ts ms→ISO (what
+    history()+RSI expect). Fail-open → [] (the caller honest-skips / falls back). NEVER fabricates."""
+    from datetime import datetime, timezone
+
+    try:
+        resp = _httpx.get(f"{OKX_PUBLIC_BASE}/api/v5/market/candles",
+                          params={"instId": f"{symbol.upper()}-USDT", "bar": "1D", "limit": str(int(limit))},
+                          timeout=_OKX_CANDLE_TIMEOUT_S)
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("code") != "0":
+            return []
+        rows = body.get("data", []) or []
+    except Exception as exc:  # noqa: BLE001 — fail-open (caller falls back / skips)
+        logger.warning("OKX candles fetch failed for %s: %s", symbol, exc)
+        return []
+
+    out: list[tuple[str, float]] = []
+    for r in rows:
+        try:
+            ts_ms = int(r[0])
+            close = float(r[4])   # LOCK #2: index 4 = CLOSE (NOT open at index 1)
+            if close <= 0:
+                continue
+            ts_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            out.append((ts_iso, close))
+        except (ValueError, TypeError, IndexError):
+            continue
+    out.sort(key=lambda p: p[0])   # LOCK #2: ASCENDING (OKX gave newest-first) — RSI needs oldest→newest
+    return out
+
+
+def capture_held_history(*, days: int = 30, limit: int = 100) -> dict:
+    """FINANCE-AUDIT-S3 (#62): capture daily price-history for the user's HELD coins so RSI
+    computes (s_asset lights up). PER held coin (decision._held_symbols — dust/stablecoin
+    excluded): OKX public candles PRIMARY → CoinGecko fetch_market_chart(sym.lower(), days)
+    FALLBACK → honest-skip if NEITHER returns data (NEVER fabricate). Dedup by (asset, day) via
+    db.price_days (idempotent: re-run / daily-overlap → stable). Fail-soft PER coin. Returns
+    ``{sym: {inserted, skipped, source, error?}}``. Source-tagged honestly (okx-candles /
+    coingecko-hist). Run via the daily routine + a one-time backfill."""
+    from modules.decision.service import _held_symbols
+
+    held = _held_symbols()
+    summary: dict[str, dict] = {}
+    for sym in held:
+        src = "okx-candles"
+        try:
+            points = _fetch_okx_candles(sym, limit=limit)
+            if not points:
+                # FALLBACK: CoinGecko hist (cgId = symbol best-effort, like get_quote).
+                src = "coingecko-hist"
+                try:
+                    points = reader.fetch_market_chart(sym.lower(), days=days)
+                except Exception:  # noqa: BLE001 — fallback failed too → honest-skip
+                    points = []
+        except Exception as exc:  # noqa: BLE001 — fail-soft per coin
+            summary[sym] = {"inserted": 0, "skipped": 0, "error": f"{type(exc).__name__}: {exc}"}
+            continue
+
+        if not points:
+            summary[sym] = {"inserted": 0, "skipped": 0, "source": None,
+                            "error": "no data on OKX candles or CoinGecko (honest-skip)"}
+            continue
+
+        existing_days = db.price_days(sym)
+        inserted = skipped = 0
+        for ts_iso, price in points[-max(1, days):]:   # cap to the requested window
+            day = ts_iso[:10]
+            if day in existing_days:
+                skipped += 1   # dedup: this asset+day already has a point (idempotent)
+                continue
+            db.record_price(sym, price, ts_iso, source=src)
+            existing_days.add(day)   # also guard duplicate days within this fetch
+            inserted += 1
+        summary[sym] = {"inserted": inserted, "skipped": skipped, "source": src}
+    return summary
+
+
+# --------------------------------------------------------------------------- #
 # OHLC candles — HONEST: built from the close-tick series (NO fabricated bars)   #
 # --------------------------------------------------------------------------- #
 # The data source (CoinGecko /simple/price) gives ONE price per poll; price_history

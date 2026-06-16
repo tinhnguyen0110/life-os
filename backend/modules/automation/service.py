@@ -258,6 +258,11 @@ _CATALOG: list[dict] = [
     {"id": "macro-snapshot", "name": "Macro Snapshot", "trigger": "cron",
      "triggerLabel": "07:30 hằng ngày", "desc": "Snapshot F&G / BTC.d / yield-curve",
      "action": "snapshot sentiment", "enabled": True, "func": None},
+    # FINANCE-AUDIT-S3 (#62): daily held-coin OHLC capture (→ RSI → s_asset). func owned by the
+    # market module → resolved on demand (_external_func), same as market-poll.
+    {"id": "held-history", "name": "Held History", "trigger": "cron",
+     "triggerLabel": "00:10 hằng ngày", "desc": "Capture OHLC for held coins → RSI/s_asset",
+     "action": "capture held OHLC", "enabled": True, "func": None},
 ]
 _CATALOG_BY_ID = {c["id"]: c for c in _CATALOG}
 
@@ -381,4 +386,7 @@ def _external_func(routine_id: str):
     if routine_id == "macro-snapshot":
         from modules.macro.service import macro_sentiment_snapshot
         return macro_sentiment_snapshot
+    if routine_id == "held-history":
+        from modules.market.router import _held_history_work
+        return _held_history_work
     return lambda: ("ok", "")

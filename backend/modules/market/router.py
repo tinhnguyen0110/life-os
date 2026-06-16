@@ -297,4 +297,41 @@ _MARKET_POLL_ROUTINE = Routine(
 )
 
 
-MODULE = BaseModule(name="market", router=router, routines=[_MARKET_POLL_ROUTINE])
+# --------------------------------------------------------------------------- #
+# FINANCE-AUDIT-S3 (#62) — held-coin price-history capture (daily). Captures real #
+# OHLC for the user's HELD coins so RSI computes → s_asset lights up. Fail-soft   #
+# per coin; idempotent (dedup by asset+day). Mirrors the market-poll wiring.      #
+# --------------------------------------------------------------------------- #
+HELD_HISTORY_ID = "held-history"
+
+
+def _held_history_work() -> tuple[str, str]:
+    """Capture today's daily candle for each held coin. (status, detail). A coin honest-skipped
+    (no OKX/CoinGecko data) is summarized, never an error. warn if any coin errored."""
+    summary = service.capture_held_history(days=30)
+    errored = [s for s, r in summary.items() if r.get("error")]
+    inserted = sum(r.get("inserted", 0) for r in summary.values())
+    status = "warn" if errored else "ok"
+    detail = (f"held-history: {len(summary)} coins, {inserted} rows inserted"
+              + (f", {len(errored)} skipped/err" if errored else ""))
+    return status, detail
+
+
+def held_history() -> None:
+    """Scheduler entry point — gated on the master automation switch, records a run_log row."""
+    from modules.automation import service as auto
+    auto.run_scheduled(HELD_HISTORY_ID, _held_history_work)
+
+
+_HELD_HISTORY_ROUTINE = Routine(
+    id=HELD_HISTORY_ID,
+    func=held_history,
+    trigger="cron",
+    trigger_args={"hour": 0, "minute": 10},   # daily 00:10 UTC (after the UTC day rolls)
+    name="held-history (capture held-coin OHLC → RSI/s_asset, daily)",
+    enabled=True,
+)
+
+
+MODULE = BaseModule(name="market", router=router,
+                    routines=[_MARKET_POLL_ROUTINE, _HELD_HISTORY_ROUTINE])
