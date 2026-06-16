@@ -68,6 +68,7 @@ export default function SettingsPage() {
         {/* LEFT column: automation config + account */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <AutomationPanel config={config} save={save} />
+          <CapitalTiltPanel config={config} save={save} />
           <AutonomyPanel config={config} save={save} />
           <AccountPanel config={config} save={save} router={router} />
         </div>
@@ -168,6 +169,40 @@ function AutomationPanel({ config, save }: { config: AppConfig; save: SaveFn }) 
         <NumberConfigRow label="Giờ chạy brief" desc="Morning brief mỗi ngày lúc (giờ UTC 0–23)" name="briefHour" value={config.briefHour} min={0} max={23} suffix="giờ" save={save} />
         <NumberConfigRow label="Ngưỡng idle hunter" desc="Cảnh báo dự án đứng quá N ngày (≥1)" name="idleThresholdDays" value={config.idleThresholdDays} min={1} suffix="ngày" save={save} />
         <ToggleRow label="Pattern check" desc="Routine build-to-90 (phát hiện dự án 90% rồi bỏ)" name="patternCheckEnabled" value={config.patternCheckEnabled} save={save} />
+      </div>
+    </div>
+  );
+}
+
+/** FINANCE-ASSISTANT capital-tilt — the USD thresholds that drive the allocation
+ *  capitalTier (small/large) on the Decision cockpit. PATCH /settings round-trip
+ *  (NumberConfigRow: save→server-truth refetch→"✓"; per-field 422 visible). Fields are
+ *  optional on AppConfig (backend may add them) → default to the live values; a missing
+ *  field falls back so the row still renders + saves. NEUTRAL: these are user thresholds,
+ *  not advice. */
+function CapitalTiltPanel({ config, save }: { config: AppConfig; save: SaveFn }) {
+  return (
+    <div>
+      <div className="kicker" style={{ marginBottom: 10 }}>Capital tilt · ngưỡng vốn (allocation)</div>
+      <div className="set-group" data-testid="settings-capital-tilt">
+        <NumberConfigRow
+          label="Ngưỡng vốn 'nhỏ' (USD)"
+          desc="Dưới mức này, allocation nghiêng theo capitalTier='small' (Decision cockpit đọc số này)"
+          name="riskCapitalSmallUsd"
+          value={config.riskCapitalSmallUsd ?? 50000}
+          min={0}
+          suffix="USD"
+          save={save}
+        />
+        <NumberConfigRow
+          label="Ngưỡng vốn 'lớn' (USD)"
+          desc="Từ mức này trở lên, allocation nghiêng theo capitalTier='large'"
+          name="riskCapitalLargeUsd"
+          value={config.riskCapitalLargeUsd ?? 500000}
+          min={0}
+          suffix="USD"
+          save={save}
+        />
       </div>
     </div>
   );

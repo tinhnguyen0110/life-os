@@ -59,6 +59,11 @@ import type {
   BlogInput,
   DemoItem,
   DemoInput,
+  DecisionWeight,
+  MacroCycle,
+  DecisionAllocation,
+  DecisionGuardian,
+  NavHistory,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -620,6 +625,37 @@ export function updateCareerDemo(id: string, body: DemoInput): Promise<ApiRespon
 /** Delete a demo item (404 if absent). */
 export function deleteCareerDemo(id: string): Promise<ApiResponse<{ deleted: string }>> {
   return apiDelete<{ deleted: string }>(`/career/demo/${encodeURIComponent(id)}`);
+}
+
+/* ---- Decision tower (FINANCE-ASSISTANT P1–P4) — the /decision cockpit ---- */
+
+/** GET /decision/weight — decision-weight gauge (W = ∏ layer-q + verdict + confidence). */
+export function getDecisionWeight(): Promise<ApiResponse<DecisionWeight>> {
+  return apiGet<DecisionWeight>("/decision/weight");
+}
+
+/** GET /decision/macro-cycle — Investment-Clock phase + axes + the cycle q. */
+export function getMacroCycle(): Promise<ApiResponse<MacroCycle>> {
+  return apiGet<MacroCycle>("/decision/macro-cycle");
+}
+
+/** GET /decision/allocation — REFERENCE weighting (clock + capital tier), surfaced as DATA. */
+export function getDecisionAllocation(): Promise<ApiResponse<DecisionAllocation>> {
+  return apiGet<DecisionAllocation>("/decision/allocation");
+}
+
+/** GET /decision/guardian — risk QUESTIONS (alerts[].msg are questions, not advice). */
+export function getDecisionGuardian(): Promise<ApiResponse<DecisionGuardian>> {
+  return apiGet<DecisionGuardian>("/decision/guardian");
+}
+
+/** GET /decision/nav-history — NAV series (short-series warning + low confidence honest). */
+export function getNavHistory(from?: string, to?: string): Promise<ApiResponse<NavHistory>> {
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  const q = qs.toString();
+  return apiGet<NavHistory>(`/decision/nav-history${q ? `?${q}` : ""}`);
 }
 
 export const apiBase = BASE;

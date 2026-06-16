@@ -72,6 +72,61 @@ describe("Decision Journal (F1-H1)", () => {
     expect(arg).toMatchObject({ decision: "Ship feature X", domain: "project", confidence: 80 });
   });
 
+  it("EV/worst-case core: the 3 fields (expectedEv/worstCase/decisionWeight) POST through", async () => {
+    getDecisionJournal.mockResolvedValue(ok(DATA()));
+    createDecision.mockResolvedValueOnce(ok(entry({})));
+    render(<DecisionJournalPage />);
+    await waitFor(() => expect(screen.getByTestId("dj-screen")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("dj-toggle-create"));
+    fireEvent.change(screen.getByTestId("dj-decision"), { target: { value: "Bet at W=0.0238" } });
+    fireEvent.change(screen.getByTestId("dj-domain"), { target: { value: "investment" } });
+    fireEvent.change(screen.getByTestId("dj-confidence"), { target: { value: "55" } });
+    fireEvent.change(screen.getByTestId("dj-expectedEv"), { target: { value: "positive_asymmetric" } });
+    fireEvent.change(screen.getByTestId("dj-worstCase"), { target: { value: "lose 100% of position" } });
+    fireEvent.change(screen.getByTestId("dj-decisionWeight"), { target: { value: "0.0238" } });
+    fireEvent.click(screen.getByTestId("dj-create-submit"));
+    await waitFor(() => expect(createDecision).toHaveBeenCalled());
+    const arg = createDecision.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      decision: "Bet at W=0.0238",
+      expectedEv: "positive_asymmetric",
+      worstCase: "lose 100% of position",
+      decisionWeight: 0.0238,
+    });
+  });
+
+  it("the 3 EV/worst-case fields are OPTIONAL — omitted when blank (not sent as empty)", async () => {
+    getDecisionJournal.mockResolvedValue(ok(DATA()));
+    createDecision.mockResolvedValueOnce(ok(entry({})));
+    render(<DecisionJournalPage />);
+    await waitFor(() => expect(screen.getByTestId("dj-screen")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("dj-toggle-create"));
+    fireEvent.change(screen.getByTestId("dj-decision"), { target: { value: "no-EV decision" } });
+    fireEvent.change(screen.getByTestId("dj-domain"), { target: { value: "project" } });
+    fireEvent.change(screen.getByTestId("dj-confidence"), { target: { value: "60" } });
+    fireEvent.click(screen.getByTestId("dj-create-submit"));
+    await waitFor(() => expect(createDecision).toHaveBeenCalled());
+    const arg = createDecision.mock.calls[0][0];
+    // blank optional fields are NOT in the payload (backend defaults None) — never sent as ""
+    expect(arg).not.toHaveProperty("expectedEv");
+    expect(arg).not.toHaveProperty("worstCase");
+    expect(arg).not.toHaveProperty("decisionWeight");
+  });
+
+  it("decisionWeight out of 0–1 range → client-blocked, never hits the API", async () => {
+    getDecisionJournal.mockResolvedValue(ok(DATA()));
+    render(<DecisionJournalPage />);
+    await waitFor(() => expect(screen.getByTestId("dj-screen")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("dj-toggle-create"));
+    fireEvent.change(screen.getByTestId("dj-decision"), { target: { value: "X" } });
+    fireEvent.change(screen.getByTestId("dj-domain"), { target: { value: "investment" } });
+    fireEvent.change(screen.getByTestId("dj-confidence"), { target: { value: "60" } });
+    fireEvent.change(screen.getByTestId("dj-decisionWeight"), { target: { value: "1.5" } }); // > 1
+    fireEvent.click(screen.getByTestId("dj-create-submit"));
+    await waitFor(() => expect(screen.getByTestId("dj-form-error")).toHaveTextContent(/0–1/));
+    expect(createDecision).not.toHaveBeenCalled();
+  });
+
   it("FAIL-CLOSED: create 422 → error surfaced in form, not swallowed", async () => {
     getDecisionJournal.mockResolvedValue(ok(DATA()));
     createDecision.mockRejectedValueOnce(new ApiError(422, "confidence: must be 0-100"));

@@ -41,6 +41,7 @@ export const NAV: NavGroup[] = [
   {
     sec: "Tài chính",
     items: [
+      { route: "/decision", label: "Decision Cockpit", icon: "i-pulse", screen: "DEC" },
       { route: "/finance", label: "Tổng quan tài chính", icon: "i-fin", screen: "S5" },
       { route: "/portfolio", label: "Danh mục", icon: "i-pie", screen: "S6" },
       { route: "/exchange", label: "OKX Exchange", icon: "i-mkt", screen: "S-okx" },
@@ -105,6 +106,7 @@ export const CRUMB: Record<string, string> = {
   "/": "Home",
   "/projects": "Dự án",
   "/graveyard": "Nghĩa địa dự án",
+  "/decision": "Decision Cockpit",
   "/finance": "Tài chính",
   "/portfolio": "Danh mục",
   "/journal": "Nhật ký lệnh",

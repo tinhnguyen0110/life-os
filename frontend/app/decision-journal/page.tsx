@@ -21,8 +21,14 @@ import type { DecisionEntry, DecisionOutcome } from "@/lib/types";
 type CreateForm = {
   decision: string; domain: string; confidence: string; predicted: string;
   thesis: string; falsificationCondition: string; date: string;
+  // EV/worst-case core (RL-reward / anti-resulting) — capture the EV thesis + accepted
+  // downside + the W at decision time so a later resolve can separate skill from luck.
+  expectedEv: string; worstCase: string; decisionWeight: string;
 };
-const EMPTY_CREATE: CreateForm = { decision: "", domain: "", confidence: "", predicted: "", thesis: "", falsificationCondition: "", date: "" };
+const EMPTY_CREATE: CreateForm = {
+  decision: "", domain: "", confidence: "", predicted: "", thesis: "", falsificationCondition: "", date: "",
+  expectedEv: "", worstCase: "", decisionWeight: "",
+};
 
 export default function DecisionJournalPage() {
   const { data, status, errMsg, reload, create, update, remove } = useDecisionJournal();
@@ -49,6 +55,14 @@ export default function DecisionJournalPage() {
         setFormErr("Predicted (tùy chọn) là xác suất 0–1."); return;
       }
     }
+    // decisionWeight is optional (the W from /decision cockpit, 0-1).
+    let decisionWeight: number | null = null;
+    if (form.decisionWeight.trim() !== "") {
+      decisionWeight = Number(form.decisionWeight);
+      if (Number.isNaN(decisionWeight) || decisionWeight < 0 || decisionWeight > 1) {
+        setFormErr("Decision weight W (tùy chọn) là số 0–1 (dán từ Decision cockpit)."); return;
+      }
+    }
     setBusy(true);
     try {
       await create({
@@ -59,6 +73,10 @@ export default function DecisionJournalPage() {
         thesis: form.thesis.trim() || null,
         falsificationCondition: form.falsificationCondition.trim() || null,
         ...(form.date.trim() ? { date: form.date.trim() } : {}),
+        // EV/worst-case core — send only when filled (backend defaults None).
+        ...(form.expectedEv.trim() ? { expectedEv: form.expectedEv.trim() } : {}),
+        ...(form.worstCase.trim() ? { worstCase: form.worstCase.trim() } : {}),
+        ...(decisionWeight != null ? { decisionWeight } : {}),
       });
       setForm(EMPTY_CREATE);
       setCreating(false);
@@ -211,6 +229,19 @@ export default function DecisionJournalPage() {
             <Field label="Falsification — điều gì chứng minh tôi SAI" testId="dj-f-fals">
               <TextInput value={form.falsificationCondition} onChange={(v) => setForm({ ...form, falsificationCondition: v })} placeholder="Nếu X xảy ra thì thesis sai…" maxLength={4000} testId="dj-falsification" />
             </Field>
+            {/* EV / worst-case core (anti-resulting) — capture the EV thesis + accepted
+                downside + the W AT decision time → later separate skill from luck. All optional. */}
+            <div style={{ display: "flex", gap: 10 }}>
+              <Field label="Expected EV (tùy chọn)" testId="dj-f-ev">
+                <TextInput value={form.expectedEv} onChange={(v) => setForm({ ...form, expectedEv: v })} placeholder='vd "positive_asymmetric"' maxLength={2000} testId="dj-expectedEv" />
+              </Field>
+              <Field label="Worst case chấp nhận (tùy chọn)" testId="dj-f-worst">
+                <TextInput value={form.worstCase} onChange={(v) => setForm({ ...form, worstCase: v })} placeholder="downside tệ nhất tôi chấp nhận…" maxLength={2000} testId="dj-worstCase" />
+              </Field>
+              <Field label="Decision weight W 0–1 (tùy chọn)" testId="dj-f-w">
+                <TextInput value={form.decisionWeight} onChange={(v) => setForm({ ...form, decisionWeight: v })} placeholder="dán W từ Decision cockpit" maxLength={8} testId="dj-decisionWeight" />
+              </Field>
+            </div>
             {formErr && <div className="hint neg" data-testid="dj-form-error">⚠ {formErr}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button className="btn accent" type="button" onClick={onCreate} disabled={busy} data-testid="dj-create-submit">

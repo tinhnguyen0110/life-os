@@ -17,9 +17,11 @@ import { ApiError } from "@/lib/api";
 afterEach(() => { getSettings.mockReset(); patchSettings.mockReset(); });
 
 // mirrors the reconciled GET /settings truth: timezone=Asia/Ho_Chi_Minh, displayName="" (blank VALID — no min-length).
+// capital-tilt fields (riskCapital*) mirror the live payload (50000 / 500000).
 const CONFIG = (over = {}) => ({
   automationEnabled: true, briefHour: 8, idleThresholdDays: 7,
-  patternCheckEnabled: true, errorChannel: "inapp", timezone: "Asia/Ho_Chi_Minh", displayName: "", ...over,
+  patternCheckEnabled: true, errorChannel: "inapp", timezone: "Asia/Ho_Chi_Minh", displayName: "",
+  riskCapitalSmallUsd: 50000, riskCapitalLargeUsd: 500000, ...over,
 });
 const ENV = (data: unknown) => ({ success: true, data });
 // a real FastAPI per-field 422 for briefHour
@@ -203,5 +205,46 @@ describe("S12 Settings — W4d agent autonomy toggle", () => {
     await user.click(screen.getByTestId("cfg-wikiAgentAutonomous-toggle"));
     await waitFor(() => expect(within(screen.getByTestId("settings-autonomy")).getByText(/lưu thất bại|boom/i)).toBeInTheDocument());
     expect(screen.getByTestId("cfg-wikiAgentAutonomous-toggle")).toHaveAttribute("aria-checked", "false");
+  });
+});
+
+/* ── T4 — capital-tilt (riskCapital*) write-form round-trip ── */
+describe("S12 Settings — capital-tilt round-trip (PATCH → server-truth → reflect)", () => {
+  it("renders both thresholds from config", async () => {
+    getSettings.mockResolvedValueOnce(ENV(CONFIG()));
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("settings-capital-tilt")).toBeInTheDocument());
+    expect((screen.getByTestId("cfg-riskCapitalSmallUsd-input") as HTMLInputElement).value).toBe("50000");
+    expect((screen.getByTestId("cfg-riskCapitalLargeUsd-input") as HTMLInputElement).value).toBe("500000");
+  });
+
+  it("edit + Lưu → PATCH with the new value → reflects the SERVER-returned config (not the local edit)", async () => {
+    getSettings.mockResolvedValue(ENV(CONFIG()));
+    // server returns the NEW value — fail-closed: UI trusts this, not the typed draft.
+    patchSettings.mockResolvedValueOnce(ENV(CONFIG({ riskCapitalSmallUsd: 75000 })));
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("cfg-riskCapitalSmallUsd-input")).toBeInTheDocument());
+    const input = screen.getByTestId("cfg-riskCapitalSmallUsd-input") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "75000");
+    await user.click(screen.getByTestId("cfg-riskCapitalSmallUsd-save"));
+    await waitFor(() => expect(patchSettings).toHaveBeenCalledWith({ riskCapitalSmallUsd: 75000 }));
+    // re-GET truth reflected: the input now shows the server value + the save shows "✓"
+    await waitFor(() => expect((screen.getByTestId("cfg-riskCapitalSmallUsd-input") as HTMLInputElement).value).toBe("75000"));
+    await waitFor(() => expect(screen.getByTestId("cfg-riskCapitalSmallUsd-save")).toHaveTextContent("✓"));
+  });
+
+  it("422 from PATCH → the error is VISIBLE in the row (swallowed-422 guard)", async () => {
+    getSettings.mockResolvedValue(ENV(CONFIG()));
+    patchSettings.mockRejectedValueOnce(err422("riskCapitalSmallUsd", "Input should be greater than or equal to 0"));
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByTestId("cfg-riskCapitalSmallUsd-input")).toBeInTheDocument());
+    const input = screen.getByTestId("cfg-riskCapitalSmallUsd-input") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "1");
+    await user.click(screen.getByTestId("cfg-riskCapitalSmallUsd-save"));
+    await waitFor(() => expect(within(screen.getByTestId("cfg-riskCapitalSmallUsd")).getByText(/greater than or equal/i)).toBeInTheDocument());
   });
 });

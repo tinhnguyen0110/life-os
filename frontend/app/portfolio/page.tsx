@@ -18,6 +18,7 @@ import { Field, TextInput, NumberInput, Select } from "@/components/shared/Field
 import { donut } from "@/lib/spark";
 import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
 import { apiBase } from "@/lib/api";
+import { PortfolioNavLine } from "@/components/PortfolioNavLine";
 import type { Holding, ChannelAlloc, HoldingInput } from "@/lib/types";
 
 const CHANNEL_COLOR: Record<string, string> = {
@@ -31,6 +32,24 @@ const CHANNELS = ["crypto", "etf", "vn", "dry"];
 function pnlText(abs: number | null | undefined): { text: string; cls: string } {
   if (abs == null || !Number.isFinite(abs) || abs === 0) return { text: "—", cls: "faint" };
   return { text: fmtSign(abs), cls: abs < 0 ? "neg" : "pos" };
+}
+
+/** 24h change % → signed text + tone. null (no series) → "—". render-only. */
+function changeText(pct: number | null | undefined): { text: string; cls: string } {
+  if (pct == null || !Number.isFinite(pct)) return { text: "—", cls: "faint" };
+  return { text: fmtPct(pct), cls: pct < 0 ? "neg" : pct > 0 ? "pos" : "faint" };
+}
+
+/** current unit price → compact USD. Handles sub-cent coins (PEPE ~$3e-6) without
+ *  rounding to $0. null (unpriceable / dust) → "—". */
+function fmtPrice(price: number | null | undefined): string {
+  if (price == null || !Number.isFinite(price)) return "—";
+  if (price === 0) return "$0";
+  const abs = Math.abs(price);
+  if (abs >= 1) return fmtUSD(price);
+  // sub-$1: show enough significant digits so a micro-cap price isn't "$0".
+  const digits = abs >= 0.01 ? 4 : abs >= 0.0001 ? 6 : 8;
+  return `$${price.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: 2 })}`;
 }
 
 export default function PortfolioPage() {
@@ -126,11 +145,12 @@ export default function PortfolioPage() {
             )}
           </div>
 
-          {/* holdings table */}
+          {/* holdings table — per-coin P&L (backend-computed, null-safe "—" for
+              basis-less coins like USDT) + channel P&L kept distinct. */}
           <div className="panel" style={{ overflow: "hidden" }}>
             <div className="phead">
               <span className="kicker">Vị thế</span>
-              <span className="hint" style={{ marginLeft: "auto" }}>P&amp;L theo kênh (chi tiết trong từng kênh)</span>
+              <span className="hint" style={{ marginLeft: "auto" }}>P&amp;L từng mã (—  = không có giá vốn) · P&amp;L kênh tách riêng</span>
             </div>
             {holdings.length === 0 ? (
               <div className="hint" style={{ padding: "28px 16px", textAlign: "center" }} data-testid="portfolio-empty">
@@ -141,12 +161,18 @@ export default function PortfolioPage() {
             ) : (
               <table className="dtable" data-testid="portfolio-table">
                 <thead>
-                  <tr><th>Kênh</th><th>Mã</th><th>Số lượng</th><th>Giá vốn</th><th>Cập nhật</th><th>P&amp;L kênh</th></tr>
+                  <tr>
+                    <th>Kênh</th><th>Mã</th><th>Số lượng</th><th>Giá hiện tại</th><th>24h</th>
+                    <th>Giá trị</th><th>P&amp;L mã</th><th>P&amp;L kênh</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {holdings.map((h: Holding) => {
                     const alloc = allocByChannel[h.channel];
-                    const pnl = pnlText(alloc?.pnl?.abs);
+                    const chanPnl = pnlText(alloc?.pnl?.abs);
+                    // per-coin P&L (backend-computed) — null for basis-less coins → "—".
+                    const coinPnl = pnlText(h.pnl?.abs);
+                    const chg = changeText(h.changePct);
                     return (
                       <tr
                         key={`${h.channel}-${h.symbol}`}
@@ -160,12 +186,19 @@ export default function PortfolioPage() {
                             {CHANNEL_LABEL[h.channel] ?? h.channel}
                           </span>
                         </td>
-                        <td className="pn">{h.symbol}</td>
+                        <td className="pn">
+                          {h.symbol}
+                          {h.isDust && <span className="tagchip faint" style={{ marginLeft: 6, fontSize: 9 }} data-testid={`dust-${h.symbol}`}>dust ×{h.count ?? "?"}</span>}
+                        </td>
                         <td className="num">{h.qty.toLocaleString()}</td>
-                        <td className="num faint">{fmtUSD(h.avgCost)}</td>
-                        <td className="mut" style={{ fontSize: 11 }}>{relativeTime(h.asOf)}</td>
-                        <td className={`num ${pnl.cls}`} title="P&L của cả kênh (backend tính) — chi tiết từng mã trong trang kênh">
-                          {pnl.text}{alloc?.pnl?.pct != null ? <span className="faint" style={{ marginLeft: 6, fontSize: 11 }}>{fmtPct(alloc.pnl.pct)}</span> : null}
+                        <td className="num faint" data-testid={`price-${h.symbol}`}>{fmtPrice(h.price)}</td>
+                        <td className={`num ${chg.cls}`} data-testid={`chg-${h.symbol}`}>{chg.text}</td>
+                        <td className="num" data-testid={`value-${h.symbol}`}>{fmtUSD(h.usdValue)}</td>
+                        <td className={`num ${coinPnl.cls}`} title="P&L của riêng mã này (backend tính từ giá vốn của mã) — — khi mã không có giá vốn (vd: stablecoin)" data-testid={`coinpnl-${h.symbol}`}>
+                          {coinPnl.text}{h.pnl?.pct != null ? <span className="faint" style={{ marginLeft: 6, fontSize: 11 }}>{fmtPct(h.pnl.pct)}</span> : null}
+                        </td>
+                        <td className={`num ${chanPnl.cls}`} title="P&L của cả kênh (backend tính) — chi tiết từng mã trong trang kênh">
+                          {chanPnl.text}{alloc?.pnl?.pct != null ? <span className="faint" style={{ marginLeft: 6, fontSize: 11 }}>{fmtPct(alloc.pnl.pct)}</span> : null}
                         </td>
                       </tr>
                     );
@@ -176,6 +209,9 @@ export default function PortfolioPage() {
           </div>
         </div>
       )}
+
+      {/* NAV line over time (GET /decision/nav-history) — short-series honest. */}
+      {status === "ready" && <PortfolioNavLine />}
     </section>
   );
 }

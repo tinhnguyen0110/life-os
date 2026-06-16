@@ -28,7 +28,7 @@ function pnlText(abs: number | null | undefined): { text: string; cls: string } 
 /*  CryptoBasisRow — "Vốn gốc: $X [snapshot · 2 phút trước] [✏ Sửa]" */
 /*  Fetches GET /finance/crypto-basis; inline edit → PUT.              */
 /* ------------------------------------------------------------------ */
-function CryptoBasisRow() {
+function CryptoBasisRow({ onSaved }: { onSaved?: () => void }) {
   const [basis, setBasis] = useState<CryptoBasis | null>(null);
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState("");
@@ -71,8 +71,11 @@ function CryptoBasisRow() {
     setErr(null);
     try {
       const res = await setCryptoBasis(v);
-      setBasis(res.data);
+      setBasis(res.data); // reflects the server-truth basis (round-trip: PUT → re-read)
       setEditing(false);
+      // FAIL-CLOSED round-trip: the basis drives the crypto channel's P&L → refetch the
+      // overview so the dependent pnl reflects the new basis (not just the basis label).
+      onSaved?.();
     } catch (ex) {
       setErr((ex as Error).message);
     } finally {
@@ -300,7 +303,7 @@ export default function FinancePage() {
                   {/* Cost basis sub-row — only for crypto channel */}
                   {a.channel === "crypto" && (
                     <div style={{ paddingLeft: 110, marginBottom: 4 }}>
-                      <CryptoBasisRow />
+                      <CryptoBasisRow onSaved={reload} />
                     </div>
                   )}
                 </div>

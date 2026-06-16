@@ -203,14 +203,35 @@ export interface PricePoint {
    finance overview shape.
    ============================================================ */
 
-/** One position — mirrors `Holding`. RAW qty/avgCost + provenance. */
+/** One position — mirrors backend `Holding` (finance/schema.py). RAW qty/avgCost +
+ *  provenance, PLUS additive per-holding enrichment (FINANCE-CORRECTNESS #49 + P1 #52):
+ *  price/usdValue/changePct SURFACED from the per-holding numbers _aggregate already
+ *  computes (NOT re-priced); `pnl` is THIS holding's OWN P&L (distinct from the
+ *  channel-level ChannelAlloc.pnl). Every enrichment field is NULLABLE — a basis-less
+ *  coin (OKX value-only, e.g. USDT) carries avgCost=null → pnl=null (honest-null, never
+ *  fabricates a 0-cost/+∞% gain); a `·dust` summary entry (isDust) carries price/pnl=null.
+ *  FE renders + formats + colors these — NEVER recomputes (a wrong number is a BE bug). */
 export interface Holding {
   channel: string;
   symbol: string;
   qty: number;
-  avgCost: number;
+  /** avg cost per unit; null = no per-coin basis (OKX value-only coin). */
+  avgCost: number | null;
   source: string;
   asOf: string | null;
+  /** current unit price (USD); null when unpriceable / on a ·dust summary entry. */
+  price?: number | null;
+  /** current market value (USD) = price×qty; null when unpriceable. */
+  usdValue?: number | null;
+  /** 24h % change; null when no price series for the symbol / on a ·dust entry. */
+  changePct?: number | null;
+  /** true ONLY on a per-channel ·dust summary entry; a real holding is always false. */
+  isDust?: boolean;
+  /** # of holdings folded into a ·dust summary; set ONLY on a dust entry (else null). */
+  count?: number | null;
+  /** this holding's OWN P&L (abs/pct from its own avgCost vs current); null when no
+   *  basis (basis-less coin) or on a ·dust entry. DISTINCT from ChannelAlloc.pnl. */
+  pnl?: PnL | null;
 }
 
 /** Profit/loss carrying its inputs — mirrors `PnL`. */
@@ -355,6 +376,11 @@ export interface AppConfig {
    *  in P1. Optional in the TS type because the backend field lands in W4d-BE (parallel) —
    *  the FE treats a missing value as `false` (safe default) so it's robust pre-BE. */
   wikiAgentAutonomous?: boolean;
+  /** FINANCE-ASSISTANT capital-tilt (user-configurable): the USD thresholds that pick
+   *  the allocation capitalTier ("small" below smallUsd, scaling toward largeUsd). The
+   *  decision/allocation tilt reads these — surfaced here so the user can tune them. */
+  riskCapitalSmallUsd?: number;
+  riskCapitalLargeUsd?: number;
 }
 
 /** Partial update — only provided keys change. extra=forbid (unknown key → 422). */
@@ -1226,6 +1252,14 @@ export interface DecisionCreateInput {
   status?: DecisionStatus | null;
   outcome?: DecisionOutcome | null;
   lesson?: string | null;
+  /** the EV thesis at decision time (e.g. "positive_asymmetric"); backend str ≤2000.
+   *  Read-back across decision_journal/service.py (RL-reward / anti-resulting core). */
+  expectedEv?: string | null;
+  /** the accepted worst-case downside at decision time; backend str ≤2000. */
+  worstCase?: string | null;
+  /** the decision_weight W (∏q) logged at decision time, if any; backend float 0–1.
+   *  Lets the user paste the W from the /decision cockpit → closes the read→log loop. */
+  decisionWeight?: number | null;
 }
 
 /** PUT body (DecisionPatch) — ALL optional; a partial resolve is
@@ -1370,4 +1404,146 @@ export interface DemoInput {
   status?: DemoStatus;
   tags?: string[];
   loc?: number | null;
+}
+
+/* ============================================================
+   Decision tower (FINANCE-ASSISTANT P1–P4) — MIRRORS the LIVE /decision/* payloads
+   (curled on :8686). The tower is NEUTRAL by backend design: it surfaces DATA + the
+   guardian's QUESTIONS, never advice. SELF-DESCRIBING RAW: every q/W/delta is
+   backend-computed (W = ∏ layer-q, pure product, NO clamp) — the FE renders + formats
+   + colors, NEVER recomputes. Two distinct numbers (§116): `weight` = signal strength
+   (∏ of layer q); `confidence` = trust in the measurement — render them as DISTINCT
+   visuals, never one conflated "score".
+   ============================================================ */
+
+/** One layer of the W breakdown — its quality q + a self-describing note. */
+export interface DecisionLayer {
+  /** which layer: q_cycle | q_macro | q_flow | s_asset. */
+  layer: string;
+  /** the layer's quality 0–1 (the dimmest layer is the bindingConstraint). */
+  q: number;
+  /** human note: what the layer measured + why this q (source/coverage). */
+  note: string;
+}
+
+/** GET /decision/weight — the decision-weight gauge. weight = ∏ layer-q (no clamp);
+ *  verdict is a WORD (e.g. "thin") rendered verbatim; bindingConstraint names the
+ *  dimmest layer; confidence is a SEPARATE trust number (weight≠confidence). */
+export interface DecisionWeight {
+  /** W = ∏ of the layers' q (pure product, no clamp). */
+  weight: number;
+  /** the verdict WORD (e.g. "thin") — render verbatim, NEVER editorialize to advice. */
+  verdict: string;
+  breakdown: DecisionLayer[];
+  /** the layer name that's the limiting (dimmest) factor. */
+  bindingConstraint: string;
+  /** "W = q1 × q2 × … = W; dimmest layer = X" — the self-describing math. */
+  explanation: string;
+  /** trust in the measurement (0–1) — DISTINCT from weight. Low → "thin signal". */
+  confidence: number;
+  /** the two-number legend string (§116) — render it so the user sees the distinction. */
+  legend: string;
+}
+
+/** One Investment-Clock axis (growth / inflation / yield_curve). */
+export interface CycleAxis {
+  axis: string;
+  /** "up" | "down" | "flat". */
+  direction: string;
+  /** false = this axis is mock/missing (lowers coverage) → render honestly. */
+  present: boolean;
+  detail: string;
+}
+
+/** One indicator inside qCycle.breakdown (freshness/age provenance per input). */
+export interface CycleQInput {
+  name: string;
+  present: boolean;
+  value: number | null;
+  ageDays: number | null;
+  freshness: number | null;
+  source: string;
+}
+
+/** qCycle — the cycle layer's quality decomposed (freshness×coverage×agreement). */
+export interface CycleQ {
+  q: number;
+  freshness: number;
+  coverage: number;
+  agreement: number;
+  breakdown: CycleQInput[];
+  presentInputs: number;
+  neededInputs: number;
+}
+
+/** GET /decision/macro-cycle — the Investment-Clock phase + axes + the cycle q. */
+export interface MacroCycle {
+  /** the clock phase (e.g. "overheat") — a DATA label, not an instruction. */
+  phase: string;
+  axes: CycleAxis[];
+  qCycle: CycleQ;
+}
+
+/** Per-channel numeric maps for the allocation reference. */
+export interface AllocTargets {
+  crypto: number;
+  etf: number;
+  vn: number;
+  dry: number;
+}
+
+/** GET /decision/allocation — REFERENCE weighting (clock + capital size) surfaced as
+ *  DATA, not an instruction. targets = reference %, vsStaticGoldenPath = the delta (pp)
+ *  vs the static golden-path, rationale = per-channel why. The `note` says "You decide". */
+export interface DecisionAllocation {
+  phase: string;
+  /** "small" | "large" — which capital tier drove the tilt. */
+  capitalTier: string;
+  /** reference weighting % per channel. */
+  targets: AllocTargets;
+  /** per-channel rationale string (self-describing tilts). */
+  rationale: Record<string, string>;
+  /** delta in pp vs the static golden-path per channel. */
+  vsStaticGoldenPath: AllocTargets;
+  confidence: number;
+  note: string;
+}
+
+/** One guardian alert — `msg` is a QUESTION (rendered verbatim, never an imperative);
+ *  evidence carries the numbers behind the question; sources name the tools used. */
+export interface GuardianAlert {
+  /** "high" | "low" | ... — drives the card tone, NOT urgency-to-act. */
+  severity: string;
+  /** the alert text — a QUESTION the guardian raises. Render VERBATIM (NEUTRAL). */
+  msg: string;
+  /** the numbers behind the question (e.g. {stablePct, fearGreed}). */
+  evidence: Record<string, unknown>;
+  /** the tool(s) the guardian read to raise this. */
+  sources: string[];
+}
+
+/** GET /decision/guardian — risk QUESTIONS (NOT advice). [] alerts = nothing to flag. */
+export interface DecisionGuardian {
+  alerts: GuardianAlert[];
+  confidence: number;
+  asOf: string;
+  note: string | null;
+}
+
+/** One NAV point — the portfolio net-asset-value on a given day. */
+export interface NavPoint {
+  date: string;
+  nav: number;
+}
+
+/** GET /decision/nav-history — the NAV series. SHORT-SERIES HONESTY: when `points` is
+ *  small (only 2 live), `warning` says "still accumulating" + confidence is low → the
+ *  UI must NOT draw a confident trend from 2 points. */
+export interface NavHistory {
+  series: NavPoint[];
+  points: number;
+  range: { from: string; to: string };
+  confidence: number;
+  /** short-series caveat (null when the series is long enough). */
+  warning: string | null;
 }

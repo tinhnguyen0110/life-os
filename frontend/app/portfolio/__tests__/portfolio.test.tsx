@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -7,15 +7,25 @@ vi.mock("@/lib/useNav", () => ({ useSafeRouter: () => ({ push: pushMock }) }));
 
 const getFinance = vi.fn();
 const createHolding = vi.fn();
+const getNavHistory = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getFinance: () => getFinance(), createHolding: (...a: unknown[]) => createHolding(...a) };
+  return {
+    ...actual,
+    getFinance: () => getFinance(),
+    createHolding: (...a: unknown[]) => createHolding(...a),
+    getNavHistory: (...a: unknown[]) => getNavHistory(...a),
+  };
 });
 
 import PortfolioPage from "../page";
 import { ApiError } from "@/lib/api";
 
-afterEach(() => { getFinance.mockReset(); createHolding.mockReset(); pushMock.mockReset(); });
+// the PortfolioNavLine fetches /decision/nav-history on every ready render → default it
+// to a benign empty series so the existing tests don't hit a real fetch.
+const NAV_EMPTY = { success: true, data: { series: [], points: 0, range: { from: "", to: "" }, confidence: 0, warning: null } };
+afterEach(() => { getFinance.mockReset(); createHolding.mockReset(); getNavHistory.mockReset(); pushMock.mockReset(); });
+beforeEach(() => { getNavHistory.mockResolvedValue(NAV_EMPTY); });
 
 const ALLOC = (over = {}) => ({ channel: "crypto", value: 60599, pct: 96.08, target: 38, drift: 58.08, driftAlert: true, pnl: { cost: 40000, current: 60599, abs: 20599, pct: 51.5 }, ...over });
 const HOLDING = (over = {}) => ({ channel: "crypto", symbol: "BTC", qty: 1, avgCost: 40000, source: "manual", asOf: "2026-06-06T11:19:04Z", ...over });
@@ -50,15 +60,18 @@ describe("S6 Portfolio LIST — render (render-only)", () => {
     expect(screen.queryByTestId("legend-dry")).toBeNull(); // value 0 → excluded
   });
 
-  it("holdings table: per-holding qty/avgCost + CHANNEL pnl (honest label), row→detail nav", async () => {
+  it("holdings table: per-holding qty + CHANNEL pnl (honest label), row→detail nav", async () => {
+    // T3: the list shows qty + price + 24h + value + per-coin P&L + CHANNEL P&L.
+    // (avgCost moved to the per-channel detail page; the list is now value/P&L oriented.)
     getFinance.mockResolvedValueOnce(FIN());
     const user = userEvent.setup();
     render(<PortfolioPage />);
     await waitFor(() => expect(screen.getByTestId("holding-BTC")).toBeInTheDocument());
     const row = screen.getByTestId("holding-BTC");
     expect(row).toHaveTextContent("BTC");
-    expect(row).toHaveTextContent("$40,000"); // avgCost
-    expect(row).toHaveTextContent("+$20,599"); // channel pnl (render-only)
+    expect(row).toHaveTextContent("1"); // qty
+    expect(row).toHaveTextContent("+$20,599"); // channel pnl (render-only, BTC's channel=crypto)
+    expect(row).toHaveTextContent("+51.5%"); // channel pnl pct
     await user.click(row);
     expect(pushMock).toHaveBeenCalledWith("/portfolio/crypto"); // → existing detail
   });
@@ -163,5 +176,74 @@ describe("S6 Portfolio — add holding (write, fail-closed)", () => {
     await user.type(screen.getByTestId("add-avgCost-input"), "1");
     await user.click(screen.getByTestId("add-submit"));
     await waitFor(() => expect(screen.getByTestId("add-form-error")).toHaveTextContent(/server blew up/));
+  });
+});
+
+/* ── T3 — per-coin P&L enrich (holdings[].pnl/price/changePct, backend-computed, null-safe) ── */
+describe("S6 Portfolio — per-coin P&L (render-only, null-safe '—')", () => {
+  // a holding WITH a real basis (PEPE -58%) and one with NO basis (USDT honest-null).
+  const FIN_PERCOIN = FIN({
+    holdings: [
+      // basis-less stablecoin → price/pnl present but pnl null, changePct null
+      { channel: "crypto", symbol: "USDT", qty: 10000, avgCost: null, source: "okx", asOf: "2026-06-16T06:17:05Z", price: 0.99944, usdValue: 9994, changePct: null, isDust: false, count: null, pnl: null },
+      // real-basis coin with a deep loss
+      { channel: "crypto", symbol: "PEPE", qty: 28518412, avgCost: 7.02e-6, source: "okx", asOf: "2026-06-16T06:17:05Z", price: 3e-6, usdValue: 84.07, changePct: -1.45, isDust: false, count: null, pnl: { cost: 200.25, current: 84.07, abs: -116.18, pct: -58.02 } },
+    ],
+  });
+
+  it("a coin WITH basis shows its own P&L (PEPE −58.02%, abs negative tone)", async () => {
+    getFinance.mockResolvedValueOnce(FIN_PERCOIN);
+    render(<PortfolioPage />);
+    await waitFor(() => expect(screen.getByTestId("holding-PEPE")).toBeInTheDocument());
+    const cell = screen.getByTestId("coinpnl-PEPE");
+    expect(cell).toHaveTextContent("−$116"); // signed abs
+    expect(cell).toHaveTextContent("−58.0%"); // its own pct
+    expect(cell.className).toContain("neg");
+  });
+
+  it("a basis-less coin (USDT) shows '—' for per-coin P&L — NEVER a fabricated 0/+∞%", async () => {
+    getFinance.mockResolvedValueOnce(FIN_PERCOIN);
+    render(<PortfolioPage />);
+    await waitFor(() => expect(screen.getByTestId("holding-USDT")).toBeInTheDocument());
+    expect(screen.getByTestId("coinpnl-USDT")).toHaveTextContent("—");
+    // its 24h change is also null → "—" (no series), NOT "+0.0%"
+    expect(screen.getByTestId("chg-USDT")).toHaveTextContent("—");
+    // price IS present → shown (sub-$1 with sig digits, not "$0")
+    expect(screen.getByTestId("price-USDT")).not.toHaveTextContent("—");
+  });
+
+  it("sub-cent price (PEPE ~$3e-6) renders with significant digits, not '$0'", async () => {
+    getFinance.mockResolvedValueOnce(FIN_PERCOIN);
+    render(<PortfolioPage />);
+    await waitFor(() => expect(screen.getByTestId("price-PEPE")).toBeInTheDocument());
+    const price = screen.getByTestId("price-PEPE").textContent ?? "";
+    expect(price).not.toBe("$0");
+    expect(price).toMatch(/0\.0+3/); // shows the tiny price
+  });
+});
+
+/* ── T3 — NAV line (short-series honest) ── */
+describe("S6 Portfolio — NAV line", () => {
+  it("short series → renders the backend warning (no confident trend)", async () => {
+    getFinance.mockResolvedValueOnce(FIN());
+    getNavHistory.mockResolvedValueOnce({
+      success: true,
+      data: { series: [{ date: "2026-06-15", nav: 10652 }, { date: "2026-06-16", nav: 10641 }], points: 2, range: { from: "2026-06-15", to: "2026-06-16" }, confidence: 0.066, warning: "2 point(s) — short series, still accumulating" },
+    });
+    render(<PortfolioPage />);
+    await waitFor(() => expect(screen.getByTestId("portfolio-nav")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("portfolio-nav-warning")).toHaveTextContent(/still accumulating/i));
+    // a dot per point — discrete observations, not a trend
+    expect(screen.getByTestId("portfolio-nav-dot-0")).toBeInTheDocument();
+    expect(screen.getByTestId("portfolio-nav-dot-1")).toBeInTheDocument();
+  });
+
+  it("NAV fetch error → its own error state (does NOT break the holdings table)", async () => {
+    getFinance.mockResolvedValueOnce(FIN());
+    getNavHistory.mockReset();
+    getNavHistory.mockRejectedValue(new ApiError(500, "nav boom"));
+    render(<PortfolioPage />);
+    await waitFor(() => expect(screen.getByTestId("portfolio-table")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("portfolio-nav-error")).toHaveTextContent(/nav boom/));
   });
 });
