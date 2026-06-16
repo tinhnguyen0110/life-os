@@ -16,8 +16,11 @@ from datetime import datetime, timezone
 from typing import Literal, cast
 
 from .schema import (
+    AllocationTarget,
     CycleAxis,
     DecisionWeight,
+    GuardianAlert,
+    GuardianReport,
     LayerView,
     MacroCycle,
     QInputView,
@@ -393,4 +396,208 @@ def decision_weight() -> DecisionWeight:
     return DecisionWeight(  # type: ignore[call-arg]  # legend uses its canonical default (no pydantic mypy plugin → can't see Field() default)
         weight=weight, verdict=_verdict(weight), breakdown=layers,
         bindingConstraint=binding, explanation=explanation, confidence=confidence,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# T1 — allocation_target (spec §208-227): a NEUTRAL reference weighting. The      #
+# classic Investment-Clock phase tilt + the user's capital-size tilt → reference  #
+# channel weights, with per-channel rationale + the delta vs the static golden-   #
+# path. NEUTRAL: a model assumption surfaced as DATA, NOT "you should". Thresholds #
+# READ from settings (user-configurable), never hardcoded.                        #
+# --------------------------------------------------------------------------- #
+_CHANNELS = ("crypto", "etf", "vn", "dry")
+# Classic Investment-Clock phase → per-channel TILT (pp added/removed vs the golden-path
+# baseline). recovery → risk-on (tilt crypto/etf up, dry down); stagflation → defensive (dry
+# up, crypto down); etc. A REFERENCE map (spec §157), not a directive. 'unknown' → no tilt.
+_PHASE_TILT = {
+    "recovery":    {"crypto": +6, "etf": +2, "vn": 0, "dry": -8},   # risk-on
+    "overheat":    {"crypto": -2, "etf": -2, "vn": 0, "dry": +4},   # inflation hedge → trim risk
+    "stagflation": {"crypto": -8, "etf": -4, "vn": -2, "dry": +14},  # defensive
+    "slowdown":    {"crypto": -4, "etf": 0, "vn": 0, "dry": +4},    # cash/bonds
+    "unknown":     {"crypto": 0, "etf": 0, "vn": 0, "dry": 0},
+}
+# Capital-size tilt: a SMALL book may carry more risk (a few % of economic net worth), a LARGE
+# book is survival-constrained (fractional-Kelly). pp shifted crypto↔dry by tier. (The TIER is
+# decided by user-configurable thresholds; the pp here is the model's tilt magnitude.)
+_CAPITAL_TILT = {
+    "small": {"crypto": +5, "etf": 0, "vn": 0, "dry": -5},   # aggressive-er
+    "mid":   {"crypto": 0, "etf": 0, "vn": 0, "dry": 0},
+    "large": {"crypto": -5, "etf": 0, "vn": 0, "dry": +5},   # conservative
+}
+
+
+def _capital_tier(capital: float, small: float, large: float) -> str:
+    """small (<small threshold) | large (≥ large threshold) | mid (between). Thresholds come
+    from settings (user-configurable — the user owns their risk appetite)."""
+    if capital < small:
+        return "small"
+    if capital >= large:
+        return "large"
+    return "mid"
+
+
+def allocation_target(capital: float, *, phase: str | None = None,
+                      monthly_add: float = 0.0, horizon_years: float = 3.0) -> AllocationTarget:
+    """A NEUTRAL reference weighting (spec §208-227): the classic Investment-Clock for ``phase``
+    (defaults to the live macro_cycle phase) + the user's capital-size → reference channel
+    weights, with per-channel rationale + the delta vs the static golden-path. Capital-tier
+    thresholds READ from settings (user-configurable). confidence = q over the inputs (phase
+    quality × capital-known). NEUTRAL — a model assumption surfaced as DATA, the user decides."""
+    from modules.finance import service as fin
+    from modules.settings import service as settings_svc
+
+    cfg = settings_svc.get_config()
+    small_thr = getattr(cfg, "riskCapitalSmallUsd", 50000.0)
+    large_thr = getattr(cfg, "riskCapitalLargeUsd", 500000.0)
+    tier = _capital_tier(capital, small_thr, large_thr)
+
+    # phase: explicit arg, else the live macro_cycle.
+    cyc = macro_cycle() if phase is None else None
+    use_phase = phase if phase is not None else (cyc.phase if cyc else "unknown")
+    phase_tilt = _PHASE_TILT.get(use_phase, _PHASE_TILT["unknown"])
+    cap_tilt = _CAPITAL_TILT[tier]
+
+    # baseline = the static golden-path targets (the thing this reference would shift).
+    golden, _ladder, _w = fin.get_golden_path()
+    baseline = {ch: float(golden.get(ch, 0.0)) for ch in _CHANNELS}
+
+    # reference weight = baseline + phase tilt + capital tilt, floored at 0, renormalized to 100.
+    raw = {ch: max(0.0, baseline[ch] + phase_tilt.get(ch, 0) + cap_tilt.get(ch, 0)) for ch in _CHANNELS}
+    total = sum(raw.values()) or 1.0
+    targets = {ch: round(raw[ch] / total * 100.0, 1) for ch in _CHANNELS}
+    vs_golden = {ch: round(targets[ch] - baseline[ch], 1) for ch in _CHANNELS}
+
+    # per-channel rationale — NEUTRAL: states the MODEL reason, never an imperative.
+    rationale: dict[str, str] = {}
+    for ch in _CHANNELS:
+        bits = [f"classic clock ({use_phase}) tilt {phase_tilt.get(ch, 0):+d}pp"]
+        if cap_tilt.get(ch, 0):
+            bits.append(f"{tier}-capital tilt {cap_tilt.get(ch, 0):+d}pp")
+        rationale[ch] = f"reference {targets[ch]}% — " + ", ".join(bits) + f" vs golden-path {baseline[ch]:.0f}%"
+
+    # confidence = q over the inputs: phase quality (from the cycle q if we computed it) +
+    # capital known (always present here). Single-input-ish; honest low when phase unknown.
+    phase_q = cyc.qCycle.q if cyc is not None else (0.5 if use_phase != "unknown" else 0.1)
+    conf = compute_q([
+        QInput(name="phase", present=(use_phase != "unknown"), value=phase_q, age_days=0.0, data_type="cycle"),
+        QInput(name="capital", present=True, value=1.0, age_days=0.0, data_type="cycle"),
+    ], needed=2).q
+
+    return AllocationTarget(  # type: ignore[call-arg]  # note uses its canonical default (no pydantic mypy plugin)
+        phase=use_phase, capitalTier=tier,  # type: ignore[arg-type]  # one of the CapitalTier Literal
+        targets=targets, rationale=rationale, vsStaticGoldenPath=vs_golden,
+        confidence=round(conf, 4),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# T2 — finance_guardian (spec §350-366): proactive NEUTRAL observations over     #
+# EXISTING real data. Each rule fail-soft, evidence-grounded, framed as a         #
+# QUESTION (never an imperative). Real-data-only: a mock/empty source → no fire   #
+# (firing on mock fabricates concern). Mirrors the insights() scanner.            #
+# --------------------------------------------------------------------------- #
+def _guard_stablecoin_vs_fear() -> GuardianAlert | None:
+    """OBSERVE: a high-stablecoin (cash-equivalent) crypto channel WHILE F&G shows fear/recovery
+    — i.e. sitting in cash while sentiment turns. NEUTRAL question, not 'deploy'. Fires only on
+    REAL stablePct AND real F&G (mock F&G → no fire)."""
+    from modules.finance import service as fin
+    from modules.macro import service as macro_svc
+
+    ov, _ = fin.get_overview()
+    crypto = next((a for a in ov.allocations if a.channel == "crypto"), None)
+    stable_pct = getattr(crypto, "stablePct", None) if crypto else None
+    if stable_pct is None or stable_pct < 80.0:
+        return None
+    fng_hist = macro_svc.get_history("fear_greed", days=7)
+    if fng_hist is None or not fng_hist.points:
+        return None
+    last = fng_hist.points[-1]
+    if last.source == "mock":   # real-data-only — a mock F&G must not fabricate concern
+        return None
+    return GuardianAlert(
+        severity="high",
+        msg=f"crypto channel is {stable_pct:.0f}% stablecoin (cash-equivalent) while Fear&Greed "
+            f"reads {last.value:.0f} — is standing in cash here an intentional bet?",
+        evidence={"stablePct": stable_pct, "fearGreed": last.value, "fngSource": last.source},
+        sources=["finance_overview", "macro_history"],
+    )
+
+
+def _guard_meme_correlation() -> GuardianAlert | None:
+    """OBSERVE: ≥2 held meme-ish coins that are HIGHLY correlated → 'diversified' in name but
+    one bet in practice. NEUTRAL question. Fires only on REAL correlation data."""
+    from modules.finance import service as fin
+    from modules.market import service as mkt
+
+    ov, _ = fin.get_overview()
+    held = {h.symbol.upper() for h in ov.holdings if not getattr(h, "isDust", False)}
+    memes = [s for s in ("PEPE", "DOGE", "SHIB", "TRUMP", "WIF", "BONK", "FLOKI") if s in held]
+    if len(memes) < 2:
+        return None
+    try:
+        corr, _ = mkt.correlation(memes[:4], hours=720)
+    except Exception:  # noqa: BLE001 — fail-soft
+        return None
+    matrix = corr.get("matrix") if isinstance(corr, dict) else None
+    if not matrix:
+        return None   # no real correlation data → don't fabricate
+    # find the max off-diagonal correlation
+    hi = None
+    for a in matrix:
+        for b, val in (matrix.get(a, {}) or {}).items():
+            if a != b and isinstance(val, (int, float)):
+                hi = val if hi is None else max(hi, val)
+    if hi is None or hi < 0.7:
+        return None
+    return GuardianAlert(
+        severity="medium",
+        msg=f"holding {len(memes)} meme coins ({', '.join(memes)}) with correlation up to "
+            f"{hi:.2f} — is this diversification or one concentrated bet?",
+        evidence={"memes": memes, "maxCorrelation": round(hi, 2)},
+        sources=["finance_overview", "market_correlation"],
+    )
+
+
+def _guard_dust() -> GuardianAlert | None:
+    """OBSERVE: a ·dust summary entry exists (sub-$1 coins cluttering the book). Low-severity
+    NEUTRAL question. Fires only when a real dust fold happened."""
+    from modules.finance import service as fin
+
+    ov, _ = fin.get_overview()
+    dust = next((h for h in ov.holdings if getattr(h, "isDust", False)), None)
+    if dust is None or not dust.count:
+        return None
+    return GuardianAlert(
+        severity="low",
+        msg=f"{dust.count} sub-$1 dust holdings (total ${dust.usdValue or 0:.2f}) — worth a cleanup?",
+        evidence={"dustCount": dust.count, "dustUsd": dust.usdValue},
+        sources=["finance_overview"],
+    )
+
+
+_GUARDIAN_RULES = [_guard_stablecoin_vs_fear, _guard_meme_correlation, _guard_dust]
+_GUARD_SEV_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def finance_guardian() -> GuardianReport:
+    """The proactive scan (spec §350-366): NEUTRAL observations the user hasn't asked about —
+    each a real-data FACT + evidence framed as a QUESTION (never 'you should X'). Real-data-only
+    (a mock/empty source → no fire; firing on mock fabricates concern). Severity-ranked.
+    Honest-empty: nothing fires → [] + a note (NOT a fabricated alert). Each rule fail-soft."""
+    alerts: list[GuardianAlert] = []
+    sources_ok = 0
+    for rule in _GUARDIAN_RULES:
+        try:
+            a = rule()
+            if a is not None:
+                alerts.append(a)
+            sources_ok += 1
+        except Exception:  # noqa: BLE001 — one bad rule must not break the scan
+            pass
+    alerts.sort(key=lambda a: _GUARD_SEV_RANK.get(a.severity, 9))
+    confidence = round(sources_ok / len(_GUARDIAN_RULES), 4) if _GUARDIAN_RULES else 0.0
+    return GuardianReport(
+        alerts=alerts, confidence=confidence, asOf=_now().isoformat(),
+        note=(None if alerts else "nothing notable in the proactive scan right now"),
     )

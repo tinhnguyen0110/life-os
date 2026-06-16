@@ -47,4 +47,27 @@ def get_decision_weight():
     return ok(data=dw.model_dump())
 
 
+@router.get("/allocation")
+def get_allocation_target(capital: float, phase: str | None = None,
+                          monthly_add: float = 0.0, horizon_years: float = 3.0):
+    """A NEUTRAL reference weighting (FINANCE-ASSISTANT P3): the classic Investment-Clock for the
+    ``phase`` (defaults to the live macro_cycle phase) + the user's ``capital``-size → reference
+    channel weights + per-channel rationale + the delta vs the static golden-path. Capital-tier
+    thresholds are user-configurable (PATCH /settings). NEUTRAL — a model assumption surfaced as
+    DATA, not advice; the agent/user decides."""
+    at = service.allocation_target(capital, phase=phase, monthly_add=monthly_add,
+                                   horizon_years=horizon_years)
+    return ok(data=at.model_dump())
+
+
+@router.get("/guardian")
+def get_finance_guardian():
+    """The proactive scan (FINANCE-ASSISTANT P3): NEUTRAL observations the user hasn't asked
+    about — each a real-data fact + evidence framed as a QUESTION (never an imperative). Real-
+    data-only (a mock/empty source doesn't fire). Severity-ranked; honest-empty when nothing
+    notable."""
+    rep = service.finance_guardian()
+    return ok(data=rep.model_dump(), warning=rep.note)
+
+
 MODULE = BaseModule(name="decision", router=router)

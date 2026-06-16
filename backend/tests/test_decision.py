@@ -249,3 +249,179 @@ def _stub_overview(indicator_q: float):
                                trend="up", source="fred", points=2, confidence=indicator_q)
             for n in range(3)]
     return MacroOverview(indicators=inds, source="fred")
+
+
+# =========================================================================== #
+# FINANCE-ASSISTANT P3 (#55) — allocation_target + finance_guardian             #
+# =========================================================================== #
+
+# --------------------------------------------------------------------------- #
+# HARD GATE 1 (P3) — NO ADVICE VERB (the load-bearing gate for the highest-     #
+# advice-risk tools). NOTHING in allocation_target / finance_guardian may       #
+# contain an imperative advice verb — they surface DATA + questions.            #
+# --------------------------------------------------------------------------- #
+_ADVICE_VERBS = ("should", "buy", "sell", "rebalance", "move ", "deploy",
+                 "recommend", "must ", "ought")
+
+
+def test_P3_GATE1_allocation_target_no_advice_verb(isolated_paths, monkeypatch):
+    """allocation_target is a REFERENCE weighting — DATA + rationale, never 'you should be
+    aggressive'. Assert no advice verb in the whole payload (the load-bearing NEUTRAL gate)."""
+    import json
+    from modules.macro import store as mstore
+    mstore.init_macro_tables()
+    flat = json.dumps(dec.allocation_target(10000, phase="recovery").model_dump()).lower()
+    for verb in _ADVICE_VERBS:
+        assert verb not in flat, f"allocation_target leaked an advice verb {verb!r}: BLOCKER"
+
+
+def test_P3_GATE1_finance_guardian_no_advice_verb(isolated_paths, monkeypatch):
+    """finance_guardian alerts are OBSERVATIONS framed as QUESTIONS — never imperatives.
+    Force all 3 rules to fire (real data) and assert no advice verb in any alert."""
+    import json
+    from modules.macro import store as mstore
+    from modules.finance import service as fin
+    from modules.macro import service as macro_svc
+    from modules.exchange.schema import ExchangeOverview, OkxBalance
+    mstore.init_macro_tables()
+    # stablecoin-heavy crypto + a real F&G + correlated memes + dust → all rules have data
+    snap = ExchangeOverview(configured=True, totalUsdValue=10000.0, balances=[
+        OkxBalance(symbol="USDT", available=9000, frozen=0, total=9000, usdValue=9000.0),
+        OkxBalance(symbol="PEPE", available=1, frozen=0, total=1, usdValue=500.0, accAvgPx=400.0),
+        OkxBalance(symbol="DOGE", available=1, frozen=0, total=1, usdValue=400.0, accAvgPx=300.0),
+    ])
+    monkeypatch.setattr(fin.exchange_service, "get_overview", lambda: (snap, None))
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (10000.0, None))
+    # real F&G point
+    mstore.record_point("fear_greed", 23.0, "2026-06-16", "live")
+    flat = json.dumps(dec.finance_guardian().model_dump()).lower()
+    for verb in _ADVICE_VERBS:
+        assert verb not in flat, f"finance_guardian leaked an advice verb {verb!r}: BLOCKER"
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE 2 (P3) — allocation capital-size DISTINGUISHING + threshold from     #
+# settings (the user-configurable boundary moves when patched).                 #
+# --------------------------------------------------------------------------- #
+def test_P3_GATE2_capital_size_gives_different_tilt(isolated_paths):
+    """$10k (small) vs $1M (large), SAME phase → GENUINELY DIFFERENT tilt (an impl that ignores
+    capital would give identical output). Divergent inputs prove the tilt is real."""
+    small = dec.allocation_target(10000, phase="recovery")
+    large = dec.allocation_target(1000000, phase="recovery")
+    assert small.capitalTier == "small" and large.capitalTier == "large"
+    assert small.targets != large.targets, "capital size must change the tilt"
+    # small tilts MORE into crypto than large (the model's risk-capacity logic)
+    assert small.targets["crypto"] > large.targets["crypto"]
+
+
+def test_P3_GATE2_threshold_reads_from_settings(isolated_paths):
+    """The capital-tier boundary READS from settings (user-configurable). Patch
+    riskCapitalSmallUsd up → a capital that WAS 'mid' becomes 'small' (the boundary moved)."""
+    from modules.settings import service as ssvc
+    from modules.settings.schema import AppConfigPatch
+    # default small threshold 50k → $60k is 'mid'
+    assert dec.allocation_target(60000, phase="recovery").capitalTier == "mid"
+    # raise the small threshold to 100k → $60k is now 'small' (boundary moved via settings)
+    ssvc.set_config(AppConfigPatch(riskCapitalSmallUsd=100000.0))
+    assert dec.allocation_target(60000, phase="recovery").capitalTier == "small"
+
+
+def test_P3_allocation_vs_goldenpath_and_confidence(isolated_paths):
+    """The reference carries the delta vs the static golden-path + a confidence (q over inputs).
+    Unknown phase → lower confidence (honest)."""
+    from modules.macro import store as mstore
+    mstore.init_macro_tables()
+    at = dec.allocation_target(10000, phase="recovery")
+    assert set(at.vsStaticGoldenPath) == {"crypto", "etf", "vn", "dry"}
+    assert 0.0 < at.confidence <= 1.0
+    # unknown phase → no tilt + lower confidence
+    unk = dec.allocation_target(10000, phase="unknown")
+    assert unk.confidence < at.confidence
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE 3 (P3) — guardian fires on REAL data ONLY (mock → no fire)           #
+# --------------------------------------------------------------------------- #
+def test_P3_GATE3_guardian_does_not_fire_on_mock_fng(isolated_paths, monkeypatch):
+    """A guardian firing on MOCK data fabricates concern. The stablecoin-vs-fear rule must NOT
+    fire when F&G is source='mock' (even with a real high stablePct) — real-data-only."""
+    from modules.macro import store as mstore
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview, OkxBalance
+    mstore.init_macro_tables()
+    # real high-stablecoin crypto channel
+    snap = ExchangeOverview(configured=True, totalUsdValue=10000.0, balances=[
+        OkxBalance(symbol="USDT", available=9500, frozen=0, total=9500, usdValue=9500.0),
+        OkxBalance(symbol="BTC", available=1, frozen=0, total=1, usdValue=500.0, accAvgPx=400.0),
+    ])
+    monkeypatch.setattr(fin.exchange_service, "get_overview", lambda: (snap, None))
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (10000.0, None))
+    # F&G present but MOCK → the rule must NOT fire (no fabricated concern)
+    mstore.record_point("fear_greed", 23.0, "2026-06-16", "mock")
+    rep = dec.finance_guardian()
+    fng_alerts = [a for a in rep.alerts if "fear" in a.msg.lower()]
+    assert fng_alerts == [], "guardian must NOT fire the F&G rule on a MOCK F&G value"
+
+
+def test_P3_guardian_fires_on_real_data(isolated_paths, monkeypatch):
+    """The DISTINGUISHING other arm: with a REAL F&G (source='live'), the same stablecoin-heavy
+    fixture DOES fire the rule (proving it's the mock-ness that suppressed it, not the rule)."""
+    from modules.macro import store as mstore
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview, OkxBalance
+    mstore.init_macro_tables()
+    snap = ExchangeOverview(configured=True, totalUsdValue=10000.0, balances=[
+        OkxBalance(symbol="USDT", available=9500, frozen=0, total=9500, usdValue=9500.0),
+        OkxBalance(symbol="BTC", available=1, frozen=0, total=1, usdValue=500.0, accAvgPx=400.0),
+    ])
+    monkeypatch.setattr(fin.exchange_service, "get_overview", lambda: (snap, None))
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (10000.0, None))
+    mstore.record_point("fear_greed", 23.0, "2026-06-16", "live")   # REAL
+    rep = dec.finance_guardian()
+    fng_alerts = [a for a in rep.alerts if "fear" in a.msg.lower()]
+    assert len(fng_alerts) == 1, "guardian SHOULD fire the F&G rule on a REAL F&G value"
+    assert fng_alerts[0].evidence["fngSource"] == "live"
+
+
+def test_P3_guardian_honest_empty(isolated_paths, monkeypatch):
+    """Nothing notable → [] + a note (NOT a fabricated alert)."""
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview
+    monkeypatch.setattr(fin.exchange_service, "get_overview",
+                        lambda: (ExchangeOverview(configured=False, totalUsdValue=0.0, balances=[]), None))
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (None, None))
+    rep = dec.finance_guardian()
+    assert rep.alerts == [] and rep.note is not None
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE 4 (P3) — decision_journal additive fields land + calibration intact  #
+# --------------------------------------------------------------------------- #
+def test_P3_GATE4_decision_journal_finance_fields_land(isolated_paths):
+    """The additive expectedEv/worstCase/decisionWeight persist + round-trip; domain='investment'
+    is just the free-form key (no new mechanism)."""
+    from modules.decision_journal import service as dj
+    from modules.decision_journal.schema import DecisionInput
+    e = dj.create_entry(DecisionInput(
+        decision="buy gold 15% as hedge", confidence=60, domain="investment",
+        expectedEv="positive_asymmetric", worstCase="-20% if phase misread", decisionWeight=0.18))
+    got = dj.get_entry(e.id)
+    assert got.expectedEv == "positive_asymmetric"
+    assert got.worstCase == "-20% if phase misread"
+    assert got.decisionWeight == 0.18
+    assert got.domain == "investment"
+
+
+def test_P3_GATE4_calibration_still_computes(isolated_paths):
+    """Additive fields must NOT disturb the existing calibration/Brier (it keys on confidence/
+    outcome only). Resolve a few decisions → brier + bands still compute."""
+    from modules.decision_journal import service as dj
+    from modules.decision_journal.schema import DecisionInput, DecisionUpdate
+    for i, (conf, outcome) in enumerate([(60, "right"), (70, "wrong"), (90, "right")]):
+        e = dj.create_entry(DecisionInput(decision=f"call {i}", confidence=conf, domain="investment",
+                                          expectedEv="ev", worstCase="wc"))
+        dj.update_entry(e.id, DecisionUpdate(status="resolved", outcome=outcome))
+    stats, _ = dj.list_entries()
+    assert stats.resolvedCount == 3
+    assert stats.brier is not None              # calibration still computes
+    assert isinstance(stats.calibration, list)  # bands still derived

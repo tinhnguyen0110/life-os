@@ -34,6 +34,14 @@ class DecisionEntry(BaseModel):
     status: Status = "open"
     outcome: Outcome | None = None  # None while open; set on resolve
     lesson: str | None = Field(default=None, max_length=4000)
+    # FINANCE-ASSISTANT P3 (#55) — finance-decision fields (additive, optional; a non-finance
+    # decision leaves them None). falsificationCondition already = the "invalidation". These
+    # let a finance decision (domain="investment") record the EV thesis + accepted downside +
+    # the decision_weight W at decision time (so the bet-size can later be correlated with the
+    # outcome). They do NOT touch calibration/Brier (those key on confidence/outcome only).
+    expectedEv: str | None = Field(default=None, max_length=2000, description="the EV thesis at decision time (e.g. 'positive_asymmetric')")
+    worstCase: str | None = Field(default=None, max_length=2000, description="the accepted worst-case downside")
+    decisionWeight: float | None = Field(default=None, ge=0.0, le=1.0, description="the decision_weight W (∏q) logged at decision time, if any")
     createdAt: str
     updatedAt: str
 
@@ -52,6 +60,10 @@ class DecisionInput(BaseModel):
     status: Status | None = None
     outcome: Outcome | None = None
     lesson: str | None = Field(default=None, max_length=4000)
+    # FINANCE-ASSISTANT P3 (#55) — finance-decision fields (additive, optional).
+    expectedEv: str | None = Field(default=None, max_length=2000)
+    worstCase: str | None = Field(default=None, max_length=2000)
+    decisionWeight: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("decision", "domain")
     @classmethod
@@ -76,6 +88,10 @@ class DecisionUpdate(BaseModel):
     status: Status | None = None
     outcome: Outcome | None = None
     lesson: str | None = Field(default=None, max_length=4000)
+    # FINANCE-ASSISTANT P3 (#55) — finance-decision fields (additive, optional; partial update).
+    expectedEv: str | None = Field(default=None, max_length=2000)
+    worstCase: str | None = Field(default=None, max_length=2000)
+    decisionWeight: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("decision", "domain")
     @classmethod

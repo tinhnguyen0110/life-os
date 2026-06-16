@@ -35,6 +35,12 @@ class AppConfig(BaseModel):
     # proposals-only, human ratifies in P1 (the north-star). Defaults OFF so the safe
     # behavior holds for a fresh/absent config.
     wikiAgentAutonomous: bool = Field(default=False, description="ON = agent writes apply directly (bypass the human-ratify queue); OFF (default) = proposals-only")
+    # FINANCE-ASSISTANT P3 (#55): the capital-size risk thresholds allocation_target reads —
+    # USER-CONFIGURABLE (the user owns their risk appetite; we default, they override). Capital
+    # < small → may tilt aggressive; ≥ large → fractional-Kelly conservative; smooth between.
+    # NOT hardcoded in the tool (team-lead lock).
+    riskCapitalSmallUsd: float = Field(default=50000.0, ge=0, description="capital below this → may tilt aggressive (allocation_target)")
+    riskCapitalLargeUsd: float = Field(default=500000.0, ge=0, description="capital at/above this → fractional-Kelly conservative (allocation_target)")
 
 
 class AppConfigPatch(BaseModel):
@@ -51,3 +57,6 @@ class AppConfigPatch(BaseModel):
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     displayName: str | None = Field(default=None, max_length=80)  # may be empty (stored-only)
     wikiAgentAutonomous: bool | None = Field(default=None)  # W4d toggle (USER-ORDERED)
+    # FINANCE-ASSISTANT P3 (#55): user-editable capital-size risk thresholds.
+    riskCapitalSmallUsd: float | None = Field(default=None, ge=0)
+    riskCapitalLargeUsd: float | None = Field(default=None, ge=0)

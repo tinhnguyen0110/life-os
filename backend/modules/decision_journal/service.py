@@ -82,6 +82,10 @@ def _render(e: DecisionEntry) -> str:
         "falsificationCondition": e.falsificationCondition, "confidence": e.confidence,
         "predicted": e.predicted, "date": e.date, "domain": e.domain,
         "status": e.status, "outcome": e.outcome, "lesson": e.lesson,
+        # FINANCE-ASSISTANT P3 (#55): finance-decision fields — MUST round-trip in the
+        # front-matter or they don't persist (None on a non-finance decision).
+        "expectedEv": e.expectedEv, "worstCase": e.worstCase,
+        "decisionWeight": e.decisionWeight,
         "createdAt": e.createdAt, "updatedAt": e.updatedAt,
     }
     body_parts = [f"## Decision\n{e.decision}"]
@@ -116,6 +120,10 @@ def _parse(content: str) -> DecisionEntry | None:
             confidence=fm["confidence"], predicted=fm.get("predicted"),
             date=fm["date"], domain=fm["domain"], status=fm.get("status", "open"),
             outcome=fm.get("outcome"), lesson=fm.get("lesson"),
+            # FINANCE-ASSISTANT P3 (#55): optional finance fields (absent on old/non-finance
+            # entries → None, so existing entries still parse).
+            expectedEv=fm.get("expectedEv"), worstCase=fm.get("worstCase"),
+            decisionWeight=fm.get("decisionWeight"),
             createdAt=fm["createdAt"], updatedAt=fm["updatedAt"],
         )
     except Exception:
@@ -154,6 +162,8 @@ def create_entry(body: DecisionInput) -> DecisionEntry:
         falsificationCondition=body.falsificationCondition, confidence=body.confidence,
         predicted=body.predicted, date=body.date or now, domain=body.domain,
         status=body.status or "open", outcome=body.outcome, lesson=body.lesson,
+        # FINANCE-ASSISTANT P3 (#55): carry the finance fields from the input (None if absent).
+        expectedEv=body.expectedEv, worstCase=body.worstCase, decisionWeight=body.decisionWeight,
         createdAt=now, updatedAt=now,
     )
     md_store.write_file(_rel(entry.id), _render(entry), f"create decision {entry.id}")
@@ -190,6 +200,10 @@ def update_entry(entry_id: str, body: DecisionUpdate) -> DecisionEntry | None:
         status=_merge("status"),
         outcome=_merge("outcome"),
         lesson=_merge("lesson"),
+        # FINANCE-ASSISTANT P3 (#55): partial-merge the finance fields too (None = unchanged).
+        expectedEv=_merge("expectedEv"),
+        worstCase=_merge("worstCase"),
+        decisionWeight=_merge("decisionWeight"),
         createdAt=existing.createdAt,
         updatedAt=_now_iso(),
     )

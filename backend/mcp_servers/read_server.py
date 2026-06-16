@@ -85,6 +85,10 @@ from modules.finance.service import get_analytics as _fin_analytics
 # (W=∏q). Pure read/compute (no mutation) → aliased-private, the no-write gate auto-holds.
 from modules.decision.service import macro_cycle as _decision_macro_cycle
 from modules.decision.service import decision_weight as _decision_weight
+# FINANCE-ASSISTANT P3 (#55): allocation_target (NEUTRAL reference weighting) + finance_guardian
+# (proactive NEUTRAL observations). Pure read/compute → aliased-private, the no-write gate holds.
+from modules.decision.service import allocation_target as _decision_allocation
+from modules.decision.service import finance_guardian as _decision_guardian
 from modules.market.service import correlation as _mkt_correlation
 from modules.market.service import relative_strength as _mkt_rel_strength
 from modules.market.service import MAX_COMPARE_SYMBOLS as _MAX_CORR_SYMBOLS
@@ -309,6 +313,29 @@ def decision_weight() -> dict[str, Any]:
     conflates them. NEUTRAL — a descriptive verdict band + breakdown, NO buy/sell/should verb;
     the agent reads W and decides. ``{decisionWeight}``."""
     return {"decisionWeight": _jsonable(_decision_weight())}
+
+
+def allocation_target(capital: float, phase: str | None = None,
+                      monthly_add: float = 0.0, horizon_years: float = 3.0) -> dict[str, Any]:
+    """A NEUTRAL reference weighting (FINANCE-ASSISTANT P3): given your ``capital`` (USD) and the
+    macro ``phase`` (defaults to the live macro_cycle phase), the classic Investment-Clock + your
+    capital-size implies these reference channel weights — with per-channel ``rationale``, the
+    delta ``vsStaticGoldenPath``, and a ``confidence``. Capital-tier thresholds are user-
+    configurable. NEUTRAL — this is a MODEL ASSUMPTION surfaced as DATA (the classic clock + your
+    capital size), NOT an instruction to act; the agent/user reasons + decides. ``{allocation}``."""
+    return {"allocation": _jsonable(_decision_allocation(
+        float(capital), phase=phase, monthly_add=float(monthly_add),
+        horizon_years=float(horizon_years)))}
+
+
+def finance_guardian() -> dict[str, Any]:
+    """The PROACTIVE scan (FINANCE-ASSISTANT P3): NEUTRAL observations the user hasn't asked about
+    — each a real-data FACT + evidence, framed as a QUESTION (never 'you should X'). e.g. 'crypto
+    is 98% stablecoin while Fear&Greed reads 23 — intentional bet?'. Real-data-ONLY: a mock/empty
+    source does NOT fire (firing on mock would fabricate concern). Severity-ranked; honest-empty
+    (a note, not a fabricated alert) when nothing notable. The agent reads the observations and
+    reasons — the tool never tells the user what to DO. ``{guardian}``."""
+    return {"guardian": _jsonable(_decision_guardian())}
 
 
 def finance_analytics() -> dict[str, Any]:
@@ -1061,6 +1088,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     # FINANCE-ASSISTANT P2 (#54): the decision tower — RL state + W=∏q (NEUTRAL read/compute)
     "macro_cycle": macro_cycle,
     "decision_weight": decision_weight,
+    # FINANCE-ASSISTANT P3 (#55): policy (reference weighting) + proactive scan (NEUTRAL)
+    "allocation_target": allocation_target,
+    "finance_guardian": finance_guardian,
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,

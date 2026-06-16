@@ -41,9 +41,12 @@ def test_get_settings_defaults(app_client):
     d = body["data"]
     assert set(d) == {"automationEnabled", "briefHour", "idleThresholdDays",
                       "patternCheckEnabled", "errorChannel", "timezone", "displayName",
-                      "wikiAgentAutonomous"}  # W4d toggle exposed in GET /settings
+                      "wikiAgentAutonomous",
+                      # #55 FINANCE-ASSISTANT P3: user-configurable capital-size risk thresholds
+                      "riskCapitalSmallUsd", "riskCapitalLargeUsd"}
     assert d["briefHour"] == 8 and d["idleThresholdDays"] == 7 and d["automationEnabled"] is True
     assert d["wikiAgentAutonomous"] is False  # W4d safe default OFF
+    assert d["riskCapitalSmallUsd"] == 50000.0 and d["riskCapitalLargeUsd"] == 500000.0  # #55 defaults
 
 
 def test_patch_settings_round_trip(app_client):
