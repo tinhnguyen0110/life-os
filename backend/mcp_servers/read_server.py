@@ -81,6 +81,10 @@ from modules.finance.service import simulate as _fin_simulate
 # / returns over the live overview — mutates NOTHING). NOT set_golden_path/upsert_holding
 # (those stay in WRITE_SYMBOLS). Aliased-private so the no-write namespace/AST gate auto-holds.
 from modules.finance.service import get_analytics as _fin_analytics
+# FINANCE-ASSISTANT P2 (#54): the decision tower — macro_cycle (RL state) + decision_weight
+# (W=∏q). Pure read/compute (no mutation) → aliased-private, the no-write gate auto-holds.
+from modules.decision.service import macro_cycle as _decision_macro_cycle
+from modules.decision.service import decision_weight as _decision_weight
 from modules.market.service import correlation as _mkt_correlation
 from modules.market.service import relative_strength as _mkt_rel_strength
 from modules.market.service import MAX_COMPARE_SYMBOLS as _MAX_CORR_SYMBOLS
@@ -282,6 +286,29 @@ def finance_simulate(allocation: dict[str, float]) -> dict[str, Any]:
         return {"error": f"negative weight(s) for {negative} — weights must be ≥0"}
     result, warnings = _fin_simulate(allocation)
     return {"result": _jsonable(result), "warnings": list(warnings or [])}
+
+
+def macro_cycle() -> dict[str, Any]:
+    """The Investment-Clock RL STATE (FINANCE-ASSISTANT P2): which macro phase we're in —
+    ``phase`` ∈ recovery|overheat|stagflation|slowdown|unknown — from growth (INDPRO+UNRATE)
+    × inflation (CPI) + the yield-curve regime, with ``qCycle`` = the q-engine's confidence
+    (freshness×coverage×agreement) over those axes. ``favored``/``defensive`` are the CLASSIC-
+    CLOCK reference map (which asset classes that phase is associated with), NOT advice for the
+    user's book. NEUTRAL — data + q. Honest: a mock/missing axis → coverage<1 → lower qCycle +
+    a warning; phase 'unknown' if too thin (never a fabricated phase). ``{macroCycle}``."""
+    return {"macroCycle": _jsonable(_decision_macro_cycle())}
+
+
+def decision_weight() -> dict[str, Any]:
+    """The DECISION TOWER's tip (FINANCE-ASSISTANT P2): how hard the data says you can bet right
+    now. ``weight`` = W = q_cycle × q_macro × q_flow × s_asset — a PURE PRODUCT (a dark layer
+    → W=0, "blind = don't bet"; no inter-layer clamp). ``bindingConstraint`` names the dimmest
+    layer (where adding data helps most). CRITICAL: ``weight`` (signal strength) and
+    ``confidence`` (how much to trust the weight measurement) are TWO SEPARATE numbers — the
+    legend spells out the dangerous high-weight+low-confidence quadrant so the agent never
+    conflates them. NEUTRAL — a descriptive verdict band + breakdown, NO buy/sell/should verb;
+    the agent reads W and decides. ``{decisionWeight}``."""
+    return {"decisionWeight": _jsonable(_decision_weight())}
 
 
 def finance_analytics() -> dict[str, Any]:
@@ -1031,6 +1058,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "finance_simulate": finance_simulate,
     # FINANCE-MCP-SHAPE (#50): rebalance + risk/HHI + returns over the live overview (READ)
     "finance_analytics": finance_analytics,
+    # FINANCE-ASSISTANT P2 (#54): the decision tower — RL state + W=∏q (NEUTRAL read/compute)
+    "macro_cycle": macro_cycle,
+    "decision_weight": decision_weight,
     "market_overview": market_overview,
     "market_history": market_history,
     "market_indicators": market_indicators,

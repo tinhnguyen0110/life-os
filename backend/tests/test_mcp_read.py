@@ -1005,4 +1005,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 41  # +1 finance_analytics (#50 FINANCE-MCP-SHAPE); was 40 (INSIGHTS D1)
+    assert len(rs.TOOLS) == 43  # +2 macro_cycle/decision_weight (#54 P2); was 41 (#50 finance_analytics)

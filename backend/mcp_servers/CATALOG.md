@@ -5,7 +5,7 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **51 tools** — 41 read · 10 write (propose).
+Totals: **53 tools** — 43 read · 10 write (propose).
 
 ## Capability boundary (the supervision contract)
 

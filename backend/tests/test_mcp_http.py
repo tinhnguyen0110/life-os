@@ -9,7 +9,7 @@ Defensive cases (each a real assertion, per the dispatch):
     enable_dns_rebinding_protection=False the handshake 421s. We KEEP that Host (don't
     override to localhost) so a 200 proves the remote-client path this sprint exists to fix.
 (c) 4 distinct managers → assert 4 distinct mcp-session-id values across the 4 mounts.
-(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 41/10/9/6.
+(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 43/10/9/6.
 (e) no `from __future__ import annotations` added to the 4 server modules.
 """
 
@@ -96,14 +96,14 @@ def test_root_still_redirects(client):
 # --------------------------------------------------------------------------- #
 def test_stdio_build_servers_unchanged():
     """Each server's build_server() still returns a FastMCP and the TOOLS counts hold
-    (41 read / 10 write / 9 wiki-read / 6 wiki-write) — stdio path intact. (read = 41 since
-    #50 FINANCE-MCP-SHAPE added finance_analytics; was 40.)"""
+    (43 read / 10 write / 9 wiki-read / 6 wiki-write) — stdio path intact. (read = 43 since
+    #54 P2 added macro_cycle + decision_weight; was 41 at #50.)"""
     import mcp_servers.read_server as rs
     import mcp_servers.write_server as ws
     import modules.wiki.mcp.read_server as wrs
     import modules.wiki.mcp.write_server as wws
 
-    assert len(rs.TOOLS) == 41
+    assert len(rs.TOOLS) == 43
     assert len(ws.TOOLS) == 10
     # the 2 whole-app servers expose TOOLS; build each (default transport_security=None)
     for mod in (rs, ws):

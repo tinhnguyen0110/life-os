@@ -52,18 +52,19 @@ def tracked_indicators() -> list[str]:
     return list(settings.fred_series.keys())
 
 
-# FINANCE-ASSISTANT P1 (#52): Phase-1 source-based confidence STUB. A real FRED CSV point →
-# high (0.9); a fail-open mock placeholder → low (0.2). This is the SEAM:
-# Phase-2: replace with compute_q() (freshness × coverage × agreement) — the call-site
-# (_indicator_view) stays unchanged; only this fn's body swaps for the real q.
-_CONF_FRED = 0.9
-_CONF_MOCK = 0.2
-
-
-def _confidence_for(source: str) -> float:
-    """Source-based confidence (Phase-1 stub): 'fred' (real) → 0.9, else (mock) → 0.2."""
-    # Phase-2: replace with compute_q() (freshness × coverage × agreement).
-    return _CONF_FRED if source == "fred" else _CONF_MOCK
+# FINANCE-ASSISTANT P2 (#54): the confidence SEAM, now wired to the REAL q-engine. P1 shipped
+# a source stub (fred 0.9 / mock 0.2); P2 swaps the body to call decision.compute_q (via
+# confidence_q) so confidence = the real freshness×coverage×agreement. The ONE compute_q
+# contract (HARD GATE 5): this does NOT reimplement q — it delegates. Flag-2 option (a): the
+# call-site passes the point's ts so freshness=exp(−age/τ) is REAL (a source-only proxy would
+# fake freshness).
+def _confidence_for(value: float | None, ts: str | None, source: str | None) -> float:
+    """Confidence for one macro indicator = a single-input compute_q (coverage 1 when present,
+    agreement 1 single-source, freshness from the point's ts). Delegates to the shared
+    decision.confidence_q — the q-engine is the single source of truth, never reimplemented
+    here. A mock point still gets a real freshness/coverage q (honest)."""
+    from modules.decision.service import confidence_q
+    return confidence_q(value, ts, source, data_type="macro")
 
 
 def _trend(latest: float | None, previous: float | None) -> Trend:
@@ -129,7 +130,8 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
         trend=_trend(latest_val, prev_val),
         source=latest_row["source"],
         points=n,
-        confidence=_confidence_for(latest_row["source"]),
+        # FINANCE-ASSISTANT P2 (#54): pass value + ts + source → real compute_q freshness.
+        confidence=_confidence_for(latest_val, latest_row["ts"], latest_row["source"]),
     )
 
 

@@ -202,9 +202,13 @@ def test_macro_has_four_new_indicators(macro_db, monkeypatch):
     keys = {v.indicator for v in ov.indicators}
     for new in ("yield_curve_10y2y", "unemployment", "m2_liquidity", "industrial_production"):
         assert new in keys, f"{new} missing from macro overview"
-    # source='fred' → high confidence (the seam)
+    # P2 (#54): the seam is now the REAL compute_q (freshness×coverage×agreement), NOT the P1
+    # 0.9/0.2 source-stub. A fred point with a present value → coverage 1, agreement 1, and a
+    # real freshness from its ts → confidence ∈ (0, 1] (a number that TRACKS freshness, not a
+    # constant). (The exact value depends on now−ts; just assert it's a real q in range.)
     yc = next(v for v in ov.indicators if v.indicator == "yield_curve_10y2y")
-    assert yc.source == "fred" and yc.confidence == 0.9
+    assert yc.source == "fred"
+    assert 0.0 < yc.confidence <= 1.0
 
 
 def test_fred_000_fails_open_to_mock_never_500(macro_db, monkeypatch):
@@ -219,8 +223,11 @@ def test_fred_000_fails_open_to_mock_never_500(macro_db, monkeypatch):
 
     ov, warnings = ms.get_overview()  # MUST NOT raise
     yc = next(v for v in ov.indicators if v.indicator == "yield_curve_10y2y")
-    assert yc.source == "mock"            # fell open
-    assert yc.confidence == 0.2           # low confidence (the seam)
+    assert yc.source == "mock"            # fell open (the honesty signal — NOT the confidence value)
+    # P2 (#54): confidence is now the REAL compute_q (a mock point still has a real freshness q;
+    # the source='mock' tag + the warning are the honesty signals, not a magic 0.2). Just assert
+    # it's a real q in range — the mock-vs-real distinction is carried by `source`, not the number.
+    assert 0.0 < yc.confidence <= 1.0
     assert yc.latest is not None          # still has a (mock) value — honest, present
     assert any("mock" in w.lower() for w in warnings)
 
