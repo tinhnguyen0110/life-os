@@ -153,6 +153,20 @@ class Change(BaseModel):
     pct: float | None = None
 
 
+class PnlScope(BaseModel):
+    """FINANCE-AUDIT2 (#66): the SCOPE of ``pnlTotal`` so it can't be misread as whole-portfolio.
+    pnlTotal aggregates ONLY the holdings WITH a real cost basis (accAvgPx); the no-basis
+    stablecoin/dust value is EXCLUDED (you can't claim gain/loss on a no-basis position). So
+    pnlTotal.pct is the return on the BASIS-KNOWN slice — ``coveragePct`` says how much of the
+    book that slice is (e.g. ~2% when the book is mostly stablecoin cash), so a reader doesn't
+    take a −72%-of-the-2% as a −72%-whole-portfolio."""
+
+    basis: str = Field("known-cost-only", description="pnlTotal covers only holdings with a real cost basis")
+    coveragePct: float | None = Field(
+        None, description="known-basis value / totalValue × 100 — how much of the book pnlTotal covers")
+    note: str = Field(..., description="plain-language scope (the basis-known % + what's excluded)")
+
+
 class FinanceOverview(BaseModel):
     """S5 overview composite."""
 
@@ -160,7 +174,12 @@ class FinanceOverview(BaseModel):
     change: Change | None = Field(None, description="portfolio change; None if no series")
     holdings: list[Holding] = Field(default_factory=list)
     allocations: list[ChannelAlloc] = Field(default_factory=list)
-    pnlTotal: PnL
+    pnlTotal: PnL = Field(
+        ..., description="P&L over the BASIS-KNOWN holdings only (accAvgPx-priced) — see pnlScope "
+                         "for coverage; abs/pct null when no holding has a cost basis")
+    pnlScope: PnlScope | None = Field(
+        None, description="FINANCE-AUDIT2 (#66): the SCOPE of pnlTotal (basis-known coverage %) "
+                          "so it isn't misread as whole-portfolio")
     dryPowder: float = Field(0.0, description="value of the 'dry' channel (dry powder)")
     series: list[float] = Field(default_factory=list, description="portfolio value over time ([] if none)")
 

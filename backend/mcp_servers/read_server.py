@@ -782,7 +782,11 @@ def _brief_portfolio() -> dict[str, Any]:
     return {
         "totalValue": ov.totalValue,
         "change": _jsonable(ov.change),
+        # FINANCE-AUDIT2 (#66): pnlTotal is now the BASIS-KNOWN per-coin sum (honest direction,
+        # was a fake +$7); pnlScope carries the coverage % + note so an agent doesn't misread
+        # a −X% on the basis-known slice (often a few % of the book) as a whole-portfolio loss.
         "pnlTotal": _jsonable(ov.pnlTotal),
+        "pnlScope": _jsonable(ov.pnlScope),
         "dryPowder": ov.dryPowder,
         "allocations": [
             {"channel": a.channel, "value": a.value,

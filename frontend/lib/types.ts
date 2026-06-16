@@ -244,6 +244,19 @@ export interface PnL {
   pct: number | null;
 }
 
+/** The SCOPE of a P&L number — mirrors backend `PnlScope`. Critical for honesty: a
+ *  −72% pnlTotal is over the ~2.2% of the book that HAS a cost basis, NOT the whole
+ *  portfolio. The FE must render this so the honest number isn't itself misread as a
+ *  whole-portfolio loss. coveragePct = % of book value that has a basis. */
+export interface PnlScope {
+  /** e.g. "known-cost-only" — which slice the P&L covers. */
+  basis: string;
+  /** % of book value that has a cost basis (the denominator the pct applies to); null if unknown. */
+  coveragePct: number | null;
+  /** human-readable explanation (rendered as the scope caption/tooltip). */
+  note: string;
+}
+
 /** A channel allocation slice — mirrors `ChannelAlloc`. drift is a SIGNED number
  *  (pct - target); |drift|>5 ⇒ rebalance alert. actual % = `pct`.
  *  NOTE: the LIVE channel-detail serializes an extra `driftAlert: bool` (computed
@@ -697,6 +710,9 @@ export interface FinanceOverview {
   holdings: Holding[];
   allocations: ChannelAlloc[];
   pnlTotal: PnL;
+  /** the SCOPE of pnlTotal — render so −72% reads as "on the ~2.2% with a basis", NOT
+   *  whole-portfolio. Optional/nullable: backend field; fall back to bare text if absent. */
+  pnlScope?: PnlScope | null;
   dryPowder: number;
   /** portfolio value over time ([] if none). */
   series: number[];

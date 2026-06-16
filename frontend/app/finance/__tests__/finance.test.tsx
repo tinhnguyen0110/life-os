@@ -64,6 +64,38 @@ describe("S5 Finance Overview", () => {
     expect(screen.getByText("+$9,960")).toBeInTheDocument();
   });
 
+  // #66 FE: the honest pnlTotal must show its SCOPE so −72% isn't misread as whole-portfolio.
+  it("pnlScope present → P&L pct shows its COVERAGE (−72.5% trên ~2.2% có giá vốn) + note tooltip", async () => {
+    apiGet.mockResolvedValueOnce({
+      success: true,
+      data: {
+        totalValue: 10644, change: { abs: 0, pct: null }, holdings: [], series: [], dryPowder: 0,
+        allocations: [],
+        pnlTotal: { cost: 850.55, current: 233.52, abs: -617.03, pct: -72.54 },
+        pnlScope: { basis: "known-cost-only", coveragePct: 2.2, note: "P&L on the ~2.2% of the book (6 holdings) that have a cost basis; the ~98% no-basis is excluded" },
+      },
+    });
+    render(<FinancePage />);
+    await waitFor(() => expect(screen.getByTestId("pnl-scope")).toBeInTheDocument());
+    const scope = screen.getByTestId("pnl-scope");
+    // the honest abs is rendered (red via totalTone) AND the scope context is explicit
+    expect(screen.getByText("−$617")).toBeInTheDocument();
+    expect(scope).toHaveTextContent("−72.5%");
+    expect(scope).toHaveTextContent("~2.2% danh mục có giá vốn"); // NOT bare "trên vốn"
+    expect(scope).not.toHaveTextContent("trên vốn");
+    // the full note is the tooltip (so the user can read why)
+    expect(scope).toHaveAttribute("title", expect.stringContaining("cost basis"));
+  });
+
+  it("pnlScope ABSENT → null-safe fallback to the legacy 'trên vốn' text (no crash)", async () => {
+    // FULL has no pnlScope → falls back; sub still renders, no pnl-scope testid.
+    apiGet.mockResolvedValueOnce(FULL);
+    render(<FinancePage />);
+    await waitFor(() => expect(screen.getByText("+$9,960")).toBeInTheDocument());
+    expect(screen.queryByTestId("pnl-scope")).toBeNull();
+    expect(screen.getByText(/trên vốn/)).toBeInTheDocument();
+  });
+
   it("renders allocation rows with backend drift (render-only) + colored P&L", async () => {
     apiGet.mockResolvedValueOnce(FULL);
     render(<FinancePage />);

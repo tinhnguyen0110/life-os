@@ -125,13 +125,27 @@ export default function HomePage() {
                   );
                 })}
                 {(fin?.allocations ?? []).length === 0 && <span className="hint">Chưa có dữ liệu.</span>}
-                {/* Total P&L row — pnlTotal.abs/pct from backend (render-only). */}
+                {/* Total P&L row — pnlTotal.abs/pct from backend (render-only). The pct
+                    carries its SCOPE (pnlScope) so −72.5% isn't misread as whole-portfolio
+                    (it's on the ~2.2% with a basis). Null-safe: pnlScope null → bare pct. */}
                 {fin?.pnlTotal && (
-                  <div className="mrow" style={{ borderTop: "1px solid var(--line)", marginTop: 4, paddingTop: 6 }} data-testid="home-pnl-total">
-                    <span className="k"><b>Tổng</b></span>
-                    <span className={`v num ${(fin.pnlTotal.abs ?? 0) < 0 ? "neg" : "pos"}`}>
-                      {fmtSign(fin.pnlTotal.abs)} ({fmtPct(fin.pnlTotal.pct ?? null)})
-                    </span>
+                  <div style={{ borderTop: "1px solid var(--line)", marginTop: 4, paddingTop: 6 }}>
+                    <div className="mrow" style={{ borderBottom: 0, padding: 0 }} data-testid="home-pnl-total">
+                      <span className="k"><b>Tổng</b></span>
+                      <span className={`v num ${(fin.pnlTotal.abs ?? 0) < 0 ? "neg" : "pos"}`}>
+                        {fmtSign(fin.pnlTotal.abs)} ({fmtPct(fin.pnlTotal.pct ?? null)})
+                      </span>
+                    </div>
+                    {fin.pnlScope?.coveragePct != null && Number.isFinite(fin.pnlScope.coveragePct) && (
+                      <div
+                        className="hint faint"
+                        style={{ fontSize: 10, marginTop: 2, lineHeight: 1.3 }}
+                        title={fin.pnlScope.note}
+                        data-testid="home-pnl-scope"
+                      >
+                        trên ~{fin.pnlScope.coveragePct.toFixed(1)}% danh mục có giá vốn
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -169,6 +169,84 @@ def test_dry_powder_is_dry_channel(isolated_paths, mock_prices):
     assert overview.dryPowder == 10000.0
 
 
+# --- FINANCE-AUDIT2 (#66): pnlTotal from the BASIS-KNOWN per-coin sum, not the snapshot cost ---
+# The bug it pins: a snapshot-cost pnlTotal showed +$7 (a gain) while the real per-coin loss
+# was −$617. The fix aggregates ONLY holdings with a real cost basis; no-basis (OKX value-only /
+# stablecoin) holdings are EXCLUDED (honest-null) + a pnlScope labels the coverage %.
+
+def _entry(cost, value):
+    """A by_channel holding entry as _aggregate builds it (pnl = _pnl(cost, value).model_dump())."""
+    return {"pnl": service._pnl(cost, value).model_dump()}
+
+
+def test_basis_known_pnl_distinguishing_loss_is_negative():
+    """DISTINGUISHING: a book of losing basis-known coins + a big no-basis stablecoin →
+    pnlTotal is NEGATIVE (the real loss), NOT the fake near-$0 gain a snapshot cost gives.
+    A correct impl (sum the per-coin losses) ≠ a collapsed one (snapshot cost ≈ value → ~0)."""
+    by_channel = {
+        "crypto": {"holdings": [_entry(1000.0, 600.0),     # basis-known: −400
+                                _entry(500.0, 283.09)]},   # basis-known: −216.91
+        "dry": {"holdings": [_entry(0.0, 9000.0)]},        # NO basis (cost 0) → EXCLUDED
+    }
+    total_value = 600 + 283.09 + 9000  # 9883.09
+    pnl, scope = service._basis_known_pnl(by_channel, total_value)
+    assert pnl.abs == -616.91, "pnlTotal must be the real per-coin LOSS, not a snapshot ~0 gain"
+    assert pnl.abs < 0 and pnl.pct < 0  # DIRECTION is a loss, not a gain
+    assert scope.coveragePct == round(883.09 / total_value * 100, 1)  # ~8.9% basis-known
+
+
+def test_basis_known_pnl_cross_check_equals_sum_of_per_coin():
+    """CROSS-CHECK: pnlTotal.abs == Σ (per-coin pnl.abs) over the basis-known entries."""
+    entries = [(1200.0, 1000.0), (3000.0, 3400.0), (500.0, 250.0)]
+    by_channel = {"crypto": {"holdings": [_entry(c, v) for c, v in entries]}}
+    total_value = sum(v for _c, v in entries)
+    pnl, _scope = service._basis_known_pnl(by_channel, total_value)
+    expected = round(sum(v - c for c, v in entries), 2)
+    assert pnl.abs == expected
+
+
+def test_basis_known_pnl_no_basis_excluded_honest_null():
+    """NO-BASIS EXCLUDED: a book where EVERY holding is value-only (cost 0, OKX/stablecoin)
+    → pnlTotal is HONEST-NULL (abs/pct None), NOT a 0-cost $0 'gain'. The exact misread the
+    dispatch warns against — a $0 abs would read as 'flat', hiding that P&L is UNKNOWN."""
+    by_channel = {"dry": {"holdings": [_entry(0.0, 9000.0), _entry(0.0, 500.0)]}}
+    pnl, scope = service._basis_known_pnl(by_channel, 9500.0)
+    assert pnl.abs is None, "no-basis-only book → abs MUST be None, not 0.0 (a fake $0 gain)"
+    assert pnl.pct is None
+    assert scope.coveragePct is None
+    assert "no holding has a cost basis" in scope.note
+
+
+def test_overview_pnltotal_basis_known_through_service(isolated_paths, mock_prices):
+    """SERVICE-LEVEL: a losing basis-known holding → overview.pnlTotal is the real loss +
+    pnlScope present. (Both holdings have a basis here → coveragePct 100%.)"""
+    mock_prices["BTC"] = 40000.0   # bought at 50k → −10k loss
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    overview, _ = service.get_overview()
+    assert overview.pnlTotal.abs == -10000.0  # the real LOSS, surfaced
+    assert overview.pnlTotal.pct == round(-10000 / 50000 * 100, 2)
+    assert overview.pnlScope is not None
+    assert overview.pnlScope.basis == "known-cost-only"
+    assert overview.pnlScope.coveragePct == 100.0  # the one holding has a basis
+
+
+def test_overview_channel_pnl_unchanged_by_audit2(isolated_paths, mock_prices):
+    """REGRESSION GUARD: the per-CHANNEL allocations[].pnl path is UNTOUCHED by #66 —
+    only pnlTotal changed. A basis-known channel still reports its framed channel pnl."""
+    mock_prices["BTC"] = 60000.0
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    overview, _ = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert crypto.pnl.abs == 10000.0  # channel pnl = _pnl_framed(50000, 60000) → +10000, unchanged
+
+
+def test_overview_empty_pnltotal_honest_null(isolated_paths, mock_prices):
+    """An empty book → pnlTotal honest-null (abs None, not 0.0) + pnlScope coveragePct None."""
+    overview, _ = service.get_overview()
+    assert overview.pnlTotal.abs is None and overview.pnlTotal.pct is None
+    assert overview.pnlScope is not None and overview.pnlScope.coveragePct is None
+
+
 # --- ladder hand-calc ---
 def test_ladder_rungs_and_distance():
     # reference 100, rungs -10/-20/-30 → triggers 90/80/70. current 85.

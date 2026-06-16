@@ -755,6 +755,42 @@ def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# FINANCE-AUDIT2 (#66) — life_brief surfaces an HONEST portfolio P&L            #
+# The bug: life_brief.portfolio.pnlTotal showed a fake +$7 gain while the real  #
+# per-coin loss was −$617. The brief is the agent's #1 surface — a TOTAL that    #
+# lies about DIRECTION is the most dangerous finance gap. The fix surfaces the   #
+# basis-known pnlTotal + a pnlScope so −X% on a few % of the book isn't misread.  #
+# --------------------------------------------------------------------------- #
+def test_AUDIT2_brief_portfolio_carries_pnlscope(app_db):
+    """The portfolio section MUST carry pnlScope alongside pnlTotal — so an agent reading
+    the brief knows how much of the book pnlTotal covers (can't misread a basis-known −X%
+    as a whole-portfolio loss). On an empty book it's honest-null, but the KEY is present."""
+    section = rs._brief_portfolio()
+    assert "pnlTotal" in section and "pnlScope" in section, "brief must surface pnlScope"
+
+
+def test_AUDIT2_brief_portfolio_pnltotal_honest_direction(isolated_paths, monkeypatch):
+    """HONEST DIRECTION: seed a losing basis-known holding → the brief's pnlTotal reports
+    the LOSS (negative), NOT a snapshot-cost ~$0/positive number. pnlScope labels coverage."""
+    from modules.finance import service as fin
+    from modules.finance.schema import HoldingInput
+    from modules.market.schema import AssetQuote
+
+    # no OKX override; mock the market quote so BTC is below cost (a real loss)
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (None, None))
+    monkeypatch.setattr(fin.market_service, "get_quote",
+                        lambda s: AssetQuote(symbol=s, name=s, assetClass="crypto", price=40000.0,
+                                             currency="USD", ts="2026-06-06T00:00:00+00:00",
+                                             source="coingecko") if s == "BTC" else None)
+    fin.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+
+    section = rs._brief_portfolio()
+    assert section["pnlTotal"]["abs"] == -10000.0, "brief must report the real LOSS, not a fake gain"
+    assert section["pnlTotal"]["abs"] < 0  # direction is a loss
+    assert section["pnlScope"] is not None and section["pnlScope"]["basis"] == "known-cost-only"
+
+
+# --------------------------------------------------------------------------- #
 # FINANCE-FINISH G1 — the decision tower wired into life_brief (9th section)     #
 # --------------------------------------------------------------------------- #
 def test_G1_life_brief_has_decision_section(app_db):

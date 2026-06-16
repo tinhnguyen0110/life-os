@@ -223,4 +223,38 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     expect(screen.getByTestId("home-pnl")).toHaveTextContent("+$20,696");
     expect(screen.getByTestId("home-pnl")).toHaveTextContent("−$10");
   });
+
+  // #66 FE: the Home tile is the 2nd pnlTotal-pct surface — the honest −72.5% must
+  // carry its scope here too, so it isn't misread as a whole-portfolio loss.
+  it("home-pnl-total: pnlScope present → the −72.5% shows its scope caption (not bare)", async () => {
+    const FIN_SCOPED = { success: true, data: {
+      totalValue: 10645, change: { abs: 0, pct: null }, holdings: [], series: [1, 2],
+      allocations: [{ channel: "crypto", value: 10645, pct: 100, target: 38, drift: 62, pnl: { cost: 850, current: 233, abs: -617, pct: -72.5 } }],
+      pnlTotal: { cost: 850.55, current: 233.52, abs: -617.03, pct: -72.54 },
+      pnlScope: { basis: "known-cost-only", coveragePct: 2.2, note: "P&L on the ~2.2% of the book (6 holdings) that have a cost basis; the ~98% no-basis is excluded" },
+      dryPowder: 0,
+    } };
+    getFinance.mockResolvedValueOnce(FIN_SCOPED);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-pnl-total")).toBeInTheDocument());
+    // the honest abs+pct still shown
+    expect(screen.getByTestId("home-pnl-total")).toHaveTextContent("−$617");
+    expect(screen.getByTestId("home-pnl-total")).toHaveTextContent("−72.5%");
+    // ...with the SCOPE caption (so −72.5% can't be read as whole-portfolio) + note tooltip
+    const scope = screen.getByTestId("home-pnl-scope");
+    expect(scope).toHaveTextContent("~2.2% danh mục có giá vốn");
+    expect(scope).toHaveAttribute("title", expect.stringContaining("cost basis"));
+  });
+
+  it("home-pnl-total: pnlScope ABSENT → null-safe (no scope caption, no crash)", async () => {
+    // FIN has no pnlScope → the row renders, the caption does not.
+    getFinance.mockResolvedValueOnce(FIN);
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    render(<HomePage />);
+    await waitFor(() => expect(screen.getByTestId("home-pnl-total")).toBeInTheDocument());
+    expect(screen.queryByTestId("home-pnl-scope")).toBeNull();
+  });
 });

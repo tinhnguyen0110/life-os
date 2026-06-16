@@ -41,6 +41,7 @@ from .schema import (
     HoldingInput,
     LadderState,
     PnL,
+    PnlScope,
     PortfolioAnalytics,
     RebalanceAction,
     ReturnMetrics,
@@ -631,6 +632,50 @@ def _finance_warnings(holdings: list[Holding]) -> tuple[dict[str, float], dict, 
     return targets, ladder_cfg, by_channel, gp_warnings + price_warnings
 
 
+def _basis_known_pnl(by_channel: dict, total_value: float) -> tuple[PnL, PnlScope]:
+    """FINANCE-AUDIT2 (#66): pnlTotal aggregated from the per-coin entries WITH a real cost basis
+    (entry["pnl"] non-null AND abs non-null) — NOT the channel snapshot cost (which ≈ value on
+    first connect → a fake ~$0 gain that hides the real per-coin losses). known_cost = Σ pnl.cost,
+    known_value = Σ pnl.current over basis-known coins → _pnl(known_cost, known_value). A no-basis
+    holding (stablecoin/dust/OKX value-only) is EXCLUDED (you can't claim gain/loss with no cost
+    basis — honest-null at the total). NO basis-known coin → pnlTotal honest-null (cost/current 0).
+    pnlScope labels the coverage so −X% on the basis-known slice isn't misread as whole-portfolio."""
+    known_cost = 0.0
+    known_value = 0.0
+    n_known = 0
+    for ch in by_channel.values():
+        for e in ch.get("holdings", []):
+            pnl = e.get("pnl")
+            if pnl is None:
+                continue
+            # require a real basis: abs computed (cost>0 → not basisUnknown). A 0-cost/None-abs
+            # entry (OKX value-only / stablecoin) is excluded — no basis to claim P&L against.
+            if pnl.get("abs") is None or pnl.get("cost") in (None, 0, 0.0):
+                continue
+            known_cost += float(pnl["cost"])
+            known_value += float(pnl["current"])
+            n_known += 1
+    known_cost = round(known_cost, 2)
+    known_value = round(known_value, 2)
+    coverage_pct = (round(known_value / total_value * 100.0, 1)
+                    if total_value and n_known else None)
+    if n_known == 0:
+        # honest-null: NO basis-known holding → P&L is UNKNOWN, NOT a $0 gain. abs/pct null,
+        # cost/current 0 (the raw $ are genuinely 0 — nothing has a basis to aggregate).
+        note = ("no holding has a cost basis yet — total P&L is unknown (the OKX positions are "
+                "value-only / stablecoin; set a cost basis to compute P&L)")
+        return (PnL(cost=0.0, current=0.0, abs=None, pct=None),
+                PnlScope(basis="known-cost-only", coveragePct=None, note=note))
+
+    cov = coverage_pct if coverage_pct is not None else 0.0
+    # format small coverage precisely (~0.5%, not a misleading ~0%); 1 decimal under 10%.
+    cov_str = f"{cov:.1f}" if cov < 10 else f"{cov:.0f}"
+    excl_str = f"{100 - cov:.1f}" if (100 - cov) < 10 else f"{100 - cov:.0f}"
+    note = (f"P&L on the ~{cov_str}% of the book ({n_known} holding(s)) that have a cost basis; "
+            f"the ~{excl_str}% no-basis stablecoin/value-only is excluded (no cost basis)")
+    return _pnl(known_cost, known_value), PnlScope(basis="known-cost-only", coveragePct=coverage_pct, note=note)
+
+
 def get_overview() -> tuple[FinanceOverview, list[str]]:
     holdings = list_holdings()
     targets, _ladder, by_channel, warnings = _finance_warnings(holdings)
@@ -711,6 +756,9 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
             basisUnknown=basis_unknown, stableValue=stable_value, stablePct=stable_pct,
         ))
 
+    # FINANCE-AUDIT2 (#66): pnlTotal from the basis-known per-coin sum + its scope label.
+    pnl_total, pnl_scope = _basis_known_pnl(by_channel, total_value)
+
     overview = FinanceOverview(
         totalValue=total_value,
         change=Change(abs=0.0, pct=None) if total_value else None,
@@ -720,7 +768,12 @@ def get_overview() -> tuple[FinanceOverview, list[str]]:
         # consistent with each ChannelAlloc.value by construction.
         holdings=_enriched_holdings(by_channel),
         allocations=allocations,
-        pnlTotal=_pnl(total_cost, total_value),
+        # FINANCE-AUDIT2 (#66): pnlTotal from the BASIS-KNOWN per-coin sum (not the snapshot cost,
+        # which lied +$7 while the real per-coin loss was −$617) + a scope label so the basis-
+        # known % isn't misread as whole-portfolio. The crypto snapshot `cost` (total_cost) stays
+        # for the channel drift framing — only pnlTotal stops using it.
+        pnlTotal=pnl_total,
+        pnlScope=pnl_scope,
         dryPowder=dry_powder,
         series=_series(),
     )

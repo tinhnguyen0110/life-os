@@ -16,12 +16,40 @@ import { EquityCurve } from "@/components/EquityCurve";
 import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
 import { apiBase, getCryptoBasis, setCryptoBasis } from "@/lib/api";
 import { spark } from "@/lib/spark";
-import type { ChannelAlloc, CryptoBasis } from "@/lib/types";
+import type { ChannelAlloc, CryptoBasis, PnL, PnlScope } from "@/lib/types";
 
 /** P&L abs → signed USD string + tone class. 0/null → "—". */
 function pnlText(abs: number | null | undefined): { text: string; cls: string } {
   if (abs == null || !Number.isFinite(abs) || abs === 0) return { text: "—", cls: "faint" };
   return { text: fmtSign(abs), cls: abs < 0 ? "neg" : "pos" };
+}
+
+/** The "P&L mở" sub-line, scope-aware. When pnlScope is present, the pct is shown OVER
+ *  its real coverage ("−72.5% trên ~2.2% danh mục có giá vốn") + the full note as a
+ *  tooltip — so the honest number can't be misread as a whole-portfolio loss. Null-safe:
+ *  no pnlTotal → undefined; pnlScope absent → the bare "trên vốn" fallback. */
+function pnlSubNode(
+  pnlTotal: PnL | null | undefined,
+  pnlScope: PnlScope | null | undefined,
+): React.ReactNode {
+  if (!pnlTotal) return undefined;
+  const pct = fmtPct(pnlTotal.pct);
+  if (pnlScope && pnlScope.coveragePct != null && Number.isFinite(pnlScope.coveragePct)) {
+    return (
+      <span title={pnlScope.note} data-testid="pnl-scope">
+        {pct} trên ~{pnlScope.coveragePct.toFixed(1)}% danh mục có giá vốn
+      </span>
+    );
+  }
+  // pnlScope present but no coveragePct → still surface the note (honest), avoid bare "trên vốn".
+  if (pnlScope?.note) {
+    return (
+      <span title={pnlScope.note} data-testid="pnl-scope">
+        {pct} trên phần có giá vốn
+      </span>
+    );
+  }
+  return `${pct} trên vốn`; // legacy fallback (pnlScope absent)
 }
 
 /* ------------------------------------------------------------------ */
@@ -251,7 +279,7 @@ export default function FinancePage() {
           label="P&L mở"
           value={data.pnlTotal ? fmtSign(data.pnlTotal.abs) : "—"}
           tone={totalTone}
-          sub={data.pnlTotal ? `${fmtPct(data.pnlTotal.pct)} trên vốn` : undefined}
+          sub={pnlSubNode(data.pnlTotal, data.pnlScope)}
         />
       </div>
 
