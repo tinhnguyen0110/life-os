@@ -163,6 +163,119 @@ def test_S1_two_tool_consistency_macro_overview_vs_cycle():
     assert mock_conf == 0.0, "confidence_q must exclude a mock (consistent with macro_cycle)"
 
 
+# =========================================================================== #
+# FINANCE-AUDIT-S2 (#60) — s_asset reads HELD assets' technicals (re-source).    #
+# The bug: _s_asset read the permanently-empty watchlist → q 0 → W=∏q=0 forever. #
+# Fix: source from finance.list_holdings() technicals; KEEP the W=0 valve (all-  #
+# missing → s_asset 0 → W 0). Re-source, don't rebuild the valve.               #
+# =========================================================================== #
+def _seed_price_series(symbol: str, *, rising: bool = True, n: int = 40):
+    """Seed a real price series so the symbol has a computable RSI/trend (real technical)."""
+    from store import db
+    base = 100.0
+    for i in range(n):
+        px = base + (i * 2.0 if rising else -i * 0.5)
+        db.record_price(symbol, max(1.0, px), _ts_days_ago((n - i) / 24.0))
+
+
+@pytest.fixture
+def s2_holdings(isolated_paths, monkeypatch):
+    """Manual holdings (OKX off) so the held set is deterministic; market quotes mocked."""
+    from store import db
+    db.init_db()
+    from modules.finance import service as fin
+    from modules.market import service as mkt
+    from modules.market.schema import AssetQuote
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (None, None))
+    monkeypatch.setattr(mkt, "get_quote",
+                        lambda s: AssetQuote(symbol=s, name=s, assetClass="crypto", price=100.0,
+                                             currency="USD", ts="2026-06-16T00:00:00+00:00", source="mock"))
+    return fin
+
+
+def test_S2_GATE1_no_tech_holding_is_absent_not_default_fill(s2_holdings, isolated_paths):
+    """(1) honest-missing: a held symbol with NO real RSI series → its contribution is 0
+    (present:false), NOT a fabricated neutral. _asset_signal returns None."""
+    from modules.decision import service as dec
+    assert dec._asset_signal("NOHIST") is None   # no price series → no signal (not a default)
+
+
+def test_S2_GATE4_distinguishing_real_vs_none_same_call(s2_holdings, isolated_paths):
+    """(4) DISTINGUISHING (the teeth, SAME call, GENUINELY divergent fixtures): one held symbol
+    with a REAL price series (→ contribution >0, the tower CAN escape 0 legitimately) AND one with
+    NONE (→ contribution 0). A blanket-lift impl would give the no-data holding a signal too."""
+    from modules.finance.schema import HoldingInput
+    from modules.decision import service as dec
+    _seed_price_series("HASTECH", rising=True)        # real RSI-able series
+    # NODATA: no price series seeded → no technical
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="HASTECH", qty=1, avgCost=80))
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="NODATA", qty=1, avgCost=80))
+    # the two arms in the SAME _s_asset call
+    assert dec._asset_signal("HASTECH") is not None and dec._asset_signal("HASTECH") > 0
+    assert dec._asset_signal("NODATA") is None
+    q, note = dec._s_asset()
+    assert q > 0, "the tower can escape 0 — HASTECH has a real technical"
+    assert "1/2" in note, f"coverage should be 1/2 (one real, one absent): {note}"
+
+
+def test_S2_GATE2_all_missing_keeps_W0_valve(s2_holdings, isolated_paths, monkeypatch):
+    """(2) THE SPINE: ALL held symbols missing real technicals → s_asset 0 → W = ∏q = 0 (the
+    tower stays DARK on empty signal). Tested END-TO-END through decision_weight."""
+    from modules.finance.schema import HoldingInput
+    from modules.decision import service as dec
+    import modules.market.service as mkt
+    # held symbols exist but NONE has a real technical
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="X1", qty=1, avgCost=80))
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="X2", qty=1, avgCost=80))
+    monkeypatch.setattr(mkt, "compute_indicators",
+                        lambda s, n, **k: ({"indicators": {"summary": {"latest": {"rsi": None}}}}, []))
+    s_q, _ = dec._s_asset()
+    assert s_q == 0.0, "all-missing → s_asset 0 (the valve)"
+    # end-to-end: W = ∏q = 0 because s_asset is a dark layer
+    dw = dec.decision_weight()
+    s_layer = next(ly for ly in dw.breakdown if ly.layer == "s_asset")
+    assert s_layer.q == 0.0
+    assert dw.weight == 0.0, "W must be 0 when s_asset is dark (the valve survives)"
+
+
+def test_S2_GATE3_real_data_only_no_history_is_zero(s2_holdings, isolated_paths):
+    """(3) real-data-only: a holding with no market-history → 0, never a fabricated signal."""
+    from modules.decision import service as dec
+    assert dec._asset_signal("GHOSTCOIN") is None
+
+
+def test_S2_graded_strength_not_binary(s2_holdings, isolated_paths):
+    """Q7 GRADED: the signal is strength-graded ∈ [0,1] (RSI conviction = |RSI−50|/50), NOT a
+    0/1 flag. A strong-trend series → high; a flat/near-50 series → low-but-present."""
+    from modules.decision import service as dec
+    _seed_price_series("STRONG", rising=True)         # rising hard → RSI extreme → high conviction
+    strong = dec._asset_signal("STRONG")
+    assert strong is not None and 0.0 <= strong <= 1.0
+    assert strong > 0.5, "a strong trend → high signal strength (graded, not binary)"
+
+
+def test_S2_GATE5_q_engine_unchanged(s2_holdings, isolated_paths):
+    """(5) additive — the q-engine is intact: GATE1 0.45 + the S1 cadence behaviour are
+    UNCHANGED (only _s_asset's SOURCE changed). Re-run the contract on cadence-free axes."""
+    age = -30.0 * math.log(0.90)
+    r = compute_q([QInput("axis_a", True, 1.0, age_days=age, data_type="cycle"),
+                   QInput("axis_b", True, 1.0, age_days=age, data_type="cycle"),
+                   QInput("axis_c", False), QInput("axis_d", False)], needed=4)
+    assert abs(r.q - 0.45) < 0.01   # 0.45 still falls out (the q-engine untouched)
+
+
+def test_S2_stablecoin_and_dust_excluded(s2_holdings, isolated_paths):
+    """A stablecoin (no meaningful price technical) + the ·dust summary entry are EXCLUDED from
+    the held set (so they don't drag coverage as permanently-absent)."""
+    from modules.finance.schema import HoldingInput
+    from modules.decision import service as dec
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="USDT", qty=1000, avgCost=1))
+    s2_holdings.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=80))
+    held = dec._held_symbols()
+    assert "USDT" not in held    # stablecoin excluded
+    assert "BTC" in held
+
+
 # --------------------------------------------------------------------------- #
 # HARD GATE 2 — decision_weight PURE PRODUCT, NO clamp (DISTINGUISHING)          #
 # --------------------------------------------------------------------------- #

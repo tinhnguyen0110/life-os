@@ -435,26 +435,70 @@ def _q_flow() -> tuple[float, str]:
     return qr.q, f"flow: {have}/2 sentiment signals (F&G/BTC.d), q={qr.q}"
 
 
-def _s_asset() -> tuple[float, str]:
-    """Phase-2 MINIMAL asset-signal layer: a simple q from the market watchlist's RSI/trend
-    coverage (the existing market technicals). present technicals → higher q; empty watchlist →
-    low (the §484 watchlist-gap is real). Returns (q, note). NEUTRAL — no buy/sell."""
+def _held_symbols() -> list[str]:
+    """The user's HELD asset symbols (deduped, ·dust + stablecoins excluded — a stablecoin has
+    no meaningful price technical). FINANCE-AUDIT-S2 (#60): the real source for s_asset (was the
+    empty watchlist)."""
+    from modules.finance import service as fin
+
+    seen: set[str] = set()
+    out: list[str] = []
+    try:
+        ov, _ = fin.get_overview()
+        for h in ov.holdings:
+            sym = (h.symbol or "").upper()
+            if (not sym or h.isDust or sym == fin.DUST_SYMBOL.upper()
+                    or sym in fin.STABLECOINS):
+                continue
+            if sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+    except Exception:  # noqa: BLE001 — fail-soft → no holdings → empty (s_asset will be 0)
+        return []
+    return out
+
+
+def _asset_signal(symbol: str) -> float | None:
+    """FINANCE-AUDIT-S2 (#60) Q7 GRADED signal strength for one held symbol ∈ [0,1], or None
+    when it has NO real technical (thin/no price history → honest-missing, NOT a fabricated
+    neutral). Strength = RSI conviction (|RSI−50|/50, clamped) — a clear overbought/oversold
+    reads strong; an RSI near 50 (no edge) reads weak-but-present. NEUTRAL: a technical
+    OBSERVATION, not a buy/sell. None ↔ no real series (the W=0 valve keys on this)."""
     from modules.market import service as mkt
 
     try:
-        items, _ = mkt.watchlist_data()
-    except Exception:  # noqa: BLE001 — fail-soft → no asset signal → low q
-        items = []
+        data, _ = mkt.compute_indicators(symbol, ["rsi", "summary"], hours=720)
+    except Exception:  # noqa: BLE001 — fail-soft → no signal
+        return None
+    summary = (data.get("indicators", {}) or {}).get("summary", {}) if isinstance(data, dict) else {}
+    rsi = (summary.get("latest", {}) or {}).get("rsi") if isinstance(summary, dict) else None
+    if rsi is None:
+        return None   # no real RSI series → honest-missing (absent, not a default-fill)
+    # conviction = distance from the neutral 50, normalized to [0,1] (0 at 50, 1 at 0/100).
+    return min(1.0, abs(float(rsi) - 50.0) / 50.0)
+
+
+def _s_asset() -> tuple[float, str]:
+    """FINANCE-AUDIT-S2 (#60) — the asset-signal layer, now sourced from the user's HELD assets'
+    technicals (was the permanently-empty watchlist → W stuck at 0). present:true for a held
+    symbol with a REAL RSI series (graded by signal strength); present:false for one with no/thin
+    history (honest-missing). coverage = held-with-real-tech / held. The W=0 VALVE SURVIVES: all
+    held symbols missing → coverage 0 → q 0 → W=∏q=0 (the tower stays dark on empty signal; it
+    lights ONLY from real per-holding technicals — re-source, don't rebuild the valve). Returns
+    (q, note). NEUTRAL — technical observations, no buy/sell."""
+    held = _held_symbols()
     points: list[dict] = []
-    for it in items:
-        has_tech = it.get("rsi") is not None and it.get("trend") not in (None, "flat")
-        points.append({"name": it.get("symbol", "?"),
-                       "value": (it.get("rsi") if has_tech else None),
-                       "ts": None,   # watchlist has no per-row ts → freshness neutral (1.0)
-                       "source": it.get("source", "mock")})
-    needed = max(1, len(points))   # at least one asset expected; empty → coverage 0
+    for sym in held:
+        strength = _asset_signal(sym)
+        points.append({
+            "name": sym,
+            "value": strength,                       # None → present:false (no real tech)
+            "ts": None,                              # no per-symbol ts → freshness neutral (1.0)
+            "source": ("live" if strength is not None else "mock"),
+        })
+    needed = max(1, len(held))   # ≥1 expected; no holdings → coverage 0 → s_asset 0 (honest)
     qr = q_from_points(points, needed=needed, data_type="spot", mock_is_present=False)
-    return qr.q, f"asset: {qr.presentInputs}/{needed} symbols with RSI/trend, q={qr.q}"
+    return qr.q, f"asset: {qr.presentInputs}/{needed} held assets with real technicals, q={qr.q}"
 
 
 def decision_weight() -> DecisionWeight:
