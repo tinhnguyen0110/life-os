@@ -45,9 +45,10 @@ def test_get_routines_shape(app_client):
     assert body["success"] is True
     d = body["data"]
     assert set(d) == {"routines", "activeCount", "total", "runsToday", "lastRunAt"}
-    assert d["total"] == 6
+    assert d["total"] == 7  # +macro-snapshot (#52 FINANCE-ASSISTANT P1)
     ids = {r["id"] for r in d["routines"]}
-    assert ids == {"market-poll", "wiki-refresh", "idle-hunter", "pattern-check", "journal-nudge", "morning-pull"}
+    assert ids == {"market-poll", "wiki-refresh", "idle-hunter", "pattern-check",
+                   "journal-nudge", "morning-pull", "macro-snapshot"}
     # each routine has the full RoutineInfo shape
     r0 = d["routines"][0]
     assert set(r0) >= {"id", "name", "trigger", "triggerLabel", "desc", "action", "enabled", "lastRun", "lastResult", "runs"}
@@ -65,7 +66,7 @@ def test_patch_toggle(app_client):
     # persisted: GET reflects it
     routines = {x["id"]: x for x in app_client.get("/routines").json()["data"]["routines"]}
     assert routines["idle-hunter"]["enabled"] is False
-    assert app_client.get("/routines").json()["data"]["activeCount"] == 5  # one off
+    assert app_client.get("/routines").json()["data"]["activeCount"] == 6  # 7 total, one off
 
 
 def test_patch_unknown_404(app_client):
@@ -109,7 +110,7 @@ def test_toggle_disable_enable_cycle_observable(app_client):
     assert r.json()["data"]["enabled"] is False
 
     d = app_client.get("/routines").json()["data"]
-    assert d["activeCount"] == 5  # 6 total, one off
+    assert d["activeCount"] == 6  # 7 total, one off
     routines = {x["id"]: x for x in d["routines"]}
     assert routines["pattern-check"]["enabled"] is False
 
@@ -119,17 +120,17 @@ def test_toggle_disable_enable_cycle_observable(app_client):
     assert r2.json()["data"]["enabled"] is True
 
     d2 = app_client.get("/routines").json()["data"]
-    assert d2["activeCount"] == 6  # restored
+    assert d2["activeCount"] == 7  # restored (7 total)
     routines2 = {x["id"]: x for x in d2["routines"]}
     assert routines2["pattern-check"]["enabled"] is True
 
 
-def test_toggle_two_off_active_count_four(app_client):
-    """Disable two separate routines → activeCount drops to 4."""
+def test_toggle_two_off_active_count_drops_by_two(app_client):
+    """Disable two separate routines → activeCount drops by 2 (7 total → 5)."""
     app_client.patch("/routines/idle-hunter", json={"enabled": False})
     app_client.patch("/routines/journal-nudge", json={"enabled": False})
     d = app_client.get("/routines").json()["data"]
-    assert d["activeCount"] == 4
+    assert d["activeCount"] == 5  # 7 total, two off
     routines = {x["id"]: x for x in d["routines"]}
     assert routines["idle-hunter"]["enabled"] is False
     assert routines["journal-nudge"]["enabled"] is False

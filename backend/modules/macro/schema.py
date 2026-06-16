@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 
 # The macro indicators tracked. Keys are stable API identifiers (the FRED series id
 # lives in config, not here, so the API stays source-agnostic).
-MacroIndicator = Literal["fed_funds_rate", "cpi", "dxy"]
+# FINANCE-ASSISTANT P1 (#52): + the macro-cycle substrate indicators.
+MacroIndicator = Literal[
+    "fed_funds_rate", "cpi", "dxy",
+    "yield_curve_10y2y", "unemployment", "m2_liquidity", "industrial_production",
+]
 
 # Direction of the latest move vs the prior observation — DESCRIPTIVE, not predictive.
 Trend = Literal["up", "down", "flat"]
@@ -43,6 +47,12 @@ class MacroIndicatorView(BaseModel):
     trend: Trend = Field(default="flat", description="descriptive direction vs prior (NOT a forecast)")
     source: str = Field(default="mock", description="'fred' | 'mock' of the latest point")
     points: int = Field(default=0, ge=0, description="how many observations are stored")
+    # FINANCE-ASSISTANT P1 (#52): a SIMPLE source-based confidence seam (Phase-1 stub).
+    # source='fred' (real CSV) → 0.9; 'mock' (fail-open placeholder) → 0.2. Phase-2 replaces
+    # this with compute_q() (freshness × coverage × agreement) WITHOUT touching call-sites.
+    confidence: float = Field(
+        default=0.2, ge=0.0, le=1.0,
+        description="Phase-1 source-based confidence (fred 0.9 / mock 0.2); Phase-2 → compute_q()")
 
 
 class MacroOverview(BaseModel):

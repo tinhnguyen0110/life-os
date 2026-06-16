@@ -252,6 +252,12 @@ _CATALOG: list[dict] = [
     {"id": "morning-pull", "name": "Morning Pull", "trigger": "cron",
      "triggerLabel": "08:00 hằng ngày", "desc": "Đọc dữ liệu các module buổi sáng",
      "action": "pull + summary", "enabled": True, "func": morning_pull},
+    # FINANCE-ASSISTANT P1 (#52): daily macro+sentiment snapshot (F&G / BTC.d / yield-curve →
+    # macro_history). func owned by the macro module → resolved on demand (_external_func) to
+    # avoid an import-time cycle, same as market-poll/wiki-refresh.
+    {"id": "macro-snapshot", "name": "Macro Snapshot", "trigger": "cron",
+     "triggerLabel": "07:30 hằng ngày", "desc": "Snapshot F&G / BTC.d / yield-curve",
+     "action": "snapshot sentiment", "enabled": True, "func": None},
 ]
 _CATALOG_BY_ID = {c["id"]: c for c in _CATALOG}
 
@@ -372,4 +378,7 @@ def _external_func(routine_id: str):
     if routine_id == "wiki-refresh":
         from modules.projects.router import _wiki_refresh_work
         return _wiki_refresh_work
+    if routine_id == "macro-snapshot":
+        from modules.macro.service import macro_sentiment_snapshot
+        return macro_sentiment_snapshot
     return lambda: ("ok", "")

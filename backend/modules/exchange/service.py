@@ -24,6 +24,20 @@ def is_configured() -> bool:
     return bool(settings.okx_api_key and settings.okx_api_secret and settings.okx_api_passphrase)
 
 
+def _opt_float(value: object) -> float | None:
+    """FINANCE-ASSISTANT P1 (#52): parse an OKX string field → float, or None when it's
+    empty/absent/unparseable. OKX sends '' for a coin it has no cost-basis for (stablecoins,
+    pre-history coins) — that must become None (honest-null), NEVER a fabricated 0 (a 0 basis
+    would read as +∞% gain). 0-as-a-real-value is impossible for accAvgPx (a price), so
+    treating '' → None is unambiguous."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_balances(raw: list[dict]) -> tuple[list[OkxBalance], float]:
     """Parse OKX balance details into OkxBalance list + total USD value."""
     balances: list[OkxBalance] = []
@@ -40,6 +54,11 @@ def _parse_balances(raw: list[dict]) -> tuple[list[OkxBalance], float]:
                 frozen=frozen,
                 total=available + frozen,
                 usdValue=usd_float,
+                # FINANCE-ASSISTANT P1 (#52): carry the per-coin cost-basis + OKX's own P&L.
+                # '' (no basis) → None, not 0 — honest-null.
+                accAvgPx=_opt_float(item.get("accAvgPx")),
+                spotUpl=_opt_float(item.get("spotUpl")),
+                spotUplRatio=_opt_float(item.get("spotUplRatio")),
             )
             balances.append(bal)
             if usd_float:

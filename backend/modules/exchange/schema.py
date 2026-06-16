@@ -13,6 +13,18 @@ class OkxBalance(BaseModel):
     frozen: float = Field(0.0, description="frozen (in orders)")
     total: float = Field(..., description="available + frozen")
     usdValue: float | None = Field(None, description="USD equivalent if provided by OKX")
+    # FINANCE-ASSISTANT P1 (#52) — OKX's per-coin cost-basis + its own unrealized P&L, all
+    # ADDITIVE + NULLABLE. accAvgPx is the single source of truth for per-coin pnl (wired into
+    # Holding.avgCost → the shipped _pnl() lights up). spotUpl/spotUplRatio are OKX's OWN P&L,
+    # carried ONLY as a cross-check (NOT displayed as a 2nd pnl). None when OKX has no basis
+    # (stablecoins, or coins held before OKX history — honest-null, never a fabricated 0).
+    accAvgPx: float | None = Field(
+        None, description="OKX accumulated avg cost price per unit (the per-coin basis); "
+                          "None when OKX exposes none (stablecoin / pre-history coin)")
+    spotUpl: float | None = Field(
+        None, description="OKX's own unrealized P&L in USD (cross-check only, not a 2nd pnl)")
+    spotUplRatio: float | None = Field(
+        None, description="OKX's own unrealized P&L as a FRACTION (×100 = pct; cross-check)")
 
 
 class OkxPosition(BaseModel):

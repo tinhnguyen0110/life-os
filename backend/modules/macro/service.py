@@ -11,6 +11,7 @@ direction (latest vs prior observation), never a forecast.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from core.config import settings
 
@@ -30,6 +31,15 @@ _LABELS = {
     "fed_funds_rate": ("Fed Funds Rate", "%"),
     "cpi": ("US CPI", "index"),
     "dxy": ("US Dollar Index (DXY)", "index"),
+    # FINANCE-ASSISTANT P1 (#52) — the macro-cycle substrate.
+    "yield_curve_10y2y": ("10Y-2Y Treasury Spread", "%"),   # negative = inverted (recession signal)
+    "unemployment": ("US Unemployment Rate", "%"),
+    "m2_liquidity": ("US M2 Money Supply", "$B"),
+    "industrial_production": ("US Industrial Production", "index"),
+    # daily sentiment (snapshot routine → macro_history; NOT FRED, so not in get_overview's
+    # FRED-driven loop — read via get_history).
+    "fear_greed": ("Crypto Fear & Greed", "index"),
+    "btc_dominance": ("BTC Dominance", "%"),
 }
 
 # Below this absolute change the trend is reported "flat" (avoids calling float noise a
@@ -40,6 +50,20 @@ _FLAT_EPS = 1e-9
 def tracked_indicators() -> list[str]:
     """The macro indicators tracked (keys of the configured FRED series map)."""
     return list(settings.fred_series.keys())
+
+
+# FINANCE-ASSISTANT P1 (#52): Phase-1 source-based confidence STUB. A real FRED CSV point →
+# high (0.9); a fail-open mock placeholder → low (0.2). This is the SEAM:
+# Phase-2: replace with compute_q() (freshness × coverage × agreement) — the call-site
+# (_indicator_view) stays unchanged; only this fn's body swaps for the real q.
+_CONF_FRED = 0.9
+_CONF_MOCK = 0.2
+
+
+def _confidence_for(source: str) -> float:
+    """Source-based confidence (Phase-1 stub): 'fred' (real) → 0.9, else (mock) → 0.2."""
+    # Phase-2: replace with compute_q() (freshness × coverage × agreement).
+    return _CONF_FRED if source == "fred" else _CONF_MOCK
 
 
 def _trend(latest: float | None, previous: float | None) -> Trend:
@@ -105,6 +129,7 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
         trend=_trend(latest_val, prev_val),
         source=latest_row["source"],
         points=n,
+        confidence=_confidence_for(latest_row["source"]),
     )
 
 
@@ -131,16 +156,97 @@ def get_overview() -> tuple[MacroOverview, list[str]]:
     return MacroOverview(indicators=views, asOf=as_of, source=source), warnings
 
 
+# --------------------------------------------------------------------------- #
+# FINANCE-ASSISTANT P1 (#52) — daily macro+sentiment snapshot routine.           #
+# Snapshots the DAILY-CHANGING signals (Fear&Greed, yield-curve, BTC dominance)  #
+# into macro_history each day. The MONTHLY FRED fields (CPI/UNRATE/M2/INDPRO)     #
+# self-dedupe: record_point upserts by (indicator, ts), and a monthly value keeps #
+# its month-start FRED ts — so re-running refresh() daily NEVER duplicates a       #
+# monthly row (it upserts the same ts). The daily signals carry TODAY's ts (a new  #
+# row per day = the daily series). Fail-soft per signal (one source down → warn,   #
+# the others still land). Mirrors morning_pull's add-on discipline.               #
+# --------------------------------------------------------------------------- #
+# Daily-cadence sentiment indicators (NOT FRED — their own free sources).
+DAILY_SENTIMENT = ("fear_greed", "btc_dominance")
+
+
+def macro_sentiment_snapshot() -> tuple[str, str]:
+    """Daily routine: snapshot the daily-changing macro+sentiment signals into macro_history.
+
+    - Fear & Greed index (alternative.me, free) → indicator 'fear_greed' (today's ts).
+    - BTC dominance (coingecko /global, free) → indicator 'btc_dominance' (today's ts).
+    - yield_curve_10y2y (FRED T10Y2Y, daily) → refreshed via the normal FRED path (its own
+      daily ts; retried + fail-open to mock if HTTP-000).
+    The MONTHLY FRED fields are NOT re-snapshotted here (they self-dedupe by month-ts via
+    refresh()'s upsert; re-storing an unchanged monthly value daily would be noise).
+
+    Returns ``(status, summary)`` for the run_log. Fail-soft per signal — a down source warns
+    but never aborts the others. ``status`` = 'warn' if any signal failed, else 'ok'."""
+    store.init_macro_tables()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    parts: list[str] = []
+    warned = False
+
+    # Fear & Greed (daily)
+    try:
+        fng, fng_src = reader.fetch_fear_greed()
+        if fng is not None:
+            store.record_point("fear_greed", float(fng), ts, fng_src)
+            parts.append(f"F&G {int(fng)}")
+        else:
+            parts.append("F&G n/a"); warned = True
+    except Exception as exc:  # noqa: BLE001 — one signal down must not abort the others
+        logger.error("macro snapshot: fear_greed failed: %s", exc)
+        parts.append(f"F&G ERR ({type(exc).__name__})"); warned = True
+
+    # BTC dominance (daily)
+    try:
+        btcd, btcd_src = reader.fetch_btc_dominance()
+        if btcd is not None:
+            store.record_point("btc_dominance", float(btcd), ts, btcd_src)
+            parts.append(f"BTC.d {btcd:.1f}%")
+        else:
+            parts.append("BTC.d n/a"); warned = True
+    except Exception as exc:  # noqa: BLE001
+        logger.error("macro snapshot: btc_dominance failed: %s", exc)
+        parts.append(f"BTC.d ERR ({type(exc).__name__})"); warned = True
+
+    # yield_curve (FRED daily) — refresh just this one (its own daily ts; retried+fail-open)
+    try:
+        points, warning = reader.fetch_latest("yield_curve_10y2y")
+        for p in points:
+            store.record_point(p["indicator"], p["value"], p["ts"], p.get("source", "fred"))
+        if warning:
+            parts.append("yield mock"); warned = True
+        elif points:
+            parts.append(f"yield {points[-1]['value']:+.2f}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("macro snapshot: yield_curve failed: %s", exc)
+        parts.append(f"yield ERR ({type(exc).__name__})"); warned = True
+
+    status = "warn" if warned else "ok"
+    return status, "Macro snapshot: " + ", ".join(parts)
+
+
 def get_history(indicator: str, days: int = 365, limit: int = 1000) -> MacroHistory | None:
     """One indicator's time-series over the last ``days`` (oldest→newest). None if the
-    indicator is not tracked (→ 404). Empty series → honest empty points list."""
-    if indicator not in settings.fred_series:
+    indicator is not tracked (→ 404). Empty series → honest empty points list.
+
+    FINANCE-ASSISTANT P1 (#52): the daily-sentiment indicators (fear_greed/btc_dominance) are
+    valid here too — they live in macro_history (snapshot routine), not fred_series, so they're
+    NOT cold-start-refreshed (no FRED series to pull); an unprimed sentiment series is honest-
+    empty until the snapshot routine runs."""
+    from datetime import timedelta
+
+    is_fred = indicator in settings.fred_series
+    if not (is_fred or indicator in DAILY_SENTIMENT):
         return None
     store.init_macro_tables()
-    # cold start: prime the series so history isn't spuriously empty
-    if store.count(indicator) == 0:
+    # cold start: prime FRED series so history isn't spuriously empty. Sentiment indicators
+    # have no FRED series to pull — they fill via the daily snapshot routine, honest-empty
+    # until then (don't refresh()).
+    if is_fred and store.count(indicator) == 0:
         refresh()
-    from datetime import datetime, timedelta, timezone
 
     since = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).strftime("%Y-%m-%d")
     rows = store.history(indicator, since=since, limit=limit)

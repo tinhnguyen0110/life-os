@@ -414,7 +414,12 @@ def test_macro_overview_shape_and_indicators(app_db):
     out = rs.macro_overview()
     assert set(out) >= {"macro", "warnings"}
     inds = out["macro"]["indicators"]
-    assert {i["indicator"] for i in inds} == {"fed_funds_rate", "cpi", "dxy"}
+    # #52 FINANCE-ASSISTANT P1: + the macro-cycle substrate (yield_curve/unemployment/m2/indpro).
+    # (fear_greed/btc_dominance are snapshot-only → macro_history, NOT in the FRED-driven overview.)
+    assert {i["indicator"] for i in inds} == {
+        "fed_funds_rate", "cpi", "dxy",
+        "yield_curve_10y2y", "unemployment", "m2_liquidity", "industrial_production",
+    }
     for i in inds:
         assert i["trend"] in ("up", "down", "flat")
     json.dumps(out)

@@ -167,6 +167,14 @@ class Settings(BaseSettings):
             "fed_funds_rate": "FEDFUNDS",
             "cpi": "CPIAUCSL",
             "dxy": "DTWEXBGS",
+            # FINANCE-ASSISTANT P1 (#52): the macro-cycle substrate (all via the NO-KEY public
+            # FRED CSV — real, no api_key). yield_curve_10y2y = recession signal (negative =
+            # inverted); unemployment/m2_liquidity/industrial_production = the growth/liquidity
+            # axes Phase-2 q-math will weigh. T10Y2Y can be HTTP-000 live → fetch is retried.
+            "yield_curve_10y2y": "T10Y2Y",
+            "unemployment": "UNRATE",
+            "m2_liquidity": "M2SL",
+            "industrial_production": "INDPRO",
         }
     )
 

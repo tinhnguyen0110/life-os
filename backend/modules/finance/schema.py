@@ -70,6 +70,19 @@ class Holding(BaseModel):
         description="# of holdings folded into a ·dust summary entry; set ONLY on a dust "
                     "entry (None on every real holding).",
     )
+    # FINANCE-ASSISTANT P1 T5 (#52) — the holding's OWN P&L (abs/pct from its OWN avgCost),
+    # SURFACED from the per-holding number _aggregate already computes (NOT recomputed). This
+    # is the per-holding granularity where a basis-less coin's null doesn't mask a real-basis
+    # coin's pnl (the channel-level ChannelAlloc.pnl is honestly null when basisUnknown — e.g.
+    # a USDT-dominated crypto channel — which would otherwise hide PEPE's real -58%). A coin
+    # with a real avgCost → real pnl; a basis-less coin (avgCost None → cost 0) → abs/pct null
+    # (PnL honest-null rule). NULL on a ·dust summary entry (a sum-of-many has no single pnl).
+    pnl: PnL | None = Field(
+        None,
+        description="this holding's own P&L (abs/pct from its own avgCost vs current value); "
+                    "carries {cost, current}. None on a ·dust entry; abs/pct null for a "
+                    "basis-less holding (cost 0). Same number _aggregate computed (not re-derived).",
+    )
 
 
 class PnL(BaseModel):

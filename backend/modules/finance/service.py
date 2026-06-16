@@ -483,17 +483,30 @@ def _okx_crypto_holdings() -> list[dict] | None:
         value = round(float(b.usdValue), 2) if b.usdValue is not None else 0.0
         # display price = value/qty when valued; None when unvalued (don't assume a price).
         price = round(value / b.total, 6) if (valued and b.total) else None
+        # FINANCE-ASSISTANT P1 (#52): OKX exposes a per-coin cost-basis (accAvgPx). When
+        # present, wire it into Holding.avgCost → the SHIPPED _pnl() lights up automatically
+        # (per-coin P&L is no longer null). None for a coin OKX has no basis for (stablecoin /
+        # pre-OKX-history) → pnl stays honest-null. accAvgPx is the SINGLE source of truth for
+        # pnl; b.spotUpl/spotUplRatio are OKX's OWN P&L, carried for the cross-check only.
+        avg_cost = b.accAvgPx if b.accAvgPx else None  # '' / 0 / None → None (honest-null)
         holding = Holding(channel="crypto", symbol=b.symbol, qty=b.total,  # type: ignore[call-arg]  # see #49 note above
-                          avgCost=None, source="okx", asOf=now)
+                          avgCost=avg_cost, source="okx", asOf=now)
         # FINANCE-CORRECTNESS (#49): a valued OKX coin gets a real 24h changePct from our
         # series (the symbol is tradeable); an unvalued coin (price None) → null changePct.
         change_pct = (_change_pct_of(b.symbol, price, priced=True)
                       if (valued and price is not None) else None)
+        # Per-coin P&L: real when we have BOTH a basis (avg_cost) AND a value; else honest-null.
+        # cost = accAvgPx × qty; _pnl computes abs/pct (pct null when cost==0, no ÷0).
+        pnl = (_pnl(round(avg_cost * b.total, 2), value)
+               if (avg_cost is not None and valued) else None)
         entries.append({
             "holding": holding.model_dump(), "price": price, "source": "okx",
             "value": value,
-            "pnl": None,  # honest-null: no per-coin cost basis (OKX-FINANCE decision)
+            "pnl": pnl.model_dump() if pnl is not None else None,
             "changePct": change_pct,
+            # FINANCE-ASSISTANT P1 (#52): OKX's OWN P&L — carried for the T4 sanity cross-check
+            # (our recomputed pnl.pct ≈ spotUplRatio×100), NOT displayed as a 2nd pnl.
+            "okxSpotUplRatio": b.spotUplRatio,
         })
     if not entries:
         return None
@@ -535,6 +548,13 @@ def _holding_from_entry(entry: dict) -> Holding:
         "changePct": entry.get("changePct"),
         "isDust": False,
         "count": None,
+        # FINANCE-ASSISTANT P1 T5 (#52): surface the per-holding pnl _aggregate already
+        # computed (entry["pnl"] = _pnl(cost, value).model_dump(), or None for OKX value-only).
+        # NOT recomputed — the exact same number (consistency). A basis-less holding's pnl has
+        # abs/pct null (cost 0); a real-basis holding (avgCost from accAvgPx) → real pnl. This
+        # is the per-holding granularity where USDT-null doesn't mask PEPE-real (the channel-
+        # level basisUnknown nulls the aggregate; per-holding keeps each coin honest).
+        "pnl": entry.get("pnl"),
     })
     return Holding(**base)
 
@@ -576,7 +596,7 @@ def _fold_dust(holdings: list[Holding]) -> list[Holding]:
                 channel=channel,  # type: ignore[arg-type]  # came off a valid Holding
                 symbol=DUST_SYMBOL, qty=0, avgCost=None, source="dust-fold", asOf=None,
                 price=None, usdValue=dust_value, changePct=None,
-                isDust=True, count=len(dust),
+                isDust=True, count=len(dust), pnl=None,  # #52 T5: a sum-of-many has no single pnl
             ))
     return out
 

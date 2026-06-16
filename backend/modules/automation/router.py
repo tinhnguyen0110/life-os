@@ -77,4 +77,26 @@ _MORNING_PULL_ROUTINE = Routine(
 )
 
 
-MODULE = BaseModule(name="routines", router=router, routines=[_MORNING_PULL_ROUTINE])
+# --------------------------------------------------------------------------- #
+# macro-snapshot routine (cron 07:30) — FINANCE-ASSISTANT P1 (#52). Owned by the #
+# macro module (func resolved on demand to avoid an import cycle), wrapped here   #
+# so its timer fires record a run_log row + respects the master automation gate.  #
+# --------------------------------------------------------------------------- #
+def _macro_snapshot_job() -> None:
+    """Scheduler entry point for macro-snapshot. Gated on the master automation switch;
+    records a run_log row when on, no-ops when off. Resolves the macro module's snapshot
+    func on demand (import inside the fn → no import-time cycle)."""
+    from modules.macro.service import macro_sentiment_snapshot
+    service.run_scheduled("macro-snapshot", macro_sentiment_snapshot)
+
+
+_MACRO_SNAPSHOT_ROUTINE = Routine(
+    id="macro-snapshot", func=_macro_snapshot_job, trigger="cron",
+    trigger_args={"hour": 7, "minute": 30}, name="Macro Snapshot", enabled=True,
+)
+
+
+MODULE = BaseModule(
+    name="routines", router=router,
+    routines=[_MORNING_PULL_ROUTINE, _MACRO_SNAPSHOT_ROUTINE],
+)
