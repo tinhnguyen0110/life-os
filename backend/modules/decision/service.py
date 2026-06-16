@@ -512,15 +512,27 @@ def _capital_tier(capital: float, small: float, large: float) -> str:
     return "mid"
 
 
-def allocation_target(capital: float, *, phase: str | None = None,
+def allocation_target(capital: float | None = None, *, phase: str | None = None,
                       monthly_add: float = 0.0, horizon_years: float = 3.0) -> AllocationTarget:
     """A NEUTRAL reference weighting (spec §208-227): the classic Investment-Clock for ``phase``
     (defaults to the live macro_cycle phase) + the user's capital-size → reference channel
     weights, with per-channel rationale + the delta vs the static golden-path. Capital-tier
     thresholds READ from settings (user-configurable). confidence = q over the inputs (phase
-    quality × capital-known). NEUTRAL — a model assumption surfaced as DATA, the user decides."""
+    quality × capital-known). NEUTRAL — a model assumption surfaced as DATA, the user decides.
+
+    FINANCE-FINISH G2: ``capital`` is OPTIONAL — when None, default to the live portfolio value
+    (finance get_overview().totalValue), so a no-arg call uses the user's actual book. An
+    explicit ``capital`` overrides (a what-if at a different size)."""
     from modules.finance import service as fin
     from modules.settings import service as settings_svc
+
+    # G2: no capital given → use the live portfolio total value (the user's actual book).
+    if capital is None:
+        try:
+            overview, _ = fin.get_overview()
+            capital = float(overview.totalValue)
+        except Exception:  # noqa: BLE001 — fail-open: portfolio unreadable → 0 (small tier)
+            capital = 0.0
 
     cfg = settings_svc.get_config()
     small_thr = getattr(cfg, "riskCapitalSmallUsd", 50000.0)

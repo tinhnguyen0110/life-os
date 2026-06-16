@@ -48,13 +48,14 @@ def get_decision_weight():
 
 
 @router.get("/allocation")
-def get_allocation_target(capital: float, phase: str | None = None,
+def get_allocation_target(capital: float | None = None, phase: str | None = None,
                           monthly_add: float = 0.0, horizon_years: float = 3.0):
     """A NEUTRAL reference weighting (FINANCE-ASSISTANT P3): the classic Investment-Clock for the
     ``phase`` (defaults to the live macro_cycle phase) + the user's ``capital``-size → reference
-    channel weights + per-channel rationale + the delta vs the static golden-path. Capital-tier
-    thresholds are user-configurable (PATCH /settings). NEUTRAL — a model assumption surfaced as
-    DATA, not advice; the agent/user decides."""
+    channel weights + per-channel rationale + the delta vs the static golden-path. ``capital`` is
+    OPTIONAL (FINANCE-FINISH G2): omit → uses the live portfolio totalValue; pass → a what-if at
+    that size. Capital-tier thresholds are user-configurable (PATCH /settings). NEUTRAL — a model
+    assumption surfaced as DATA, not advice; the agent/user decides."""
     at = service.allocation_target(capital, phase=phase, monthly_add=monthly_add,
                                    horizon_years=horizon_years)
     return ok(data=at.model_dump())

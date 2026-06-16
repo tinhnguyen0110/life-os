@@ -591,3 +591,42 @@ def test_P4_nav_neutral_no_advice_verb(isolated_paths):
     flat = json.dumps(dec.nav_history().model_dump()).lower()
     for verb in ("should", "buy", "sell", "rebalance", "recommend", "deploy"):
         assert verb not in flat, f"nav_history leaked an advice verb: {verb}"
+
+
+# =========================================================================== #
+# FINANCE-FINISH G2 (#57) — allocation_target optional capital                  #
+# =========================================================================== #
+def test_G2_no_capital_uses_finance_totalvalue(isolated_paths, monkeypatch):
+    """HARD GATE 5 (part a): a no-capital allocation_target uses finance get_overview().totalValue
+    — assert it EQUALS the explicit-totalValue call (the default isn't ignored/hardcoded)."""
+    from modules.finance import service as fin
+    from modules.exchange.schema import ExchangeOverview
+    # a deterministic portfolio total via OKX
+    monkeypatch.setattr(fin, "_okx_crypto_value", lambda: (75000.0, None))  # mid-tier total
+    monkeypatch.setattr(fin.exchange_service, "get_overview",
+                        lambda: (ExchangeOverview(configured=True, totalUsdValue=75000.0, balances=[]), None))
+    ov, _ = fin.get_overview()
+    no_arg = dec.allocation_target(phase="recovery")           # no capital → totalValue
+    explicit = dec.allocation_target(ov.totalValue, phase="recovery")
+    assert no_arg.targets == explicit.targets, "no-capital must use the live totalValue"
+    assert no_arg.capitalTier == explicit.capitalTier
+
+
+def test_G2_distinguishing_two_capitals_diverge(isolated_paths, monkeypatch):
+    """HARD GATE 5 (part b): two DIVERGENT explicit capitals → DIFFERENT allocations (proves the
+    capital actually drives the tilt, not silently ignored)."""
+    from modules.macro import store as mstore
+    mstore.init_macro_tables()
+    small = dec.allocation_target(10000, phase="recovery")
+    large = dec.allocation_target(2000000, phase="recovery")
+    assert small.targets != large.targets
+    assert small.capitalTier == "small" and large.capitalTier == "large"
+
+
+def test_G2_no_capital_fail_open_when_portfolio_unreadable(isolated_paths, monkeypatch):
+    """Fail-open: if the portfolio total can't be read, no-capital → 0 (small tier), never a
+    crash (the allocation still returns a reference weighting)."""
+    from modules.finance import service as fin
+    monkeypatch.setattr(fin, "get_overview", lambda: (_ for _ in ()).throw(RuntimeError("portfolio down")))
+    at = dec.allocation_target(phase="recovery")   # must not raise
+    assert at.capitalTier == "small"   # 0 → small

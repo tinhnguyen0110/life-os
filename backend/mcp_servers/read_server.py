@@ -318,16 +318,19 @@ def decision_weight() -> dict[str, Any]:
     return {"decisionWeight": _jsonable(_decision_weight())}
 
 
-def allocation_target(capital: float, phase: str | None = None,
+def allocation_target(capital: float | None = None, phase: str | None = None,
                       monthly_add: float = 0.0, horizon_years: float = 3.0) -> dict[str, Any]:
     """A NEUTRAL reference weighting (FINANCE-ASSISTANT P3): given your ``capital`` (USD) and the
     macro ``phase`` (defaults to the live macro_cycle phase), the classic Investment-Clock + your
     capital-size implies these reference channel weights — with per-channel ``rationale``, the
     delta ``vsStaticGoldenPath``, and a ``confidence``. Capital-tier thresholds are user-
-    configurable. NEUTRAL — this is a MODEL ASSUMPTION surfaced as DATA (the classic clock + your
-    capital size), NOT an instruction to act; the agent/user reasons + decides. ``{allocation}``."""
+    configurable. ``capital`` is OPTIONAL (FINANCE-FINISH G2): omit it → uses your LIVE portfolio
+    value (finance totalValue); pass one → a what-if at that size. NEUTRAL — a MODEL ASSUMPTION
+    surfaced as DATA (the classic clock + your capital size), NOT an instruction to act; the
+    agent/user reasons + decides. ``{allocation}``."""
+    cap = float(capital) if capital is not None else None
     return {"allocation": _jsonable(_decision_allocation(
-        float(capital), phase=phase, monthly_add=float(monthly_add),
+        cap, phase=phase, monthly_add=float(monthly_add),
         horizon_years=float(horizon_years)))}
 
 
@@ -888,6 +891,28 @@ def _brief_wiki() -> dict[str, Any]:
     return {"overview": _jsonable(data), "warning": warning}
 
 
+def _brief_decision() -> dict[str, Any]:
+    """Neutral DECISION-TOWER snapshot (FINANCE-FINISH G1): the assistant's tip composed from
+    the tower fns — ``{weight, verdict, bindingConstraint, phase, topGuardianAlert}``. weight/
+    verdict/bindingConstraint from decision_weight (W=∏q + the neutral band + the dimmest layer);
+    phase from macro_cycle (the Investment-Clock state); topGuardianAlert = the highest-severity
+    proactive observation's msg (or None — honest-empty when nothing fired). NEUTRAL: a band, a
+    state label, and a question — no advice. (Composes the tower read-only; never rebuilds it.)"""
+    dw = _decision_weight()
+    cyc = _decision_macro_cycle()
+    guardian = _decision_guardian()
+    # the guardian's alerts are already severity-ranked (high→low); the first is the top one.
+    alerts = guardian.alerts if guardian is not None else []
+    top_alert = alerts[0].msg if alerts else None   # honest-empty: None when nothing fired
+    return {
+        "weight": dw.weight,
+        "verdict": dw.verdict,
+        "bindingConstraint": dw.bindingConstraint,
+        "phase": cyc.phase,
+        "topGuardianAlert": top_alert,
+    }
+
+
 def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str, Any]:
     """THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the
     user's life composed from the per-module read paths, so an external agent gets the
@@ -904,6 +929,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
       - ``macro``     (macro): Fed funds / CPI / DXY + descriptive trend (R2-G1)
       - ``news``      (news): source-cited digest of captured headlines (R2-G1)
       - ``wiki``      (wiki): vault overview — stats / inbox / orphans (R2-G1)
+      - ``decision``  (decision tower): W (weight) + verdict band + bindingConstraint +
+        macro phase + the top guardian alert (FINANCE-FINISH G1 — the assistant's tip)
 
     NEUTRAL: aggregates DATA only — NO advice, NO buy/sell signal, NO prioritisation.
     The agent reads this and decides. An empty / unconfigured app still returns a
@@ -919,6 +946,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
             "macro": _section("macro", _brief_macro),
             "news": _section("news", _brief_news),
             "wiki": _section("wiki", _brief_wiki),
+            # FINANCE-FINISH G1: the decision tower (W/verdict/binding/phase/top-alert), fail-soft.
+            "decision": _section("decision", _brief_decision),
         }
     }
 

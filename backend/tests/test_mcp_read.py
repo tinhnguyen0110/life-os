@@ -684,6 +684,8 @@ BRIEF_SECTIONS = {
     "macro": "macro",
     "news": "news",
     "wiki": "wiki",
+    # FINANCE-FINISH G1: the decision tower (W/verdict/binding/phase/top-alert).
+    "decision": "decision",
 }
 
 
@@ -750,6 +752,75 @@ def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
     assert "error" in brief["news"] and brief["news"]["source"] == "news"
     # the others unaffected
     assert "error" not in brief["macro"] and "error" not in brief["wiki"]
+
+
+# --------------------------------------------------------------------------- #
+# FINANCE-FINISH G1 — the decision tower wired into life_brief (9th section)     #
+# --------------------------------------------------------------------------- #
+def test_G1_life_brief_has_decision_section(app_db):
+    """HARD GATE 1: life_brief has a `decision` section with the tower fields + source tag."""
+    brief = rs.life_brief()["brief"]
+    assert "decision" in brief, "the decision tower must be a life_brief section"
+    d = brief["decision"]
+    assert d["source"] == "decision"
+    assert "error" not in d, f"decision section errored on a clean app: {d.get('error')}"
+    assert {"weight", "verdict", "bindingConstraint", "phase", "topGuardianAlert"} <= set(d)
+    # weight is a number, verdict a neutral band, phase a state label
+    assert isinstance(d["weight"], (int, float))
+    assert d["verdict"] in ("strong", "moderate", "thin", "blind")
+
+
+def test_G1_decision_section_failsoft_keeps_other_8(app_db, monkeypatch):
+    """HARD GATE 2: a tower fn raising → life_brief.decision = {error} BUT the OTHER 8 sections
+    still assemble (per-section fail-soft, NOT whole-brief failure)."""
+    monkeypatch.setattr(rs, "_decision_weight",
+                        lambda: (_ for _ in ()).throw(RuntimeError("tower down")))
+    brief = rs.life_brief()["brief"]
+    assert "error" in brief["decision"] and brief["decision"]["source"] == "decision"
+    # the other 8 are unaffected (no error on the clean read paths)
+    for section in ("portfolio", "market", "projects", "claude", "decisions", "macro", "news", "wiki"):
+        assert "error" not in brief[section], f"{section} should be unaffected by a tower failure"
+
+
+def test_G1_neutral_recheck_with_decision_section(app_db):
+    """HARD GATE 3 (LOAD-BEARING): (1) the EXISTING brief-wide no-advice gate STILL passes WITH
+    the decision section added; (2) the NEW decision section itself introduces no advice verb.
+    Scoped: the brief-wide check uses the existing banned KEYS (recommendation/advice/signal/
+    buy_sell/action); the decision-section check uses the imperative-verb set — both must hold.
+    (We do NOT ban 'deploy' brief-wide: the portfolio section legitimately says 'UNDEPLOYED
+    stablecoin', a NEUTRAL composition word, not an imperative — the existing neutral test
+    already excludes it. The decision section is the new surface to guard.)"""
+    import json as _json
+    brief = rs.life_brief()["brief"]
+    # (1) the existing brief-wide neutral gate (same banned set as test_life_brief_is_neutral)
+    flat = _json.dumps(brief).lower()
+    for banned in ("recommendation", "advice", "\"signal\"", "buy_sell", "\"action\":"):
+        assert banned not in flat, f"brief leaked a non-neutral key/term: {banned}"
+    # (2) the NEW decision section specifically — no imperative advice verb (word-boundary so
+    # a substring like 'undeployed' can't false-trip). The section is band/state/question only.
+    import re
+    dec_flat = _json.dumps(brief["decision"]).lower()
+    for verb in ("should", "buy", "sell", "rebalance", "deploy", "recommend", "must", "ought"):
+        assert re.search(rf"\b{verb}\b", dec_flat) is None, \
+            f"the decision section leaked an advice verb: {verb!r}"
+
+
+def test_G1_additive_does_not_perturb_portfolio_section(app_db):
+    """HARD GATE 4: an EXISTING section (portfolio) is byte-unchanged with the decision section
+    added — adding decision composes alongside, it doesn't touch the other builders."""
+    # build the portfolio section directly + via life_brief → identical
+    direct = rs._section("finance", rs._brief_portfolio)
+    via_brief = rs.life_brief()["brief"]["portfolio"]
+    assert direct == via_brief, "the portfolio section changed when decision was added"
+
+
+def test_G1_top_guardian_alert_honest_empty(app_db, monkeypatch):
+    """honest-empty: no guardian alerts → topGuardianAlert is None (not a fabricated string)."""
+    from modules.decision.schema import GuardianReport
+    monkeypatch.setattr(rs, "_decision_guardian",
+                        lambda: GuardianReport(alerts=[], confidence=1.0, asOf="2026-06-16T00:00:00+00:00", note="none"))
+    d = rs.life_brief()["brief"]["decision"]
+    assert d["topGuardianAlert"] is None
 
 
 def test_NG1_life_brief_claude_pct_sane_cross_consumer(app_db):
