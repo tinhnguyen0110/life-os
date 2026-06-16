@@ -7,7 +7,7 @@
    ============================================================ */
 import { useState, useEffect, useCallback } from "react";
 import { getExchange, syncExchange, apiBase } from "@/lib/api";
-import { fmtUSD, relativeTime } from "@/lib/format";
+import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
 import type { ExchangeOverview, OkxBalance, OkxPosition } from "@/lib/types";
 
 /* ---------- Tab registry — push new entry here to add a sàn ---------- */
@@ -23,6 +23,22 @@ function pnlCls(v: number) {
   if (v > 0) return "pos";
   if (v < 0) return "neg";
   return "faint";
+}
+
+/** Per-coin cost-basis P&L cell from the backend's spotUpl (abs USD) + spotUplRatio
+ *  (a RATIO, ×100 for %). null-safe: a no-basis coin (USDT/ETH → null) → "—", NEVER a
+ *  fabricated 0/%. render-only — spotUpl is the BACKEND's number, FE formats + colors. */
+function costPnl(
+  spotUpl: number | null | undefined,
+  spotUplRatio: number | null | undefined,
+): { text: string; pct: string; cls: string; hasData: boolean } {
+  if (spotUpl == null || !Number.isFinite(spotUpl)) {
+    return { text: "—", pct: "", cls: "faint", hasData: false };
+  }
+  const cls = spotUpl > 0 ? "pos" : spotUpl < 0 ? "neg" : "faint";
+  const pct =
+    spotUplRatio != null && Number.isFinite(spotUplRatio) ? fmtPct(spotUplRatio * 100) : "";
+  return { text: fmtSign(spotUpl), pct, cls, hasData: true };
 }
 
 /* ------------------------------------------------------------------ */
@@ -235,11 +251,15 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
                 <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
                   Giá trị USD
                 </th>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+                  P&amp;L (giá vốn)
+                </th>
               </tr>
             </thead>
             <tbody>
               {overview.balances.map((b: OkxBalance) => {
                 const isSmall = b.usdValue != null && b.usdValue < 1;
+                const pnl = costPnl(b.spotUpl, b.spotUplRatio);
                 return (
                   <tr
                     key={b.symbol}
@@ -257,6 +277,17 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
                     )}
                     <td style={{ padding: "11px 16px", textAlign: "right", fontWeight: 600 }}>
                       {b.usdValue != null ? fmtUSD(b.usdValue) : "—"}
+                    </td>
+                    {/* per-coin cost-basis P&L (backend spotUpl/spotUplRatio) — null-safe "—"
+                        for a no-basis coin (USDT/stablecoin), never a fabricated 0/%. */}
+                    <td
+                      className={`num ${pnl.cls}`}
+                      style={{ padding: "11px 16px", textAlign: "right", fontWeight: 600, fontFamily: "var(--font-mono, monospace)" }}
+                      title="Lãi/lỗ chưa thực hiện theo giá vốn OKX (accAvgPx) — — khi không có giá vốn (vd stablecoin)"
+                      data-testid={`balance-pnl-${b.symbol}`}
+                    >
+                      {pnl.text}
+                      {pnl.pct && <span className="faint" style={{ marginLeft: 6, fontSize: 11 }}>{pnl.pct}</span>}
                     </td>
                   </tr>
                 );

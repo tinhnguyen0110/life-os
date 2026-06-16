@@ -63,11 +63,12 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("6"));
   });
 
-  it("Automation badge fails soft → static fallback when /routines down", async () => {
+  it("Automation badge fails soft → HONEST '—' fallback when /routines down (no stale number)", async () => {
     getRoutines.mockRejectedValue(new Error("down"));
     render(<Sidebar onToggleCollapse={() => {}} />);
-    // falls back to the static badge text "5" (never blocks the sidebar)
-    await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("5"));
+    // UI-CLEANUP R2: the fallback is now "—" (honest no-data), NOT the stale "5".
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/routines")).toHaveTextContent("—"));
+    expect(screen.getByTestId("nav-badge-/routines")).not.toHaveTextContent("5");
   });
 
   it("renders every nav group from NAV (default: all modules enabled)", async () => {
@@ -159,14 +160,19 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("nav-badge-/market")).toHaveTextContent("3"));
   });
 
-  it("F2-M4: each badge fails soft → static fallback when its endpoint is down", async () => {
+  it("UI-CLEANUP R2 (distinguishing-case): a forced fetch-fail shows HONEST '—', NOT the stale ghost (71%/4)", async () => {
     mockPath = "/";
     getProjects.mockRejectedValue(new Error("down"));
     getClaudeUsage.mockRejectedValue(new Error("down"));
     render(<Sidebar onToggleCollapse={() => {}} />);
-    // projects falls back to static "4", claude to static "71%" — sidebar never blocks
-    await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("4"));
-    expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("71%");
+    // R2: the fallbacks are now "—" — a failed live-fetch must NEVER show the stale
+    // hardcoded number. The "71%" claude badge was the cap-overflow ghost (neutralized).
+    await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("—"));
+    expect(screen.getByTestId("nav-badge-/projects")).not.toHaveTextContent("4");
+    expect(screen.getByTestId("nav-badge-/claude-usage")).toHaveTextContent("—");
+    expect(screen.getByTestId("nav-badge-/claude-usage")).not.toHaveTextContent("71%");
+    // sidebar never blocks — the rest of the nav still renders
+    expect(screen.getByTestId("nav-badge-/routines")).toBeInTheDocument();
   });
 
   it("does NOT render any AI route (ARCH §11 — embedded AI dropped)", async () => {

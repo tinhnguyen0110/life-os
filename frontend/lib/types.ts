@@ -723,13 +723,23 @@ export interface MarketData {
    OKX Exchange — mirrors modules/exchange/schema.py
    ============================================================ */
 
-/** One asset balance on OKX — mirrors `OkxBalance`. */
+/** One asset balance on OKX — mirrors `OkxBalance`. The cost-basis fields
+ *  (accAvgPx/spotUpl/spotUplRatio) come from OKX's accAvgPx (free, per-coin) — backend-
+ *  computed, FE renders/colors only (NEVER recomputes). NULLABLE: a value-only /
+ *  stablecoin position (USDT, ETH with no basis) carries all three null → render "—",
+ *  NEVER a fabricated 0/+∞% (honest-null, same discipline as per-coin Holding.pnl). */
 export interface OkxBalance {
   symbol: string;
   available: number;
   frozen: number;
   total: number;
   usdValue: number | null;
+  /** OKX accumulated average cost price per unit; null when no basis. */
+  accAvgPx?: number | null;
+  /** spot unrealized P&L in USD (current value − cost); null when no basis. */
+  spotUpl?: number | null;
+  /** spot unrealized P&L as a RATIO (e.g. -0.5786 = −57.86%); null when no basis. */
+  spotUplRatio?: number | null;
 }
 
 /** One open position (margin/futures) — mirrors `OkxPosition`. */

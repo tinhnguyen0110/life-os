@@ -34,7 +34,11 @@ export const NAV: NavGroup[] = [
   {
     sec: "Dự án",
     items: [
-      { route: "/projects", label: "Danh sách", icon: "i-proj", screen: "S2", badge: { text: "4", cls: "acc" } },
+      // badge.text is a FALLBACK only — the Sidebar overrides it with LIVE data
+      // (Sidebar.badgeText). It shows ONLY when a live fetch FAILS, so it must be
+      // HONEST: "—" (no data), never a stale hardcoded number. The "71%" ghost (the
+      // cap-overflow value) used to leak here on a fetch-fail — neutralized to "—".
+      { route: "/projects", label: "Danh sách", icon: "i-proj", screen: "S2", badge: { text: "—", cls: "acc" } },
       { route: "/graveyard", label: "Nghĩa địa", icon: "i-grave", screen: "S4" },
     ],
   },
@@ -46,7 +50,7 @@ export const NAV: NavGroup[] = [
       { route: "/portfolio", label: "Danh mục", icon: "i-pie", screen: "S6" },
       { route: "/exchange", label: "OKX Exchange", icon: "i-mkt", screen: "S-okx" },
       { route: "/journal", label: "Nhật ký lệnh", icon: "i-journal", screen: "S7" },
-      { route: "/market", label: "Thị trường", icon: "i-mkt", screen: "S8", badge: { text: "2", cls: "r" } },
+      { route: "/market", label: "Thị trường", icon: "i-mkt", screen: "S8", badge: { text: "—", cls: "r" } },
       { route: "/macro", label: "Macro", icon: "i-fin", screen: "FE-5-macro" },
     ],
   },
@@ -60,7 +64,7 @@ export const NAV: NavGroup[] = [
   {
     sec: "Hằng ngày",
     items: [
-      { route: "/claude-usage", label: "Claude Usage", icon: "i-cpu", screen: "S9", badge: { text: "71%", cls: "r" } },
+      { route: "/claude-usage", label: "Claude Usage", icon: "i-cpu", screen: "S9", badge: { text: "—", cls: "r" } },
       { route: "/notes", label: "Ghi chú", icon: "i-note", screen: "S10" },
       { route: "/decision-journal", label: "Quyết định", icon: "i-journal", screen: "DJ" },
     ],
@@ -88,7 +92,7 @@ export const NAV: NavGroup[] = [
   {
     sec: "Hệ thống",
     items: [
-      { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "5", cls: "g" } },
+      { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "—", cls: "g" } },
       { route: "/activity", label: "Activity Feed", icon: "i-pulse", screen: "S14" },
     ],
   },
