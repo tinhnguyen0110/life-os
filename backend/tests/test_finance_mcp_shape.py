@@ -37,11 +37,12 @@ def app_db(isolated_paths):
     return isolated_paths
 
 
-def test_finance_analytics_tool_registered_and_count_41(app_db):
-    """finance_analytics is in the read-server registry; total tool count is 46 (45 + #56 P4 nav_history)."""
+def test_finance_analytics_tool_registered_and_count(app_db):
+    """finance_analytics is in the read-server registry; total tool count is 40 after
+    MCP-DEDUP #70 removed the 6 duplicated wiki tools (was 46)."""
     from mcp_servers import read_server as rs
     assert "finance_analytics" in rs.TOOLS
-    assert len(rs.TOOLS) == 46
+    assert len(rs.TOOLS) == 40
 
 
 def test_finance_analytics_envelope_and_jsonable(app_db, monkeypatch):

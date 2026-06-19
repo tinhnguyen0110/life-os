@@ -179,13 +179,16 @@ def test_read_server_imports_no_write_symbol_ast():
 
 
 def test_server_builds_with_all_tools():
-    """FastMCP server constructs + registers all 7 tools without error."""
+    """FastMCP server constructs + registers all tools without error (incl. the 2
+    proposal-readback tools ported from the shared server in MCP-DEDUP #70)."""
     server = read_server.build_server()
     assert server is not None
     assert set(read_server.TOOLS.keys()) == {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_graph",
         "wiki_get_note", "wiki_backlinks", "wiki_recent_ops", "wiki_clusters",
         "wiki_verify_citations",
+        # PORTED #70 — wiki-proposal read-back (was embedded in the shared read_server)
+        "wiki_proposal_status", "wiki_list_proposals",
     }
 
 
@@ -196,3 +199,67 @@ def test_wiki_clusters_parity(wiki_db):
     b = wsvc.create_note(NoteCreateInput(title="Cluster B", content=f"[[{a}]]")).id
     wsvc.create_note(NoteCreateInput(title="Cluster C", content=f"[[{a}]] [[{b}]]"))
     assert read_server.wiki_clusters()["clusters"] == reader.detect_clusters()
+
+
+# --------------------------------------------------------------------------- #
+# Wiki proposal read-back (PORTED #70 from the shared read_server — NB3). The     #
+# agent reads the disposition of its WIKI proposals (the wiki_proposals queue).   #
+# Created via the canonical standalone wiki WRITE server (propose_note → the      #
+# wiki queue), read via these ported READ tools. READ-ONLY (no ratify here).      #
+# --------------------------------------------------------------------------- #
+def test_wiki_proposal_status_reads_wiki_queue(wiki_db):
+    """wiki_proposal_status reads back a wiki proposal's disposition — found + pending,
+    with kind/rationale. Created via the canonical wiki write server's propose_note."""
+    from modules.wiki.mcp import write_server as wws
+    pid = wws.propose_note("NB3 note", "body", rationale="because NB3 read-back")["id"]
+    out = read_server.wiki_proposal_status(pid)
+    assert out["found"] is True
+    assert out["proposalId"] == pid
+    assert out["status"] == "pending"
+    assert out["kind"] == "note_create"
+    assert out["rationale"] == "because NB3 read-back"
+
+
+def test_wiki_proposal_status_missing_and_malformed(wiki_db):
+    """Unknown id → found False; a non-int id must NOT leak a ValueError (honest)."""
+    assert read_server.wiki_proposal_status(999999) == {"found": False, "proposalId": 999999}
+    assert read_server.wiki_proposal_status("nope") == {"found": False, "proposalId": "nope"}
+
+
+def test_wiki_list_proposals_and_counts(wiki_db):
+    """wiki_list_proposals returns the wiki proposals newest-first + a counts roll-up;
+    the status filter scopes it; empty queue is honest-empty."""
+    from modules.wiki.mcp import write_server as wws
+    empty = read_server.wiki_list_proposals()
+    assert empty["proposals"] == [] and empty["counts"].get("pending", 0) == 0
+    p1 = wws.propose_note("first", "b", rationale="r1")["id"]
+    p2 = wws.propose_note("second", "b", rationale="r2")["id"]
+    out = read_server.wiki_list_proposals()
+    ids = [p["id"] for p in out["proposals"]]
+    assert ids == [p2, p1]  # newest-first
+    assert out["counts"]["pending"] == 2
+    assert read_server.wiki_list_proposals(status="accepted")["proposals"] == []
+
+
+def test_wiki_proposal_readback_byte_identical_to_old_embedded(wiki_db):
+    """PORT INVARIANT (#70): the ported tools' payload == what the OLD embedded shared
+    tools produced. Pin the exact shape so the move didn't drift a field."""
+    from modules.wiki.mcp import write_server as wws
+    pid = wws.propose_note("Pin shape", "b", rationale="exact-shape pin")["id"]
+    status = read_server.wiki_proposal_status(pid)
+    assert set(status) == {"found", "proposalId", "kind", "status", "targetId",
+                           "appliedNoteId", "decidedBy", "decided", "rationale"}
+    lst = read_server.wiki_list_proposals()
+    assert set(lst) == {"proposals", "counts"}
+
+
+def test_wiki_proposal_readback_tools_audit(wiki_db):
+    """The ported reads audit too (the standalone convention — every call appends one
+    wiki_mcp_audit row). Fail-soft: an audit failure never breaks the read."""
+    from modules.wiki.mcp import write_server as wws
+    pid = wws.propose_note("audited", "b", rationale="audit me")["id"]
+    read_server.wiki_proposal_status(pid)
+    read_server.wiki_list_proposals()
+    rows = pstore.recent_audit(limit=50)
+    tools = {r["tool"] for r in rows}
+    assert {"wiki_proposal_status", "wiki_list_proposals"} <= tools

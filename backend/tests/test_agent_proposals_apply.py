@@ -67,7 +67,7 @@ def test_accept_decision_creates_real_entry(queue_db):
 def test_accept_note_creates_real_note(queue_db):
     from modules.notes import service as nsvc
 
-    p = ws.propose_note("Idea: ladder rebalance", "worth capturing", tags=["idea"])
+    p = ws.propose_quicknote("Idea: ladder rebalance", "worth capturing", tags=["idea"])
     before = nsvc.list_notes()[0]
     result = svc.accept(p["id"])
     after = nsvc.list_notes()[0]
@@ -149,7 +149,7 @@ def test_accept_appends_one_audit_row(queue_db):
 
 
 def test_reject_appends_one_audit_row(queue_db):
-    p = ws.propose_note("t", "r")
+    p = ws.propose_quicknote("t", "r")
     svc.reject(p["id"], decided_by="user")
     svc.reject(p["id"], decided_by="user")  # no-op — no 2nd row
     audit = ps.list_audit(proposal_id=p["id"])
@@ -208,7 +208,7 @@ def test_endpoint_accept_applies_and_returns_envelope(client):
 
 
 def test_endpoint_reject_then_audit(client):
-    p = ws.propose_note("t", "r")
+    p = ws.propose_quicknote("t", "r")
     assert client.post(f"/agent-proposals/{p['id']}/reject").status_code == 200
     audit = client.get(f"/agent-proposals/{p['id']}/audit").json()["data"]["audit"]
     assert len(audit) == 1 and audit[0]["action"] == "reject"

@@ -63,7 +63,7 @@ def test_decision_create_lands_with_fields(loop_db):
 def test_note_create_lands_with_fields(loop_db):
     from modules.notes import service as nsvc
     before = nsvc.list_notes()[0]
-    p = ws.propose_note("Ladder rebalance idea", rationale="worth capturing",
+    p = ws.propose_quicknote("Ladder rebalance idea", rationale="worth capturing",
                         body="re-weight crypto down 8pp", tags=["idea", "rebalance"])
     res = psvc.accept(p["id"], decided_by="user")
     assert res["status"] == "accepted" and res["appliedRef"] is not None
@@ -139,7 +139,7 @@ def test_project_update_accept_is_honest_apply_error_no_row(loop_db):
 def test_reject_applies_nothing(loop_db):
     from modules.notes import service as nsvc
     notes_before = nsvc.list_notes()[0]
-    p = ws.propose_note("should NOT land", rationale="testing reject")
+    p = ws.propose_quicknote("should NOT land", rationale="testing reject")
     res = psvc.reject(p["id"], decided_by="user")
     assert res["status"] == "rejected"
     assert res.get("appliedRef") is None

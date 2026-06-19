@@ -134,10 +134,13 @@ from modules.news.service import list_news as _news_list
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
 # agent reads the vault + proposes via the WRITE server, it cannot mutate directly).
+# MCP-DEDUP #70: _wiki_search + _wiki_overview are KEPT — life_brief (_brief_wiki) and
+# insights (_brief_decision) consume them. The wiki MCP TOOLS (search/get/overview/
+# backlinks/proposal-reads) were removed from this server (canonical = standalone
+# modules/wiki/mcp/), so _wiki_backlinks / _wiki_get_note / the wiki-proposal read fns
+# are no longer imported here.
 from modules.wiki.reader import search as _wiki_search
 from modules.wiki.reader import overview as _wiki_overview
-from modules.wiki.reader import backlinks as _wiki_backlinks
-from modules.wiki.service import get_note as _wiki_get_note
 # MCP-5: the agent reads the DISPOSITION of its own proposals (status/applied_ref) so it
 # can learn from accept/reject — READ paths only. We import the SPECIFIC read fns (NOT
 # the proposals_store module), so enqueue / mark_decided / set_applied_ref / append_audit
@@ -146,15 +149,6 @@ from modules.wiki.service import get_note as _wiki_get_note
 from mcp_servers.proposals_store import get_proposal as _proposal_get
 from mcp_servers.proposals_store import list_proposals as _proposal_list
 from mcp_servers.proposals_store import count_by_status as _proposal_counts
-# NB3: read-back of the agent's WIKI proposals — the wiki has its OWN proposals queue
-# (wiki_proposals, separate from agent_proposals), so its disposition needs its own read
-# tools. Import ONLY the wiki proposals_service READ fns (get_proposal/list_proposals/
-# count_by_status) — NOT create_proposal/accept_proposal/reject_proposal/batch_accept
-# (those stay in WRITE_SYMBOLS — the agent reads its wiki-proposal verdict, it cannot
-# accept/reject; ratify is human-only at the wiki P1 REST surface).
-from modules.wiki.proposals_service import get_proposal as _wiki_proposal_get
-from modules.wiki.proposals_service import list_proposals as _wiki_proposal_list
-from modules.wiki.proposals_service import count_by_status as _wiki_proposal_counts
 
 
 # --------------------------------------------------------------------------- #
@@ -533,85 +527,15 @@ def news_list(tag: str | None = None, limit: int = 30) -> dict[str, Any]:
     return {"news": _jsonable(_news_list(tag, limit=int(limit)))}
 
 
-def wiki_search(q: str, limit: int = 30) -> dict[str, Any]:
-    """Full-text search the wiki vault → ranked results ``[{id, title, snippet,
-    status}]`` (FTS5). Empty/bad query → ``[]`` (never raises). The agent cites a
-    note by its integer id. ``{results}``. (Wraps GET /wiki/search — read-only.)"""
-    return {"results": _jsonable(_wiki_search(q, limit=int(limit)))}
-
-
-def wiki_get(note_id: int) -> dict[str, Any]:
-    """One wiki note by its INTEGER id (the citation key). A missing note →
-    ``{found: False}`` (honest, not a crash). ``{found, note}``. (Wraps GET
-    /wiki/notes/{id} — read-only.)"""
-    note = _wiki_get_note(int(note_id))
-    if note is None:
-        return {"found": False, "note_id": int(note_id)}
-    return {"found": True, "note": _jsonable(note)}
-
-
-def wiki_overview() -> dict[str, Any]:
-    """Vault overview: ``{stats, inbox, orphans, recentActivity, proposalCount}`` +
-    a warning (empty vault → pctWithLink None, never div-zero). ``{overview, warning}``.
-    (Wraps GET /wiki/overview — read-only.)"""
-    data, warning = _wiki_overview()
-    return {"overview": _jsonable(data), "warning": warning}
-
-
-def wiki_backlinks(note_id: int) -> dict[str, Any]:
-    """Backlinks for a wiki note: ``{linked, unlinked, outbound}`` (B3). The agent
-    sees what references a note (grounding context). ``{backlinks}``. (Wraps GET
-    /wiki/notes/{id}/backlinks — read-only.)"""
-    return {"backlinks": _jsonable(_wiki_backlinks(int(note_id)))}
-
-
 # --------------------------------------------------------------------------- #
-# NB3 — WIKI proposal read-back. The wiki has its OWN proposals queue            #
-# (wiki_proposals, separate from agent_proposals), so the agent reads the        #
-# disposition of its WIKI proposals (from wiki_propose_*) through these wiki-      #
-# scoped tools — symmetric to check_proposal_status / list_my_proposals but        #
-# against the wiki queue. READ-ONLY: report the human's verdict; the agent         #
-# CANNOT accept/reject (wiki ratify is human-only at the P1 REST surface).         #
-# --------------------------------------------------------------------------- #
-def wiki_proposal_status(proposal_id: int) -> dict[str, Any]:
-    """One WIKI proposal's disposition by id (the wiki_proposals queue — separate
-    from the generic agent_proposals queue). Reports status (pending|accepted|
-    rejected), appliedNoteId (the note an accept created/edited), decidedBy + decided
-    (who ratified, when), kind + rationale. Unknown / malformed id → ``{found: False}``
-    (honest, not a crash). READ-ONLY — the agent cannot ratify its own wiki proposal."""
-    try:
-        pid = int(proposal_id)
-    except (ValueError, TypeError):
-        return {"found": False, "proposalId": proposal_id}
-    p = _wiki_proposal_get(pid)
-    if p is None:
-        return {"found": False, "proposalId": pid}
-    return {
-        "found": True,
-        "proposalId": p["id"],
-        "kind": p["kind"],
-        "status": p["status"],
-        "targetId": p.get("targetId"),
-        "appliedNoteId": p.get("appliedNoteId"),
-        "decidedBy": p.get("decidedBy"),
-        "decided": p.get("decided"),
-        "rationale": p.get("rationale"),
-    }
-
-
-def wiki_list_proposals(status: str | None = None, limit: int = 50) -> dict[str, Any]:
-    """The agent's WIKI proposals (newest-first) with their current disposition — the
-    wiki review queue from the agent's POV (what's still pending vs accepted/rejected),
-    plus a ``counts`` roll-up by status. Optional ``status`` filter (pending|accepted|
-    rejected); unknown status → empty list. Empty queue → ``{proposals: [], counts: {}}``.
-    READ-ONLY (the wiki_proposals queue — separate from agent_proposals)."""
-    # The wiki proposals_service.list_proposals(status) has no limit param (it caps at the
-    # store default, newest-first); slice to ``limit`` here for API symmetry with
-    # list_my_proposals without reaching past the service into the store.
-    proposals = _wiki_proposal_list(status=status)[: int(limit)]
-    return {"proposals": _jsonable(proposals), "counts": _wiki_proposal_counts()}
-
-
+# WIKI tools removed (MCP-DEDUP #70): these were DUPLICATES of the canonical      #
+# standalone wiki MCP server (modules/wiki/mcp/, mounted at /mcp/wiki-read). The  #
+# 4 read dupes (wiki_search/wiki_get→wiki_get_note/wiki_overview/wiki_backlinks)  #
+# live there already; wiki_proposal_status + wiki_list_proposals were PORTED to   #
+# the standalone read_server first (port-before-delete). NO wiki capability lost  #
+# — the standalone is the single source. The _wiki_search/_wiki_overview imports  #
+# are KEPT above because life_brief (_brief_wiki) + insights (_brief_decision)    #
+# still consume them — those are NOT wiki MCP tools.                              #
 # --------------------------------------------------------------------------- #
 # Proposal feedback (MCP-5) — the agent READS the disposition of its own         #
 # proposals so it can learn (a rejected proposal → propose differently next      #
@@ -1166,13 +1090,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "macro_history": macro_history,
     "news_digest": news_digest,
     "news_list": news_list,
-    "wiki_search": wiki_search,
-    "wiki_get": wiki_get,
-    "wiki_overview": wiki_overview,
-    "wiki_backlinks": wiki_backlinks,
-    # NB3: wiki-proposal read-back (the wiki_proposals queue — separate from agent_proposals)
-    "wiki_proposal_status": wiki_proposal_status,
-    "wiki_list_proposals": wiki_list_proposals,
+    # MCP-DEDUP #70: wiki tools removed — canonical = standalone modules/wiki/mcp
+    # (mounted at /mcp/wiki-read). The 4 read dupes live there; wiki_proposal_status +
+    # wiki_list_proposals were PORTED there. Zero wiki capability lost.
     "life_brief": life_brief,
     # INSIGHTS (D1): cross-domain neutral observations over the live read paths
     "insights": insights,

@@ -47,7 +47,7 @@ def test_propose_decision_enqueues_pending(queue_db):
 
 
 def test_propose_note_enqueues_pending(queue_db):
-    p = ws.propose_note("Idea: ladder rebalance", "captures a recurring thought",
+    p = ws.propose_quicknote("Idea: ladder rebalance", "captures a recurring thought",
                         body="body text", tags=["idea"])
     assert p["status"] == "pending"
     assert p["module"] == "notes"
@@ -86,7 +86,7 @@ def test_proposal_is_jsonable(queue_db):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("call", [
     lambda: ws.propose_decision("d", 50, "dom", "   "),
-    lambda: ws.propose_note("t", ""),
+    lambda: ws.propose_quicknote("t", ""),
     lambda: ws.propose_journal("buy", "BTC", "reason", "\t\n"),
     lambda: ws.propose_project_update("p", "  "),
 ])
@@ -98,7 +98,7 @@ def test_empty_rationale_is_rejected(queue_db, call):
 def test_rejected_proposal_is_not_enqueued(queue_db):
     before = ps.count_by_status().get("pending", 0)
     with pytest.raises(ws.RationaleRequired):
-        ws.propose_note("t", "")
+        ws.propose_quicknote("t", "")
     after = ps.count_by_status().get("pending", 0)
     assert after == before, "a rejected (no-rationale) propose must not enqueue a row"
 
@@ -108,7 +108,7 @@ def test_rejected_proposal_is_not_enqueued(queue_db):
 # --------------------------------------------------------------------------- #
 def test_queue_list_count_get(queue_db):
     a = ws.propose_decision("a", 50, "dom", "r1")
-    b = ws.propose_note("b", "r2")
+    b = ws.propose_quicknote("b", "r2")
     assert ps.count_by_status()["pending"] == 2
     listed = ps.list_proposals(status="pending")
     assert {x["id"] for x in listed} == {a["id"], b["id"]}
@@ -154,7 +154,7 @@ def test_mark_decided_flips_status_without_applying(queue_db):
 
 
 def test_mark_decided_rejects_bad_status(queue_db):
-    p = ws.propose_note("t", "r")
+    p = ws.propose_quicknote("t", "r")
     with pytest.raises(ValueError):
         ps.mark_decided(p["id"], status="applied", decided="t", decided_by="user")
 
@@ -257,61 +257,10 @@ def test_read_and_write_servers_are_capability_disjoint():
 def test_build_server_registers_all_tools():
     server = ws.build_server()
     assert server is not None
-    assert len(ws.TOOLS) == 10  # 4 generic + 6 NG2 wiki_propose_* (route to wiki_proposals)
-
-
-# --------------------------------------------------------------------------- #
-# NG2 — wiki_propose_* tools route to the SEPARATE wiki_proposals queue          #
-# --------------------------------------------------------------------------- #
-@pytest.fixture
-def both_queues(isolated_paths):
-    """Both queues initialised: agent_proposals (mcp_servers) + wiki_proposals (wiki)
-    + the wiki note tables (the wiki queue's apply path reads them)."""
-    from mcp_servers import proposals_store as agent_ps
-    from modules.wiki import proposals_store as wiki_ps
-    from modules.wiki import store as wiki_store
-    agent_ps.init_proposal_tables()
-    wiki_ps.init_proposal_tables()
-    wiki_store.init_wiki_tables()
-    return isolated_paths
-
-
-def test_NG2_wiki_propose_routes_to_wiki_queue_not_agent(both_queues):
-    from mcp_servers import proposals_store as agent_ps
-    from modules.wiki import proposals_store as wiki_ps
-    p = ws.wiki_propose_note("Atomic notes", "one idea per note", "agent found this principle")
-    assert p["status"] == "pending" and p["kind"] == "note_create"
-    # it landed in the WIKI queue, NOT the agent queue (queue separation).
-    assert any(x["id"] == p["id"] for x in wiki_ps.list_proposals("pending"))
-    assert agent_ps.count_by_status().get("pending", 0) == 0  # agent queue untouched
-
-
-def test_NG2_wiki_propose_rationale_required(both_queues):
-    from modules.wiki.mcp.write_server import RationaleRequired
-    with pytest.raises(RationaleRequired):
-        ws.wiki_propose_note("x", "y", "   ")
-
-
-def test_NG2_all_six_wiki_propose_tools_enqueue(both_queues):
-    from modules.wiki import proposals_store as wiki_ps
-    a = ws.wiki_propose_note("N", "body", "r")["id"]
-    nid = a  # use a real-ish id for edit/link targets (apply is human-side; enqueue only)
-    ws.wiki_propose_edit(nid, "r", title="t2")
-    ws.wiki_propose_link(nid, "2", "r")
-    ws.wiki_propose_unlink(nid, "2", "r")
-    ws.wiki_propose_merge(nid, 2, "r")
-    ws.wiki_propose_moc("MOC", "- [[1]]", "r")
-    kinds = {x["kind"] for x in wiki_ps.list_proposals("pending")}
-    assert kinds == {"note_create", "note_edit", "link_add", "link_remove", "merge", "moc"}
-
-
-def test_NG2_wiki_e2e_propose_then_human_accept_lands(both_queues):
-    """The wiki ratify path works end-to-end through the surfaced tool: propose via
-    the whole-app write-server → wiki_proposals pending → human accept → note lands."""
-    from modules.wiki import proposals_service as wiki_psvc
-    from modules.wiki import service as wiki_svc
-    p = ws.wiki_propose_note("E2E note", "via whole-app write-server", "closes the loop")
-    accepted = wiki_psvc.accept_proposal(p["id"], decided_by="human")
-    assert accepted["status"] == "accepted"
-    landed = wiki_svc.get_note(accepted["appliedNoteId"])
-    assert landed is not None and landed.title == "E2E note"
+    # MCP-DEDUP #70: 4 generic propose tools (propose_decision/quicknote/journal/
+    # project_update). The 6 wiki_propose_* delegators were REMOVED — canonical = the
+    # standalone wiki write-server (tested in test_wiki_mcp_write.py).
+    assert len(ws.TOOLS) == 4
+    assert set(ws.TOOLS) == {"propose_decision", "propose_quicknote",
+                             "propose_journal", "propose_project_update"}
+    assert not any(k.startswith("wiki") for k in ws.TOOLS)

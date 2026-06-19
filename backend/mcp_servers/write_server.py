@@ -43,17 +43,11 @@ from typing import Any, Callable
 # enqueue records INTENT only; the store exposes no apply/mutate-the-target fn, so this
 # is the entire write surface the agent channel has.
 from mcp_servers.proposals_store import enqueue as _enqueue
-# NG2: surface the WIKI propose tools here too, delegating to the wiki write-server's
-# propose fns. They route to the SEPARATE wiki_proposals queue (W4a, via create_proposal)
-# — NOT the agent_proposals queue this server's other tools use. Both queues stay
-# distinct. These are ENQUEUE-ONLY (the wiki write-server itself has the no-mutate/no-
-# accept gate); we import only its propose_* fns, never a wiki mutate/accept fn.
-from modules.wiki.mcp.write_server import propose_note as _wiki_propose_note
-from modules.wiki.mcp.write_server import propose_edit as _wiki_propose_edit
-from modules.wiki.mcp.write_server import propose_link as _wiki_propose_link
-from modules.wiki.mcp.write_server import propose_unlink as _wiki_propose_unlink
-from modules.wiki.mcp.write_server import propose_merge as _wiki_propose_merge
-from modules.wiki.mcp.write_server import propose_moc as _wiki_propose_moc
+# MCP-DEDUP #70: the wiki_propose_* delegators were REMOVED from this shared write-server.
+# The canonical wiki propose tools live on the standalone wiki write-server
+# (modules/wiki/mcp/write_server.py, mounted at /mcp/wiki-write). No wiki capability lost
+# — the agent proposes wiki writes through that server. This server no longer imports any
+# wiki write fn (keeps its own gate surface smaller).
 
 # One correlation id per server process — groups this agent session's proposals so the
 # human sees them together in review.
@@ -114,11 +108,13 @@ def propose_decision(decision: str, confidence: int, domain: str, rationale: str
                     payload=payload, rationale=rationale)
 
 
-def propose_note(title: str, rationale: str, body: str = "",
-                 tags: list[str] | None = None) -> dict[str, Any]:
-    """Propose a NEW note (module=notes, kind=note_create). Lands PENDING; a human
-    accepts to create it. ``rationale`` REQUIRED. (Distinct from the WIKI note
-    proposal — this targets the lightweight notes module.)"""
+def propose_quicknote(title: str, rationale: str, body: str = "",
+                      tags: list[str] | None = None) -> dict[str, Any]:
+    """Propose a NEW quick note (module=notes, kind=note_create). Lands PENDING; a human
+    accepts to create it. ``rationale`` REQUIRED. (MCP-DEDUP #70: renamed from
+    ``propose_note`` to remove the clash with the WIKI note proposal — this targets the
+    lightweight NOTES module; the wiki note proposal lives on the standalone wiki write-
+    server. Payload is unchanged: module=notes, kind=note_create, field ``body``.)"""
     payload = {"title": title, "body": body, "tags": tags or []}
     return _propose(module="notes", kind="note_create", payload=payload,
                     rationale=rationale)
@@ -157,59 +153,15 @@ def propose_project_update(project_id: str, rationale: str,
                     rationale=rationale)
 
 
-# --------------------------------------------------------------------------- #
-# NG2 — WIKI propose tools, surfaced on the whole-app write-server. Thin         #
-# delegators to the wiki write-server's propose fns → the SEPARATE wiki_proposals#
-# queue (NOT agent_proposals). Each is enqueue-only + rationale-required (the     #
-# wiki fns enforce both). The agent now proposes wiki writes from the one        #
-# write-server alongside the other modules, queues stay distinct.                #
-# --------------------------------------------------------------------------- #
-def wiki_propose_note(title: str, content: str, rationale: str,
-                      tags: list[str] | None = None) -> dict[str, Any]:
-    """Propose a NEW wiki note → the wiki_proposals queue (W4a). Lands PENDING; a
-    human ratifies in the wiki P1 queue. ``rationale`` REQUIRED."""
-    return _wiki_propose_note(title, content, rationale, tags=tags)
-
-
-def wiki_propose_edit(note_id: int, rationale: str, title: str | None = None,
-                      content: str | None = None) -> dict[str, Any]:
-    """Propose an EDIT to a wiki note → wiki_proposals queue. ``rationale`` REQUIRED."""
-    return _wiki_propose_edit(note_id, rationale, title=title, content=content)
-
-
-def wiki_propose_link(from_note_id: int, target: str, rationale: str) -> dict[str, Any]:
-    """Propose ADDING a [[target]] link to a wiki note → wiki_proposals. ``rationale`` REQUIRED."""
-    return _wiki_propose_link(from_note_id, target, rationale)
-
-
-def wiki_propose_unlink(note_id: int, target: str, rationale: str) -> dict[str, Any]:
-    """Propose REMOVING a [[target]] link from a wiki note → wiki_proposals. ``rationale`` REQUIRED."""
-    return _wiki_propose_unlink(note_id, target, rationale)
-
-
-def wiki_propose_merge(source_id: int, target_id: int, rationale: str) -> dict[str, Any]:
-    """Propose MERGING wiki note source_id INTO target_id → wiki_proposals. ``rationale`` REQUIRED."""
-    return _wiki_propose_merge(source_id, target_id, rationale)
-
-
-def wiki_propose_moc(title: str, content: str, rationale: str) -> dict[str, Any]:
-    """Propose a wiki Map-of-Content note → wiki_proposals. ``rationale`` REQUIRED."""
-    return _wiki_propose_moc(title, content, rationale)
-
-
 # Registry (name → logic fn) — single source of truth; tests + FastMCP iterate it.
+# MCP-DEDUP #70: the wiki_propose_* delegators were removed (canonical = standalone
+# wiki write-server at /mcp/wiki-write). propose_note → propose_quicknote (it targets
+# the lightweight NOTES module; the rename removes the clash with the wiki note proposal).
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_decision": propose_decision,
-    "propose_note": propose_note,
+    "propose_quicknote": propose_quicknote,
     "propose_journal": propose_journal,
     "propose_project_update": propose_project_update,
-    # NG2: wiki propose tools → the wiki_proposals queue (separate from agent_proposals)
-    "wiki_propose_note": wiki_propose_note,
-    "wiki_propose_edit": wiki_propose_edit,
-    "wiki_propose_link": wiki_propose_link,
-    "wiki_propose_unlink": wiki_propose_unlink,
-    "wiki_propose_merge": wiki_propose_merge,
-    "wiki_propose_moc": wiki_propose_moc,
 }
 
 

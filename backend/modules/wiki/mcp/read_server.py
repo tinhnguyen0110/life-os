@@ -142,6 +142,59 @@ def wiki_verify_citations(claims: list[dict[str, Any]]) -> dict[str, Any]:
     return _verify_citations(claims or [])
 
 
+# --------------------------------------------------------------------------- #
+# NB3 — WIKI proposal read-back (PORTED from the shared read_server, MCP-DEDUP   #
+# #70). The wiki has its OWN proposals queue (wiki_proposals, separate from the   #
+# generic agent_proposals), so the agent reads the disposition of its WIKI        #
+# proposals (from the wiki propose_* tools) here. READ-ONLY: report the human's   #
+# verdict; the agent CANNOT accept/reject (wiki ratify is human-only at P1).      #
+# Uses proposals_store (the store — already imported for the audit appender), NOT #
+# proposals_service (the enqueue layer the M4 gate forbids). The store's get/list/#
+# count are pure reads → byte-identical payload to the old embedded tools, gate-  #
+# safe (no write/enqueue symbol enters this module).                              #
+# --------------------------------------------------------------------------- #
+def wiki_proposal_status(proposal_id: int) -> dict[str, Any]:
+    """One WIKI proposal's disposition by id (the wiki_proposals queue — separate
+    from the generic agent_proposals queue). Reports status (pending|accepted|
+    rejected), appliedNoteId (the note an accept created/edited), decidedBy + decided
+    (who ratified, when), kind + rationale. Unknown / malformed id → ``{found: False}``
+    (honest, not a crash). READ-ONLY — the agent cannot ratify its own wiki proposal."""
+    _audit("wiki_proposal_status", {"proposal_id": proposal_id})
+    try:
+        pid = int(proposal_id)
+    except (ValueError, TypeError):
+        return {"found": False, "proposalId": proposal_id}
+    p = proposals_store.get_proposal(pid)
+    if p is None:
+        return {"found": False, "proposalId": pid}
+    return {
+        "found": True,
+        "proposalId": p["id"],
+        "kind": p["kind"],
+        "status": p["status"],
+        "targetId": p.get("targetId"),
+        "appliedNoteId": p.get("appliedNoteId"),
+        "decidedBy": p.get("decidedBy"),
+        "decided": p.get("decided"),
+        "rationale": p.get("rationale"),
+    }
+
+
+def wiki_list_proposals(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """The agent's WIKI proposals (newest-first) with their current disposition — the
+    wiki review queue from the agent's POV (what's still pending vs accepted/rejected),
+    plus a ``counts`` roll-up by status. Optional ``status`` filter (pending|accepted|
+    rejected); unknown status → empty list. Empty queue → ``{proposals: [], counts: {}}``.
+    READ-ONLY (the wiki_proposals queue — separate from agent_proposals)."""
+    _audit("wiki_list_proposals", {"status": status, "limit": limit})
+    # proposals_store.list_proposals(status) returns newest-first capped at the store
+    # default; slice to ``limit`` here for API symmetry (byte-identical to the old tool,
+    # which sliced proposals_service.list_proposals(status)[:limit] — the service is a
+    # thin passthrough to this same store fn).
+    proposals = proposals_store.list_proposals(status=status)[: int(limit)]
+    return {"proposals": proposals, "counts": proposals_store.count_by_status()}
+
+
 # Registry of (name → logic fn) — the single source of truth for what tools exist.
 # Tests iterate this for parity + audit; FastMCP registration iterates it below.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -154,6 +207,9 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_recent_ops": wiki_recent_ops,
     "wiki_clusters": wiki_clusters,
     "wiki_verify_citations": wiki_verify_citations,
+    # PORTED (#70) — wiki-proposal read-back (was embedded in the shared read_server)
+    "wiki_proposal_status": wiki_proposal_status,
+    "wiki_list_proposals": wiki_list_proposals,
 }
 
 
@@ -163,8 +219,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
 # no-write-capability check) does NOT require the SDK to spin up a server.       #
 # --------------------------------------------------------------------------- #
 def build_server(transport_security: Any = None) -> Any:
-    """Construct the FastMCP server with all 7 read tools registered. Separated
-    from import so tests can import TOOLS without constructing the server.
+    """Construct the FastMCP server with all read tools registered (the TOOLS dict).
+    Separated from import so tests can import TOOLS without constructing the server.
 
     ``transport_security`` (default None = stdio-identical) is threaded into FastMCP so
     main.py can mount this over streamable-http (DNS-rebinding OFF for remote/LAN clients,
@@ -183,6 +239,8 @@ def build_server(transport_security: Any = None) -> Any:
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
     mcp.add_tool(wiki_verify_citations, description=wiki_verify_citations.__doc__)
+    mcp.add_tool(wiki_proposal_status, description=wiki_proposal_status.__doc__)  # ported #70
+    mcp.add_tool(wiki_list_proposals, description=wiki_list_proposals.__doc__)    # ported #70
     return mcp
 
 

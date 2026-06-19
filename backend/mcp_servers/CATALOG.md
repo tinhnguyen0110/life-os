@@ -5,7 +5,13 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **56 tools** — 46 read · 10 write (propose).
+Totals: **61 tools** across 4 servers (MCP-DEDUP #70):
+- whole-app shared: **40 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+- standalone wiki (canonical): **11 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
+
+The wiki tools were CONSOLIDATED onto the standalone wiki servers (no longer duplicated on the
+shared servers). The shared write-server's `propose_note` was renamed `propose_quicknote` (the
+NOTES module) to remove the clash with the wiki note proposal.
 
 ## Capability boundary (the supervision contract)
 
@@ -48,12 +54,6 @@ Totals: **56 tools** — 46 read · 10 write (propose).
 | `macro_history` |  | One macro indicator's time-series over the last ``days`` (oldest→newest) |
 | `news_digest` | ✓ | A NEUTRAL, source-cited roll-up of the grounded news the module has captured |
 | `news_list` | ✓ | Raw captured headlines, newest-first — each with source url + published_ts |
-| `wiki_search` |  | Full-text search the wiki vault → ranked results [{id, title, snippet, status}] |
-| `wiki_get` |  | One wiki note by its INTEGER id (the citation key); missing → {found: False} |
-| `wiki_overview` |  | Vault overview: {stats, inbox, orphans, recentActivity, proposalCount} + warning |
-| `wiki_backlinks` |  | Backlinks for a wiki note: {linked, unlinked, outbound} (grounding context) |
-| `wiki_proposal_status` |  | One WIKI proposal's disposition by id (the wiki_proposals queue — separate from agent_proposals) |
-| `wiki_list_proposals` |  | The agent's WIKI proposals (newest-first) with their current disposition — the wiki review queue |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `insights` | ✓ | Cross-domain NEUTRAL evidence-grounded observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
@@ -66,15 +66,34 @@ Totals: **56 tools** — 46 read · 10 write (propose).
 | Tool | Description |
 |---|---|
 | `propose_decision` | Propose a NEW decision-journal entry (module=decision_journal, kind=decision_create) |
-| `propose_note` | Propose a NEW note (module=notes, kind=note_create). Lands PENDING; a human |
+| `propose_quicknote` | Propose a NEW quick note (module=notes, kind=note_create). Lands PENDING; a human applies. (Renamed from `propose_note`, MCP-DEDUP #70.) |
 | `propose_journal` | Propose a NEW trade-journal entry (module=journal, kind=journal_create) |
 | `propose_project_update` | Propose an UPDATE to a project's human-authored status fields (module=projects, |
-| `wiki_propose_note` | Propose a NEW wiki note → wiki_proposals queue (separate from agent_proposals) |
-| `wiki_propose_edit` | Propose an EDIT to a wiki note → wiki_proposals queue |
-| `wiki_propose_link` | Propose ADDING a [[target]] link to a wiki note → wiki_proposals queue |
-| `wiki_propose_unlink` | Propose REMOVING a [[target]] link from a wiki note → wiki_proposals queue |
-| `wiki_propose_merge` | Propose MERGING wiki note source_id INTO target_id → wiki_proposals queue |
-| `wiki_propose_moc` | Propose a wiki Map-of-Content note → wiki_proposals queue |
+
+## Wiki tools (standalone canonical servers — `/mcp/wiki-read` · `/mcp/wiki-write`)
+
+The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT the shared ones
+(MCP-DEDUP #70). The read server has the M4 no-write gate; the write server is enqueue-only.
+
+| Tool | Server | Description |
+|---|---|---|
+| `wiki_search` | wiki-read | Full-text search the vault → ranked results [{id, title, snippet, status}] |
+| `wiki_overview` | wiki-read | Vault overview: {stats, inbox, orphans, recentActivity, proposalCount} + warning |
+| `wiki_inbox` | wiki-read | Fleeting notes awaiting triage (oldest→newest) |
+| `wiki_graph` | wiki-read | Ego-graph (1–2 hop) around a note: {center, nodes, edges, clusters} |
+| `wiki_get_note` | wiki-read | One note by its INTEGER id (the citation key); missing → {found: False} |
+| `wiki_backlinks` | wiki-read | Backlinks for a note: {linked, unlinked, outbound} |
+| `wiki_recent_ops` | wiki-read | Recent wiki mutations (op-log activity feed), newest first |
+| `wiki_clusters` | wiki-read | MOC candidates: graph-detected clusters of linked notes (W5a) |
+| `wiki_verify_citations` | wiki-read | Post-verify citations (anti-fabrication gate): verified/rejected/ungrounded/weakly_grounded |
+| `wiki_proposal_status` | wiki-read | One WIKI proposal's disposition by id (the wiki_proposals queue). PORTED #70. |
+| `wiki_list_proposals` | wiki-read | The agent's WIKI proposals (newest-first) + counts. PORTED #70. |
+| `propose_note` | wiki-write | Propose a NEW wiki note → wiki_proposals queue |
+| `propose_edit` | wiki-write | Propose an EDIT to a wiki note → wiki_proposals queue |
+| `propose_link` | wiki-write | Propose ADDING a [[target]] link to a wiki note → wiki_proposals queue |
+| `propose_unlink` | wiki-write | Propose REMOVING a [[target]] link from a wiki note → wiki_proposals queue |
+| `propose_merge` | wiki-write | Propose MERGING wiki note source_id INTO target_id → wiki_proposals queue |
+| `propose_moc` | wiki-write | Propose a wiki Map-of-Content note → wiki_proposals queue |
 
 ## Regenerate this doc
 

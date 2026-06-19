@@ -9,7 +9,8 @@ Defensive cases (each a real assertion, per the dispatch):
     enable_dns_rebinding_protection=False the handshake 421s. We KEEP that Host (don't
     override to localhost) so a 200 proves the remote-client path this sprint exists to fix.
 (c) 4 distinct managers → assert 4 distinct mcp-session-id values across the 4 mounts.
-(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 46/10/9/6.
+(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 40/4/11/6
+    (MCP-DEDUP #70: shared read 46→40, shared write 10→4, standalone wiki-read 9→11).
 (e) no `from __future__ import annotations` added to the 4 server modules.
 """
 
@@ -96,25 +97,28 @@ def test_root_still_redirects(client):
 # --------------------------------------------------------------------------- #
 def test_stdio_build_servers_unchanged():
     """Each server's build_server() still returns a FastMCP and the TOOLS counts hold
-    (46 read / 10 write / 9 wiki-read / 6 wiki-write) — stdio path intact. (read = 46 since
-    #56 P4 added nav_history; was 45 at #55.)"""
+    (MCP-DEDUP #70: 40 read / 4 write / 11 wiki-read / 6 wiki-write) — stdio path intact.
+    (shared read 46→40 and shared write 10→4 dropped the 6 duplicated wiki tools;
+    standalone wiki-read 9→11 gained the 2 ported proposal-readback tools.)"""
     import mcp_servers.read_server as rs
     import mcp_servers.write_server as ws
     import modules.wiki.mcp.read_server as wrs
     import modules.wiki.mcp.write_server as wws
 
-    assert len(rs.TOOLS) == 46
-    assert len(ws.TOOLS) == 10
+    # MCP-DEDUP #70: shared read 46→40 (−6 wiki), shared write 10→4 (−6 wiki_propose_*)
+    assert len(rs.TOOLS) == 40
+    assert len(ws.TOOLS) == 4
     # the 2 whole-app servers expose TOOLS; build each (default transport_security=None)
     for mod in (rs, ws):
         srv = mod.build_server()
         assert srv is not None and type(srv).__name__ == "FastMCP"
-    # the wiki servers add tools explicitly (9 read / 6 write) — assert via the built server
+    # the wiki servers add tools explicitly — assert via the built server. MCP-DEDUP #70:
+    # standalone wiki-read 9→11 (+wiki_proposal_status/wiki_list_proposals ported in); wiki-write 6.
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 9
+    assert len(wr._tool_manager.list_tools()) == 11
     assert len(ww._tool_manager.list_tools()) == 6
 
 

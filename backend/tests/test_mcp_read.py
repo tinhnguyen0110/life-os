@@ -81,7 +81,7 @@ NULLARY_TOOLS = [
     "macro_overview",
     "news_digest",
     "news_list",
-    "wiki_overview",
+    # MCP-DEDUP #70: wiki_overview removed from the shared server (canonical = standalone)
     "life_brief",
     "insights",
     "market_watchlist",
@@ -107,7 +107,6 @@ ENVELOPE_KEY = {
     "macro_overview": "macro",
     "news_digest": "digest",
     "news_list": "news",
-    "wiki_overview": "overview",
     "life_brief": "brief",
     "insights": "insights",
     "market_watchlist": "items",
@@ -144,9 +143,7 @@ def test_arg_tools_return_jsonable_dict(app_db):
         rs.macro_history("cpi", days=400),
         rs.brief_history(limit=5),
         rs.activity_feed(routine="x", status="ok", range="today"),
-        rs.wiki_search("anything", limit=5),
-        rs.wiki_get(999999),
-        rs.wiki_backlinks(999999),
+        # MCP-DEDUP #70: wiki_search/get/backlinks removed (canonical = standalone server)
         rs.finance_simulate({"crypto": 50, "etf": 50}),
         rs.market_correlation("BTC,ETH", hours=24),
         rs.market_relative_strength("ETH", vs="BTC", hours=24),
@@ -500,138 +497,33 @@ def test_news_mcp_neutral_no_leak(app_db):
 
 
 # --------------------------------------------------------------------------- #
-# WIKI-MCP — wrap wiki READ over MCP (mirror news). search/get/overview/        #
-# backlinks; honest-found-false; integer-id citation; 0 write-leak.             #
+# WIKI-MCP (MCP-DEDUP #70) — the wiki READ tools were REMOVED from this shared    #
+# server; canonical = the standalone modules/wiki/mcp/read_server (tested in      #
+# test_wiki_mcp_read.py). The 4 read dupes (search/get/overview/backlinks) have   #
+# parity tests there; the 2 ported proposal-readback tools (wiki_proposal_status  #
+# + wiki_list_proposals) were MOVED to test_wiki_mcp_read.py. What remains here   #
+# is the shared read-server's OWN no-write gate (it must bind no wiki write fn)    #
+# + the kept _wiki_search/_wiki_overview imports (life_brief + insights use them, #
+# NOT as MCP tools).                                                              #
 # --------------------------------------------------------------------------- #
-def _seed_wiki_note(title="Atomicity", content="a note holds one idea"):
-    from modules.wiki.service import create_note
-    from modules.wiki.schema import NoteCreateInput
-    return create_note(NoteCreateInput(title=title, content=content)).id
+def test_shared_read_server_has_no_wiki_tools_after_dedup(app_db):
+    """MCP-DEDUP #70: the shared read-server exposes NO wiki_* MCP tool (all moved to
+    the standalone). The before/after gate: zero wiki tool keys remain."""
+    wiki_tools = [k for k in rs.TOOLS if k.startswith("wiki")]
+    assert wiki_tools == [], f"shared read-server still exposes wiki tools: {wiki_tools}"
 
 
-def test_wiki_search_and_get_roundtrip(app_db):
-    nid = _seed_wiki_note(title="Spaced repetition", content="review on a curve")
-    # search finds it (ranked results, each with an integer id to cite)
-    res = rs.wiki_search("repetition")["results"]
-    assert any(r["id"] == nid for r in res)
-    assert {"id", "title", "snippet", "status"} <= set(res[0].keys())
-    # get by integer id returns the note
-    got = rs.wiki_get(nid)
-    assert got["found"] is True and got["note"]["id"] == nid
-    assert got["note"]["title"] == "Spaced repetition"
-
-
-def test_wiki_get_missing_is_found_false(app_db):
-    assert rs.wiki_get(999999) == {"found": False, "note_id": 999999}
-
-
-def test_wiki_overview_shape_and_empty_honest(app_db):
-    out = rs.wiki_overview()
-    assert "overview" in out
-    ov = out["overview"]
-    assert {"stats", "inbox", "orphans", "recentActivity"} <= set(ov.keys())
-    # empty vault → pctWithLink None (never div-zero), warning present
-    assert ov["stats"].get("pctWithLink") is None
-
-
-def test_wiki_backlinks_shape(app_db):
-    a = _seed_wiki_note(title="Target", content="t")
-    b = _seed_wiki_note(title="Source", content=f"see [[{a}]]")
-    out = rs.wiki_backlinks(a)["backlinks"]
-    assert {"linked", "unlinked", "outbound"} <= set(out.keys())
-    assert any(l["id"] == b for l in out["linked"])  # the inbound link surfaces
-
-
-def test_NB3_wiki_proposal_status_reads_wiki_queue(app_db):
-    """NB3: wiki_proposal_status reads back a wiki proposal's disposition from the
-    wiki_proposals queue (the agent's wiki review loop). Create one via the real
-    consumer path (the whole-app write-server's wiki_propose_note → wiki_proposals),
-    then read its status — it must be found + pending."""
-    from mcp_servers import write_server as ws
-    pid = ws.wiki_propose_note("NB3 note", "body", "because NB3 read-back")["id"]
-    out = rs.wiki_proposal_status(pid)
-    assert out["found"] is True
-    assert out["proposalId"] == pid
-    assert out["status"] == "pending"
-    assert out["kind"] == "note_create"
-    assert out["rationale"] == "because NB3 read-back"
-
-
-def test_NB3_wiki_proposal_status_missing_and_malformed(app_db):
-    """Unknown id → found False; a non-int id must NOT leak a ValueError (honest,
-    mirrors check_proposal_status NG4)."""
-    assert rs.wiki_proposal_status(999999) == {"found": False, "proposalId": 999999}
-    assert rs.wiki_proposal_status("nope") == {"found": False, "proposalId": "nope"}
-
-
-def test_NB3_wiki_list_proposals_and_counts(app_db):
-    """wiki_list_proposals returns the agent's wiki proposals newest-first + a counts
-    roll-up; the status filter scopes it; empty queue is honest-empty."""
-    # empty first
-    empty = rs.wiki_list_proposals()
-    assert empty["proposals"] == [] and empty["counts"].get("pending", 0) == 0
-    from mcp_servers import write_server as ws
-    p1 = ws.wiki_propose_note("first", "b", "r1")["id"]
-    p2 = ws.wiki_propose_note("second", "b", "r2")["id"]
-    out = rs.wiki_list_proposals()
-    ids = [p["id"] for p in out["proposals"]]
-    assert ids == [p2, p1]  # newest-first
-    assert out["counts"]["pending"] == 2
-    # status filter scopes (accepted → none yet)
-    assert rs.wiki_list_proposals(status="accepted")["proposals"] == []
-
-
-def test_NB3_wiki_proposal_readback_is_separate_from_agent_queue(app_db):
-    """The wiki read-back must reflect the wiki_proposals queue, NOT agent_proposals —
-    a wiki_propose appears in wiki_list_proposals but NOT in list_my_proposals."""
-    from mcp_servers import write_server as ws
-    pid = ws.wiki_propose_note("isolated", "b", "queue-separation check")["id"]
-    assert any(p["id"] == pid for p in rs.wiki_list_proposals()["proposals"])
-    # the generic agent queue (list_my_proposals) is untouched by a wiki propose
-    assert rs.list_my_proposals()["proposals"] == []
-
-
-def test_NB3_wiki_overview_proposalCount_is_live(app_db):
-    """NB3: wiki_overview.proposalCount reads the live PENDING wiki-proposal count
-    (was hardcoded 0). 0 on empty, increments as proposals queue."""
-    assert rs.wiki_overview()["overview"]["proposalCount"] == 0
-    from mcp_servers import write_server as ws
-    ws.wiki_propose_note("a", "b", "r")
-    ws.wiki_propose_note("c", "d", "r2")
-    assert rs.wiki_overview()["overview"]["proposalCount"] == 2
-
-
-def test_NB3_distinguishing_case_status_tools_do_not_collapse_queues(app_db):
-    """MANDATORY (dispatch): an id present in wiki_proposals but NOT agent_proposals must
-    resolve found:true via wiki_proposal_status AND found:false via check_proposal_status.
-    If both return found:true the two queues have been collapsed — wrong. (agent_proposals
-    is empty in this fixture, so the wiki id N is guaranteed absent there.)"""
-    from mcp_servers import write_server as ws
-    pid = ws.wiki_propose_note("distinguishing", "b", "queue-scoping proof")["id"]
-    assert rs.wiki_proposal_status(pid)["found"] is True, "wiki id must resolve in the wiki queue"
-    assert rs.check_proposal_status(pid)["found"] is False, \
-        "same id must NOT resolve in the agent queue (queues are scoped, not collapsed)"
-
-
-def test_NB3_wiki_proposal_readback_no_write_leak(app_db):
-    """The NB3 read-back tools import ONLY the wiki proposals READ fns — no
-    accept/reject/create_proposal/batch_accept reachable (the read gate holds)."""
-    ns = set(vars(rs))
-    for w in ("accept_proposal", "reject_proposal", "create_proposal", "batch_accept",
-              "mark_decided"):
-        assert w not in ns, f"NB3 leaked a wiki write/decide symbol: {w}"
-
-
-def test_wiki_mcp_no_write_leak(app_db):
-    # WIKI-MCP capability gate: the read-server must NOT bind any wiki write fn.
-    # (the wiki writes are already in WRITE_SYMBOLS; this asserts 0 leak at the
-    # read-server namespace, the same gate the AST/namespace tests enforce.)
+def test_shared_read_server_no_wiki_write_leak(app_db):
+    # The shared read-server must NOT bind any wiki write/mutate fn (its capability gate).
     ns = set(vars(rs))
     for w in ("create_note", "update_note", "delete_note", "merge_notes",
               "enqueue", "create_proposal", "accept_proposal", "reject_proposal"):
         assert w not in ns, f"read-server leaked a wiki write symbol: {w}"
-    # and the read fns ARE reachable (aliased-private) — wired, not absent
-    assert "_wiki_search" in ns and "_wiki_get_note" in ns
+    # _wiki_search + _wiki_overview ARE kept — life_brief (_brief_wiki) + insights
+    # (_brief_decision) consume them (read-only reader fns, NOT MCP tools).
+    assert "_wiki_search" in ns and "_wiki_overview" in ns
+    # the removed wiki-tool imports are GONE (dedup actually happened)
+    assert "_wiki_get_note" not in ns and "_wiki_backlinks" not in ns
 
 
 # --------------------------------------------------------------------------- #
@@ -955,7 +847,7 @@ def test_feedback_loop_rejected_visible_to_agent(app_db):
     from mcp_servers import write_server as ws
     from mcp_servers import proposals_service as psvc
 
-    p = ws.propose_note("idea", "worth capturing")
+    p = ws.propose_quicknote("idea", "worth capturing")
     psvc.reject(p["id"], decided_by="user")
     s = rs.check_proposal_status(p["id"])
     assert s["status"] == "rejected"
@@ -1112,4 +1004,4 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 46  # +1 nav_history (#56 P4); was 45 (#55 allocation/guardian)
+    assert len(rs.TOOLS) == 40  # MCP-DEDUP #70: −6 wiki tools (canonical=standalone); was 46

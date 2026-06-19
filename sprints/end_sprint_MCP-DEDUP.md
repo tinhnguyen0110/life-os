@@ -1,0 +1,43 @@
+# End Sprint MCP-DEDUP — consolidate wiki MCP (canonical = standalone) (Task #70)
+
+> Status: **REVIEWED — 3 gates green, committing.** Task #70. Wiki MCP tools were double-implemented (embedded `wiki_*` in the SHARED servers + the standalone `modules/wiki/mcp/`). Removed the shared duplication; ported the 2 proposals-status reads to the standalone; renamed the NOTES `propose_note` → `propose_quicknote`. ZERO tool lost on the canonical surface (port-before-delete + the before/after registered-TOOLS count). MCP-tool-layer only.
+
+## What shipped
+- **PORTED (the only genuine port-before-delete):** `wiki_proposal_status` + `wiki_list_proposals` → `modules/wiki/mcp/read_server.py` (registered in TOOLS + build_server). They now use `proposals_store.get_proposal/list_proposals/count_by_status` (the STORE) directly — backend-2's gate-safe improvement: `proposals_service` is the enqueue layer the read-server's no-write capability gate forbids, and the service's read fns are EXACT passthroughs to the store (`return pstore.list_proposals(status)` etc.) → **byte-identical payload** to the old embedded tools, with no write-symbol entering the read module.
+- **DELETED from shared read_server:** `wiki_search`, `wiki_get`, `wiki_overview`, `wiki_backlinks`, `wiki_proposal_status`, `wiki_list_proposals` (6) + their wiki imports + TOOLS entries. (`wiki_get` → canonical is `wiki_get_note`; team-lead verified nothing hard-codes `wiki_get` → deleted clean, no alias.)
+- **DELETED from shared write_server:** `wiki_propose_note/edit/link/unlink/merge/moc` (6 thin delegators) + the 6 `from modules.wiki.mcp.write_server import propose_* as _wiki_propose_*` imports + TOOLS entries.
+- **RENAMED:** shared `propose_note(title, rationale, body, ...)` (module=notes/kind=note_create) → **`propose_quicknote`** (def + TOOLS key; field `body` + module/kind byte-identical — rename only). The standalone wiki `propose_note(title, content, rationale, tags)` is UNTOUCHED.
+- **Callers updated BY FIELD (not blanket):** the 5 NOTES-quicknote test files (test_write_loop_e2e/test_agent_proposals_apply/test_mcp_e2e/test_mcp_write/test_mcp_read, field `body`) → `propose_quicknote`; `test_wiki_mcp_write` (field `content`, WIKI) → KEPT `propose_note` (verified: 0 propose_quicknote there).
+- **Docs:** `docs/MCP-CONFIG.md` + `CATALOG.md` updated (40 shared-read / 4 shared-write / 11 wiki-read / 6 wiki-write = 61 total) + the dedup explanation + the propose_quicknote rename note + the **dogfood-harness caveat** (`/tmp/mcp_call.py` loads only the shared servers → wiki tools no longer in THAT harness is EXPECTED, the real .mcp.json connects all 4). .mcp.json wiring unchanged (4 servers).
+
+### Verified counts (architect re-ran independently — Rule #0)
+- **Full suite (MY run on the CURRENT tree — the commit gate team-lead flagged): 1639 passed, 6 skipped, 0 failed, 0 errors.** (1639 vs the prior 1649 = the dedup removed the duplicate-tool tests; net healthy, 0 failures. The `test_finance_mcp_shape` 46→40 count-fix consumer is green — the count-fix did NOT break another count consumer, the exact silent-regression class team-lead worried about.) mypy clean.
+- **MY independent registered-TOOLS count (Rule #0 — imported the 4 servers, counted `.TOOLS`):** shared-read **40, ZERO wiki**; shared-write **4** (propose_quicknote present), **ZERO wiki_propose**; wiki-read **11** (both ported present: wiki_proposal_status + wiki_list_proposals); wiki-write **6** (wiki propose_note KEPT). **= ZERO tool lost on the canonical surface.** team-lead independently verified the same.
+- backend-2 (per report): `docker compose restart backend` done + live-curled /mcp/wiki-read + /mcp/wiki-write (the 2 ported live); propose_quicknote round-trip (propose→accept→re-GET notes, cleaned up); audit row lands.
+
+## Code review (architect — 4-step, the no-tool-lost + byte-identical-port + by-field-rename hardest)
+1. **git status/diff** — files STABLE (newest 08:17, reviewed 08:21 — >4min). 13 files: shared read/write servers, standalone wiki-read (the 2 ported), 7 test files (renames + count-fixes), MCP-CONFIG + CATALOG docs + plan/end_sprint. `template/*` + `data/` EXCLUDED.
+2. **Read full functions** — the 2 ported tools (registered in TOOLS + build_server; store-based reads); the shared deletions (0 wiki left in either TOOLS); the propose_note→propose_quicknote rename.
+3. **Verify against plan + the 6 gates** — no-tool-lost, ported-identical, propose_quicknote round-trip, audit, no-collision, green. All confirmed.
+4. **Hunt additional issues — verified in code + independently:**
+   - **(1) ZERO tool lost (the gate)** — my own registered-TOOLS count: the BEFORE wiki set == the AFTER set (11 wiki-read + 6 wiki-write), the 2 ported present, the rename disambiguated. NOT a def-grep — imported `.TOOLS` (built-but-not-wired-safe: registered AND callable). ✅
+   - **(2) ported byte-identical** — `proposals_service.{get,list,count}` are exact `return pstore.*` passthroughs → the store-based ported tools return the same payload as the old service-based embedded ones. ✅
+   - **(3) by-field rename honored (dissolved-finding-recheck-all-consumers)** — `test_wiki_mcp_write` (content/WIKI) kept propose_note (0 quicknote); the 5 NOTES files renamed (the lone `propose_note` in test_mcp_write is a test-FUNCTION NAME, not a tool call — harmless). ✅
+   - **(4) audit intact** — the deleted shared wiki_propose_* were delegators to the standalone whose `_audit → append_audit` is untouched; the 2 ported read tools also `_audit`. ✅
+   - **(5) gate-safety bonus** — the ported tools use the store (pure reads), NOT the service (enqueue layer), keeping the read-server's no-write-capability gate clean. A thoughtful call beyond the dispatch. ✅
+
+## Assumptions (user-review)
+- **Canonical wiki MCP surface = the standalone `modules/wiki/mcp/` pair** (11 read + 6 write); the shared whole-app read/write servers carry ZERO wiki tools. **Why:** wiki was double-implemented (embedded + standalone); the standalone (W4b) is fuller + the right home. **How to change:** N/A — the dedup direction (A) is locked.
+- **The NOTES quicknote propose tool is `propose_quicknote`** (was `propose_note`); the WIKI propose is `propose_note` (standalone). Disambiguated by field (body=notes, content=wiki). **Why:** the name clashed across two modules. **How to change:** the shared write_server TOOLS key.
+- **Ported proposals-status tools read via `proposals_store`** (not the service) — byte-identical payload (service is a passthrough), gate-safe (no write symbol in the read server). **Why:** keep the read-server's no-write capability gate clean. **How to change:** N/A.
+
+## The 3 Quality Gates
+- **Gate 1 — API:** ☑ 4 servers' shapes correct (40/4/11/6); the 2 ported registered + callable; propose_quicknote registered; no wiki in shared · ☑ no schema/payload change · ☑ no auth · ☑ NEUTRAL · ☑ audit preserved. **PASS**
+- **Gate 2 — Function:** ☑ (1) ZERO tool lost (registered-TOOLS count, before==after) · ☑ (2) ported byte-identical (store passthrough) · ☑ (3) by-field rename (wiki kept, notes renamed) · ☑ (4) audit intact · ☑ (5) no name collision · ☑ propose_quicknote round-trip (backend live) · ☑ **full suite 1639, 0 errors** (the count-fix didn't break another consumer) · ☑ mypy clean. **PASS**
+- **Gate 3 — Sprint:** ☑ end doc + verified counts + the registered-TOOLS before/after · ☑ architect spot-checked full functions + independent count · ☑ full suite green on the CURRENT tree (Rule #0) · ☑ team-lead verified the registered surface + the live restart/curl · ☑ assumptions logged (3) · ☑ commit format. **PASS**
+
+## Risks / follow-ups
+- **The wiki MCP surface is deduped + unambiguous** — the agent reads wiki via the canonical lifeos-wiki-read/write; the whole-app servers carry only non-wiki; propose_quicknote vs propose_note are distinct. The consumer (team-lead/agent) gets a cleaner surface with ZERO tool loss.
+- **Follow-up (team-lead, noted NOT this sprint):** extend `/tmp/mcp_call.py` to also load the 2 standalone wiki servers' TOOLS so the dogfood harness sees wiki again (it currently loads only the shared 2). Doc'd in MCP-CONFIG.md.
+- **Runtime:** `main.py` is NOT in `--reload-dir` → the canonical stack needs `docker compose restart backend` after a server-file edit (backend-2 did it + curled). A standing gotcha for any future MCP-server edit.
+- Process: backend-2's gate-safe store-vs-service choice + the by-field rename discipline = a clean refactor; the count-fix-broke-a-count-consumer risk was caught by waiting for the full suite on the current tree (not the pre-fix run).

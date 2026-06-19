@@ -19,16 +19,24 @@ pair and a deeper **wiki-only** pair.
 
 | Server | Module | Tools | Capability |
 |---|---|---|---|
-| **whole-app read** | `mcp_servers.read_server` | **41** | reads ALL modules — writes nothing |
-| **whole-app write** | `mcp_servers.write_server` | **10** | `propose_*` only — ENQUEUE pending, applies nothing |
-| **wiki read** | `modules.wiki.mcp.read_server` | **9** | deep vault read (inbox/graph/clusters/verify_citations) |
+| **whole-app read** | `mcp_servers.read_server` | **40** | reads ALL modules — writes nothing |
+| **whole-app write** | `mcp_servers.write_server` | **4** | `propose_*` only — ENQUEUE pending, applies nothing |
+| **wiki read** | `modules.wiki.mcp.read_server` | **11** | ALL vault reads (search/get/overview/backlinks/inbox/graph/clusters/verify_citations) + wiki proposal read-back |
 | **wiki write** | `modules.wiki.mcp.write_server` | **6** | `propose_*` wiki only — ENQUEUE pending |
 
-**Totals: whole-app = 51 tools (41 read + 10 write).** The wiki pair (9 + 6) is a *deeper,
-vault-only* surface — it has tools the whole-app read does not (`wiki_inbox`, `wiki_graph`,
-`wiki_clusters`, `wiki_recent_ops`, `wiki_verify_citations`). The whole-app read carries the
-common wiki reads (`wiki_search`/`wiki_get`/`wiki_overview`/`wiki_backlinks`) plus everything
-else (finance, market, projects, claude_usage, journals, brief, macro, news, …).
+**Totals: whole-app = 44 tools (40 read + 4 write); wiki pair = 17 (11 read + 6 write); 61 total.**
+MCP-DEDUP #70: the wiki MCP tools now live ONLY on the wiki pair (the canonical surface) — the
+whole-app servers no longer carry duplicate wiki tools. The whole-app read carries everything
+NON-wiki (finance, market, projects, claude_usage, journals, brief, macro, news, …); the wiki
+pair carries ALL vault reads + the wiki proposal read-back + the wiki `propose_*` writes. The
+whole-app write `propose_note` was renamed **`propose_quicknote`** (the lightweight NOTES module)
+to remove the clash with the wiki pair's `propose_note`.
+
+> **Dogfood harness caveat:** `/tmp/mcp_call.py` loads ONLY the SHARED `read_server.TOOLS` +
+> `write_server.TOOLS`, so after MCP-DEDUP #70 it no longer lists wiki tools — this is EXPECTED.
+> The real `.mcp.json` connects all 4 servers; wiki tools live on `lifeos-wiki-read` /
+> `lifeos-wiki-write`. (Extending `/tmp/mcp_call.py` to load the 2 wiki servers is a noted
+> follow-up, not done here.)
 
 ### Which pair to register
 

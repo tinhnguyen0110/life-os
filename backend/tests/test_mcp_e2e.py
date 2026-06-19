@@ -134,7 +134,7 @@ def test_full_agent_loop_reject_path(app_db):
     from modules.notes import service as nsvc
 
     notes_before = nsvc.list_notes()[0]
-    p = ws.propose_note("Capture: ladder idea", rationale="worth keeping")
+    p = ws.propose_quicknote("Capture: ladder idea", rationale="worth keeping")
     assert rs.check_proposal_status(p["id"])["status"] == "pending"
 
     rejected = psvc.reject(p["id"], decided_by="user")
