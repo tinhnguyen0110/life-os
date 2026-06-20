@@ -11,11 +11,15 @@ export function PrivacyRevealModal({
   open,
   onClose,
   onSubmit,
+  onTurnOff,
 }: {
   open: boolean;
   onClose: () => void;
   /** returns {ok, error} — the modal shows the error + stays open on failure. */
   onSubmit: (pass: string) => Promise<{ ok: boolean; error?: string }>;
+  /** turn privacy fully OFF (money normal, un-armed) — no pass needed (the user already
+   *  chose to disable the veil). Optional; when given, a "Tắt riêng tư" link shows. */
+  onTurnOff?: () => void;
 }) {
   const [pass, setPass] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -83,6 +87,18 @@ export function PrivacyRevealModal({
               {busy ? "Đang kiểm tra…" : "Mở khóa"}
             </button>
           </div>
+          {onTurnOff && (
+            <button
+              type="button"
+              className="hint"
+              onClick={onTurnOff}
+              disabled={busy}
+              style={{ background: "none", border: 0, cursor: "pointer", color: "var(--tx-2)", fontSize: 11, textDecoration: "underline", alignSelf: "center", marginTop: 2 }}
+              data-testid="privacy-modal-turnoff"
+            >
+              Tắt chế độ riêng tư (hiện số tiền)
+            </button>
+          )}
         </form>
       </div>
     </>

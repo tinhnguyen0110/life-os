@@ -25,7 +25,7 @@ function crumbFor(pathname: string): string {
 export function TopBar({ route }: { route?: string } = {}) {
   const router = useSafeRouter();
   const pathname = useSafePathname();
-  const { privacy, locked, setPrivacy, unlock } = usePrivacy();
+  const { privacy, locked, setPrivacy, relock, unlock } = usePrivacy();
   const [revealOpen, setRevealOpen] = useState(false);
   const [api, setApi] = useState<ApiState>("checking");
   const [spinning, setSpinning] = useState(false);
@@ -88,21 +88,25 @@ export function TopBar({ route }: { route?: string } = {}) {
       <div className="pill">
         Sync <b>2 phút trước</b>
       </div>
-      {/* #74 change 3+5 — privacy toggle (moved here from the sidebar). Same usePrivacy
-          hook (CustomEvent broadcast keeps the body[data-privacy] mask in sync). Behavior:
-          OFF → turn ON (money HIDDEN/locked); ON+locked → open the pass modal to reveal;
-          ON+unlocked → turn OFF (back to normal). 👁 off / 🙈 on, accent when on. */}
+      {/* #74 change 3+5 (+ follow-up bug fix) — privacy toggle. Same usePrivacy hook
+          (CustomEvent broadcast keeps the body[data-privacy] mask in sync). The eye CYCLES
+          hide↔reveal with single clicks:
+            OFF (👁)            → click → ON + LOCKED (money hidden ••••)
+            ON + LOCKED (🙈)    → click → open the pass modal → (pass) → unlocked (shown)
+            ON + UNLOCKED (🙈)  → click → RE-LOCK (money hidden again)  ← the fix: was
+                                   setPrivacy(false), which needed a 2nd click to re-hide.
+          To turn privacy fully OFF (money normal, un-armed): the reveal modal's "Tắt" btn. */}
       <button
         type="button"
         className={`icbtn${privacy ? " on" : ""}`}
         onClick={() => {
           if (!privacy) setPrivacy(true);          // OFF → lock money
           else if (locked) setRevealOpen(true);    // ON+locked → ask for pass
-          else setPrivacy(false);                  // ON+unlocked → back to normal
+          else relock();                           // ON+unlocked → RE-HIDE (1 click)
         }}
         title={
           !privacy ? "Bật chế độ riêng tư (ẩn số tiền)"
-            : locked ? "Mở khóa để hiện số tiền" : "Tắt chế độ riêng tư (hiện số tiền)"
+            : locked ? "Mở khóa để hiện số tiền" : "Ẩn số tiền lại"
         }
         aria-label="Chế độ riêng tư"
         aria-pressed={privacy}
@@ -112,7 +116,12 @@ export function TopBar({ route }: { route?: string } = {}) {
       >
         <span aria-hidden style={{ fontSize: 15, lineHeight: 1 }}>{privacy ? "🙈" : "👁"}</span>
       </button>
-      <PrivacyRevealModal open={revealOpen} onClose={() => setRevealOpen(false)} onSubmit={unlock} />
+      <PrivacyRevealModal
+        open={revealOpen}
+        onClose={() => setRevealOpen(false)}
+        onSubmit={unlock}
+        onTurnOff={() => { setPrivacy(false); setRevealOpen(false); }}
+      />
       <button
         type="button"
         className={`icbtn${spinning ? " spinning" : ""}`}

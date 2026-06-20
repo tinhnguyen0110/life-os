@@ -174,7 +174,9 @@ describe("TopBar", () => {
       await settleTopBar();
     });
 
-    it("ON+unlocked → click turns privacy OFF (back to normal, money shown)", async () => {
+    // FOLLOW-UP BUG FIX: ON+unlocked → click RE-HIDES in ONE click (was: turned privacy
+    // OFF, needing a 2nd click to re-hide). privacy stays ON, money masks again.
+    it("ON+unlocked → ONE click RE-HIDES money (single-click re-hide, the bug fix)", async () => {
       verifyPrivacyPass.mockResolvedValue({ success: true, data: { ok: true } });
       const user = userEvent.setup();
       await readyTopBar();
@@ -182,10 +184,26 @@ describe("TopBar", () => {
       await user.click(screen.getByTestId("tb-privacy-toggle")); // modal
       await user.type(screen.getByTestId("privacy-modal-input"), "0110");
       await user.click(screen.getByTestId("privacy-modal-submit"));
-      await waitFor(() => expect(document.body.hasAttribute("data-privacy")).toBe(false)); // unlocked
-      // now ON+unlocked → click → privacy OFF
+      await waitFor(() => expect(document.body.hasAttribute("data-privacy")).toBe(false)); // unlocked/shown
+      // ONE click → money HIDDEN again (re-locked), privacy STILL on (not turned off)
       await user.click(screen.getByTestId("tb-privacy-toggle"));
-      await waitFor(() => expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "0"));
+      await waitFor(() => expect(document.body.getAttribute("data-privacy")).toBe("on"));
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "1"); // privacy still ON
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-locked", "1"); // re-locked
+      await settleTopBar();
+    });
+
+    it("the reveal modal's 'Tắt' button turns privacy fully OFF (money normal, un-armed)", async () => {
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // lock
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // open modal
+      await waitFor(() => expect(screen.getByTestId("privacy-modal-turnoff")).toBeInTheDocument());
+      await user.click(screen.getByTestId("privacy-modal-turnoff"));
+      // privacy fully OFF: no mask, eye OFF, modal closed, persisted off
+      await waitFor(() => expect(document.body.hasAttribute("data-privacy")).toBe(false));
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "0");
+      expect(screen.queryByTestId("privacy-modal")).toBeNull();
       expect(localStorage.getItem("lifeos.privacy")).toBe(JSON.stringify({ on: false }));
       await settleTopBar();
     });

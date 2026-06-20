@@ -57,6 +57,10 @@ export interface UsePrivacy {
   /** flip privacy on/off. Turning OFF also clears unlocked (re-lock on next ON). */
   toggle: () => void;
   setPrivacy: (on: boolean) => void;
+  /** RE-HIDE money without leaving privacy mode: keep privacy=true, set unlocked=false →
+   *  money masks again. Single-click re-hide from the unlocked state (the #74 follow-up
+   *  bug fix — was setPrivacy(false), which needed a 2nd click to re-hide). */
+  relock: () => void;
   /** submit a pass attempt → POST verify → on ok, UNLOCK. Returns {ok} (false on wrong
    *  pass or network error — the modal shows the error, stays locked). */
   unlock: (pass: string) => Promise<{ ok: boolean; error?: string }>;
@@ -117,6 +121,17 @@ export function usePrivacy(): UsePrivacy {
     });
   }, []);
 
+  const relock = useCallback(() => {
+    // re-hide: privacy stays ON, just drop the session reveal → money masks again.
+    setState((cur) => {
+      if (!cur.privacy) return cur; // no-op when privacy already off
+      const next = { privacy: true, unlocked: false };
+      commit(next);
+      applyBodyAttr(next);
+      return next;
+    });
+  }, []);
+
   const unlock = useCallback(async (pass: string): Promise<{ ok: boolean; error?: string }> => {
     try {
       const res = await verifyPrivacyPass(pass);
@@ -138,5 +153,5 @@ export function usePrivacy(): UsePrivacy {
   }, []);
 
   const locked = state.privacy && !state.unlocked;
-  return { privacy: state.privacy, unlocked: state.unlocked, locked, ready, toggle, setPrivacy, unlock };
+  return { privacy: state.privacy, unlocked: state.unlocked, locked, ready, toggle, setPrivacy, relock, unlock };
 }
