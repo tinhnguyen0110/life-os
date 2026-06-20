@@ -1,5 +1,11 @@
-"""tests/test_mcp_http.py — MCP-HTTP: the 4 MCP servers mounted over streamable-http
+"""tests/test_mcp_http.py — MCP-HTTP: the 5 MCP servers mounted over streamable-http
 into the existing uvicorn (main.py), reachable for remote/multi-client.
+
+MCP-DOMAINS (T1): a 5th mount /mcp/finance was added — a NARROW, ADDITIVE 15-tool finance
+subset that reference-imports read_server's own fns (zero dup; see tests/
+test_finance_mcp_server.py for the 15-count + identity + no-reimpl gates). It rides the same
+_build_mcp_servers loop (stateless_http=True, DNS-rebind-off), so every handshake/stateless
+test below now exercises it too — added to MOUNTS.
 
 Defensive cases (each a real assertion, per the dispatch):
 (a) un-wired lifespan → 500 on every call → so we POST a REAL `initialize` and assert
@@ -8,13 +14,14 @@ Defensive cases (each a real assertion, per the dispatch):
 (b) DNS-rebinding 421 → TestClient sends Host 'testserver' (non-localhost); without
     enable_dns_rebinding_protection=False the handshake 421s. We KEEP that Host (don't
     override to localhost) so a 200 proves the remote-client path this sprint exists to fix.
-(c) MCP-STATELESS (#75): the 4 mounts are stateless_http=True → the handshake issues NO
+(c) MCP-STATELESS (#75): the 5 mounts are stateless_http=True → the handshake issues NO
     mcp-session-id (no per-session state) so a backend RESTART can't drop a client; a
-    tools/list works with NO prior initialize-session (restart-survivable). (Was: 4
-    distinct session ids — stateful; the agent-first switch removed sessions entirely.)
-(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 40/4/11/6
-    (MCP-DEDUP #70: shared read 46→40, shared write 10→4, standalone wiki-read 9→11).
-(e) no `from __future__ import annotations` added to the 4 server modules.
+    tools/list works with NO prior initialize-session (restart-survivable). (Was: distinct
+    session ids — stateful; the agent-first switch removed sessions entirely.)
+(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 40/4/11/6/15
+    (MCP-DEDUP #70: shared read 46→40, shared write 10→4, standalone wiki-read 9→11;
+    MCP-DOMAINS T1: finance subset 15).
+(e) no `from __future__ import annotations` added to the 5 server modules.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from fastapi.testclient import TestClient
 import main
 
 
-MOUNTS = ["/mcp/read", "/mcp/write", "/mcp/wiki-read", "/mcp/wiki-write"]
+MOUNTS = ["/mcp/read", "/mcp/write", "/mcp/wiki-read", "/mcp/wiki-write", "/mcp/finance"]
 
 
 def _init_body():
@@ -51,8 +58,9 @@ def client(isolated_paths):
 # --------------------------------------------------------------------------- #
 # (a) + (b) + (c): the 4 handshakes return 200 (NOT 500/421/404) + distinct ids #
 # --------------------------------------------------------------------------- #
-def test_four_mcp_endpoints_handshake_200(client):
-    """Each /<mount>/mcp `initialize` → 200. 200 (not 404) proves the session manager is
+def test_all_mcp_endpoints_handshake_200(client):
+    """Each /<mount>/mcp `initialize` → 200 (all 5 mounts incl. MCP-DOMAINS /mcp/finance).
+    200 (not 404) proves the session manager is
     RUN (a); 200 (not 421) proves DNS-rebinding is OFF for the non-localhost TestClient
     Host (b). MCP-STATELESS (#75): the servers are stateless_http=True now, so the
     handshake issues NO mcp-session-id (no session to track) — that is the agent-first WIN
@@ -126,9 +134,11 @@ def test_root_still_redirects(client):
 # --------------------------------------------------------------------------- #
 def test_stdio_build_servers_unchanged():
     """Each server's build_server() still returns a FastMCP and the TOOLS counts hold
-    (MCP-DEDUP #70: 40 read / 4 write / 11 wiki-read / 6 wiki-write) — stdio path intact.
-    (shared read 46→40 and shared write 10→4 dropped the 6 duplicated wiki tools;
-    standalone wiki-read 9→11 gained the 2 ported proposal-readback tools.)"""
+    (MCP-DEDUP #70: 40 read / 4 write / 11 wiki-read / 6 wiki-write; MCP-DOMAINS T1:
+    15 finance) — stdio path intact. (shared read 46→40 and shared write 10→4 dropped the
+    6 duplicated wiki tools; standalone wiki-read 9→11 gained the 2 ported proposal-readback
+    tools; finance is a 15-tool subset of read — ADDITIVE, read itself unchanged at 40.)"""
+    import mcp_servers.finance_server as fs
     import mcp_servers.read_server as rs
     import mcp_servers.write_server as ws
     import modules.wiki.mcp.read_server as wrs
@@ -137,8 +147,10 @@ def test_stdio_build_servers_unchanged():
     # MCP-DEDUP #70: shared read 46→40 (−6 wiki), shared write 10→4 (−6 wiki_propose_*)
     assert len(rs.TOOLS) == 40
     assert len(ws.TOOLS) == 4
-    # the 2 whole-app servers expose TOOLS; build each (default transport_security=None)
-    for mod in (rs, ws):
+    # MCP-DOMAINS T1: finance subset = 15 (ADDITIVE — read above stays 40, not regressed)
+    assert len(fs.TOOLS) == 15
+    # the whole-app servers expose TOOLS; build each (default transport_security=None)
+    for mod in (rs, ws, fs):
         srv = mod.build_server()
         assert srv is not None and type(srv).__name__ == "FastMCP"
     # the wiki servers add tools explicitly — assert via the built server. MCP-DEDUP #70:
@@ -165,18 +177,19 @@ def test_build_server_default_is_stdio_identical():
 # --------------------------------------------------------------------------- #
 def test_no_future_annotations_in_server_modules():
     """FastMCP introspects REAL param annotations at registration (stringized annotations
-    crash issubclass) — the 4 server modules must NOT add `from __future__ import
+    crash issubclass) — the 5 server modules must NOT add `from __future__ import
     annotations`. Checked via AST (a real ImportFrom node), NOT a substring — the modules
     legitimately MENTION the string in a docstring warning the reader not to add it."""
     import ast
     import inspect
 
+    import mcp_servers.finance_server as fs
     import mcp_servers.read_server as rs
     import mcp_servers.write_server as ws
     import modules.wiki.mcp.read_server as wrs
     import modules.wiki.mcp.write_server as wws
 
-    for mod in (rs, ws, wrs, wws):
+    for mod in (rs, ws, wrs, wws, fs):
         tree = ast.parse(inspect.getsource(mod))
         future_imports = [
             n for n in ast.walk(tree)

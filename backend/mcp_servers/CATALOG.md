@@ -5,13 +5,21 @@
 > human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
 > the tool is right. (Regenerate: see the generator at the bottom.)
 
-Totals: **61 tools** across 4 servers (MCP-DEDUP #70):
+Totals: **61 tools** across 4 servers (MCP-DEDUP #70), + 1 per-domain narrow read view (MCP-DOMAINS):
 - whole-app shared: **40 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **11 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
+- finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
+  (the SAME 15 fn objects, zero dup), for a finance-only agent. Adds NO new tools to the 61 total.
 
 The wiki tools were CONSOLIDATED onto the standalone wiki servers (no longer duplicated on the
 shared servers). The shared write-server's `propose_note` was renamed `propose_quicknote` (the
 NOTES module) to remove the clash with the wiki note proposal.
+
+MCP-DOMAINS: `lifeos-finance` (`mcp_servers.finance_server`) exposes a curated 15-tool finance
+subset (finance_overview/channel/analytics/simulate/guardian, allocation_target, decision_weight,
+macro_cycle, nav_history, exchange_overview, macro_overview, market_overview/summary/indicators,
+journal_entries) by reference-importing the exact read-server fns — so a finance agent sees 15
+focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain composers excluded.
 
 ## Capability boundary (the supervision contract)
 

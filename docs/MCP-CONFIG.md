@@ -10,12 +10,14 @@
 
 ---
 
-## 1. The four servers (two read/write pairs, least-privilege)
+## 1. The servers (least-privilege; whole-app + wiki pairs + per-domain narrow views)
 
-life-os exposes MCP as **four separate stdio processes** — read and write are split into
+life-os exposes MCP as **separate stdio processes** — read and write are split into
 distinct processes with distinct capability sets (structural least-privilege, proven by
-`test_mcp_read.py` / `test_mcp_write.py`, not by a flag). There are two pairs: a **whole-app**
-pair and a deeper **wiki-only** pair.
+`test_mcp_read.py` / `test_mcp_write.py`, not by a flag). There are two read/write **pairs** — a
+**whole-app** pair and a deeper **wiki-only** pair — plus **per-domain narrow read servers** (an
+agent that should only see one domain connects to its domain server, not the 40-tool whole-app
+read). The first such domain server is **`lifeos-finance`** (Sprint MCP-DOMAINS).
 
 | Server | Module | Tools | Capability |
 |---|---|---|---|
@@ -23,8 +25,24 @@ pair and a deeper **wiki-only** pair.
 | **whole-app write** | `mcp_servers.write_server` | **4** | `propose_*` only — ENQUEUE pending, applies nothing |
 | **wiki read** | `modules.wiki.mcp.read_server` | **11** | ALL vault reads (search/get/overview/backlinks/inbox/graph/clusters/verify_citations) + wiki proposal read-back |
 | **wiki write** | `modules.wiki.mcp.write_server` | **6** | `propose_*` wiki only — ENQUEUE pending |
+| **finance read** (domain) | `mcp_servers.finance_server` | **15** | a NARROW finance-only view — a 15-tool SUBSET of the whole-app read (same fn objects, zero dup); writes nothing |
 
-**Totals: whole-app = 44 tools (40 read + 4 write); wiki pair = 17 (11 read + 6 write); 61 total.**
+**Totals: whole-app = 44 tools (40 read + 4 write); wiki pair = 17 (11 read + 6 write); 61 total
+on the full surface.** The `lifeos-finance` server adds NO new tools — its 15 are the SAME fn
+objects the whole-app read already exposes (a reference-subset, not a copy), so a finance call via
+`/mcp/finance` is byte-identical to via `/mcp/read`. It exists to give a finance/investment agent
+a focused 15-tool surface instead of the noisy 40.
+
+**The 15 finance tools:** `finance_overview`, `finance_channel`, `finance_analytics`,
+`finance_simulate`, `finance_guardian`, `allocation_target`, `decision_weight`, `macro_cycle`,
+`nav_history`, `exchange_overview`, `macro_overview`, `market_overview`, `market_summary`,
+`journal_entries`, `market_indicators` — i.e. the portfolio + the decision-tower + the macro
+backdrop + the market at-a-glance (incl. indicators for entry/timing) + the exchange book + the
+trade journal. Deeper TA (ohlc/watchlist/correlation/relative_strength/history) and the
+cross-domain composers (daily_brief/life_brief/insights/list_tools_catalog) are deliberately
+EXCLUDED — those are the noise a focused finance agent doesn't need (deeper TA → a future
+`lifeos-market` domain server).
+
 MCP-DEDUP #70: the wiki MCP tools now live ONLY on the wiki pair (the canonical surface) — the
 whole-app servers no longer carry duplicate wiki tools. The whole-app read carries everything
 NON-wiki (finance, market, projects, claude_usage, journals, brief, macro, news, …); the wiki
@@ -38,13 +56,18 @@ to remove the clash with the wiki pair's `propose_note`.
 > `lifeos-wiki-write`. (Extending `/tmp/mcp_call.py` to load the 2 wiki servers is a noted
 > follow-up, not done here.)
 
-### Which pair to register
+### Which server(s) to register
 
 - **Want the whole life-os surface** (the usual case — finance + market + projects + wiki +
   brief + …): register the **whole-app pair** (`read_server` + `write_server`).
 - **Want only the knowledge vault, with the deep wiki tools**: register the **wiki pair**.
-- **Want both surfaces**: register all four (the wiki reads overlap, that's fine — distinct
-  server names, the client lists both).
+- **Want a finance-only agent** (sees ONLY the 15 finance tools, not the 40-tool whole-app read):
+  register **`lifeos-finance`** alone. It's read-only — pair it with `lifeos-write` if that agent
+  also needs to `propose_*`.
+- **Want both/all surfaces**: register them all (the finance reads overlap the whole-app read,
+  that's fine — distinct server names, the client lists each). Registering BOTH `lifeos-read` and
+  `lifeos-finance` is redundant for one agent (finance ⊂ read); pick the narrow one to keep the
+  agent's tool list focused.
 
 ---
 
@@ -94,7 +117,7 @@ The same 4 servers are ALSO mounted as streamable-http ASGI sub-apps on the exis
 app (`:8686`), so a **remote or multi-client** MCP client can reach them over HTTP without
 spawning a local process. This is an ADDITIONAL transport — stdio (§3a) still works unchanged.
 
-The 4 servers stay 4 SEPARATE FastMCP instances (the read/write capability split is preserved
+The servers stay SEPARATE FastMCP instances (the read/write capability split is preserved
 at the transport layer — no cross-import), each mounted at a distinct path:
 
 | Mount path (in main.py) | Server | **Client URL** |
@@ -103,6 +126,7 @@ at the transport layer — no cross-import), each mounted at a distinct path:
 | `/mcp/write`      | whole-app write | `http://<host>:8686/mcp/write/mcp` |
 | `/mcp/wiki-read`  | wiki read       | `http://<host>:8686/mcp/wiki-read/mcp` |
 | `/mcp/wiki-write` | wiki write      | `http://<host>:8686/mcp/wiki-write/mcp` |
+| `/mcp/finance`    | finance read (domain) | `http://<host>:8686/mcp/finance/mcp` |
 
 > **The URL has `/mcp` TWICE.** A FastMCP streamable-http app serves its tool endpoint at its
 > own internal `streamable_http_path` (default `/mcp`); mounted at `/mcp/read`, the real client
@@ -137,8 +161,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8686/mcp/read/
 # → 406
 ```
 
-Swap `/mcp/read/mcp` for `/mcp/write/mcp`, `/mcp/wiki-read/mcp`, or `/mcp/wiki-write/mcp` to
-check the other three. (`main.py` is not in uvicorn's `--reload-dir` allowlist, so after
+Swap `/mcp/read/mcp` for `/mcp/write/mcp`, `/mcp/wiki-read/mcp`, `/mcp/wiki-write/mcp`, or
+`/mcp/finance/mcp` to check the other mounts. (`main.py` is not in uvicorn's `--reload-dir`
+allowlist, so after
 editing it, `docker compose restart backend` before testing the live container — a hot-reload
 won't pick up the mounts.)
 
@@ -202,10 +227,23 @@ a `command`, its `args`, and the `cwd` it runs from.
       "args": ["-m", "modules.wiki.mcp.write_server"],
       "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
       "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
+    },
+    "lifeos-finance": {
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
+      "args": ["-m", "mcp_servers.finance_server"],
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     }
   }
 }
 ```
+
+> `lifeos-finance` is the NARROW finance-only read server (15 tools). Register it INSTEAD of
+> `lifeos-read` for a finance/investment agent that should see only finance tools — or alongside
+> the others if you want both surfaces (the tools overlap; pick the narrow one per agent). It's
+> read-only; pair with `lifeos-write` if that agent also proposes. Or use streamable-http:
+> `{"type":"http","url":"http://localhost:8686/mcp/finance/mcp"}`.
 
 > ⚠️ Three things make stdio connect reliably (the all-four-`✘ failed` fix):
 > 1. **ABSOLUTE interpreter path**, not bare `"python"` — the client spawns with its own PATH,
@@ -231,6 +269,7 @@ claude mcp add lifeos-read       -- $PY -m mcp_servers.read_server
 claude mcp add lifeos-write      -- $PY -m mcp_servers.write_server
 claude mcp add lifeos-wiki-read  -- $PY -m modules.wiki.mcp.read_server
 claude mcp add lifeos-wiki-write -- $PY -m modules.wiki.mcp.write_server
+claude mcp add lifeos-finance    -- $PY -m mcp_servers.finance_server   # narrow finance-only read (15 tools)
 ```
 
 ---
@@ -250,6 +289,7 @@ If `python` on `PATH` is not that interpreter, point `command` at the absolute p
 cd /home/watercry/Disk_C/Data/Tinhdev/life-os/backend
 /tmp/los-venv/bin/python -c "import mcp_servers.read_server as s; print(len(s.TOOLS), 'read tools')"
 /tmp/los-venv/bin/python -c "import mcp_servers.write_server as s; print(len(s.TOOLS), 'write tools')"
+/tmp/los-venv/bin/python -c "import mcp_servers.finance_server as s; print(len(s.TOOLS), 'finance tools')"  # 15
 ```
 
 > `FastMCP` introspects real parameter annotations at registration, so the servers deliberately

@@ -31,14 +31,18 @@ logger = logging.getLogger("life-os.main")
 # Engine + discovery result live on app.state so endpoints/tests can read them.
 scheduler = SchedulerEngine(enabled=settings.scheduler_enabled)
 
-# MCP-HTTP: the 4 MCP servers mounted over streamable-http at distinct paths. A mounted
+# MCP-HTTP: the MCP servers mounted over streamable-http at distinct paths. A mounted
 # Starlette sub-app's INTERNAL streamable_http_path is /mcp, so the client URL is
 # <mount>/mcp (e.g. POST /mcp/read/mcp). Order is stable for the lifespan exit-stack.
+# MCP-DOMAINS: /mcp/finance is a NARROW, ADDITIVE 15-tool finance subset (reference-imports
+# read_server's own fns — zero dup; see mcp_servers/finance_server.py). The full-access
+# /mcp/read keeps all 40 tools; finance is for a specialized finance agent.
 _MCP_MOUNTS = [
     ("/mcp/read", "mcp_servers.read_server"),
     ("/mcp/write", "mcp_servers.write_server"),
     ("/mcp/wiki-read", "modules.wiki.mcp.read_server"),
     ("/mcp/wiki-write", "modules.wiki.mcp.write_server"),
+    ("/mcp/finance", "mcp_servers.finance_server"),
 ]
 
 
