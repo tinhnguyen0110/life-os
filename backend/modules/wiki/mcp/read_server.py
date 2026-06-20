@@ -94,14 +94,11 @@ def wiki_inbox() -> dict[str, Any]:
     return reader.inbox()
 
 
-def wiki_graph(note_id: int, depth: int = 2) -> dict[str, Any]:
-    """Ego-graph (1–2 hop) around a note: {center, nodes, edges, clusters}. A
-    missing center note → {found: False} (not a crash)."""
-    _audit("wiki_graph", {"note_id": note_id, "depth": depth})
-    g = reader.ego_graph(int(note_id), int(depth))
-    if g is None:
-        return {"found": False, "note_id": int(note_id)}
-    return {"found": True, "graph": g}
+# WIKI-RETRIEVAL-3 (#23, F1=b): the granular MCP tools wiki_graph + wiki_backlinks were REMOVED
+# from the MCP surface — wiki_context SUPERSETS both (graph + backlinks in one call), so the agent
+# has fewer, fatter tools (the dogfood fewer-tools fix) with ZERO capability lost. The REST
+# endpoints (/wiki/graph, /wiki/notes/{id}/backlinks) and the reader fns (ego_graph, backlinks)
+# STAY — only the MCP tool registrations went away.
 
 
 def wiki_get_note(note_id: int, mode: str = "full", heading: str | None = None) -> dict[str, Any]:
@@ -122,10 +119,21 @@ def wiki_get_note(note_id: int, mode: str = "full", heading: str | None = None) 
     return {"found": True, "note": view}  # full: the bare note dict (backward-compat)
 
 
-def wiki_backlinks(note_id: int) -> dict[str, Any]:
-    """Backlinks for a note: {linked, unlinked, outbound}."""
-    _audit("wiki_backlinks", {"note_id": note_id})
-    return reader.backlinks(int(note_id))
+def wiki_context(note_id: int, depth: int = 2) -> dict[str, Any]:
+    """WIKI-RETRIEVAL-3 (#23): a note's FULL neighborhood in ONE call — the COMPOSING tool that
+    SUPERSEDES the (now removed, F1=b) granular wiki_graph + wiki_backlinks: an agent navigating a
+    note gets its graph + backlinks together instead of 2-3 separate tool calls (the dogfood 'too
+    many wiki tools' fix). NO logic dup — it calls the SAME ``reader.context`` the REST /context
+    endpoint does, which composes the SAME reader fns the old granular tools used, so ``graph`` is
+    byte-identical to the old wiki_graph(id)["graph"] and ``backlinks`` to the old
+    wiki_backlinks(id) — ZERO capability lost, just consolidated.
+
+    Returns ``{found, note_id, graph:{center,nodes,edges,clusters}, backlinks:{linked,unlinked,
+    outbound}}``. A missing note (ego_graph None) → ``{found: False, note_id}`` (the wiki
+    missing-note convention; never crashes). Same composed dict as REST /wiki/notes/{id}/context
+    → MCP≡REST byte-identical (#24)."""
+    _audit("wiki_context", {"note_id": note_id, "depth": depth})
+    return reader.context(int(note_id), int(depth))
 
 
 def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
@@ -226,9 +234,10 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_search": wiki_search,
     "wiki_overview": wiki_overview,
     "wiki_inbox": wiki_inbox,
-    "wiki_graph": wiki_graph,
     "wiki_get_note": wiki_get_note,
-    "wiki_backlinks": wiki_backlinks,
+    # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks REMOVED from the MCP surface —
+    # wiki_context SUPERSETS both (graph + backlinks in one call). REST + reader fns kept.
+    "wiki_context": wiki_context,
     "wiki_recent_ops": wiki_recent_ops,
     "wiki_tree": wiki_tree,  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
     "wiki_clusters": wiki_clusters,
@@ -266,9 +275,9 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(wiki_search, description=wiki_search.__doc__)
     mcp.add_tool(wiki_overview, description=wiki_overview.__doc__)
     mcp.add_tool(wiki_inbox, description=wiki_inbox.__doc__)
-    mcp.add_tool(wiki_graph, description=wiki_graph.__doc__)
     mcp.add_tool(wiki_get_note, description=wiki_get_note.__doc__)
-    mcp.add_tool(wiki_backlinks, description=wiki_backlinks.__doc__)
+    # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks no longer registered (wiki_context supersets).
+    mcp.add_tool(wiki_context, description=wiki_context.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
     mcp.add_tool(wiki_tree, description=wiki_tree.__doc__)  # #19: MCP mirror of REST /wiki/tree
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)

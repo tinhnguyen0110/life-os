@@ -6,7 +6,7 @@ Coverage:
     symbol is reachable in its module namespace (grep-proven, not a docstring).
   - AUDIT: every tool call appends one wiki_mcp_audit row (actor=mcp:reader).
   - graceful: a missing note → {found: False}, never a crash; bad FTS query → no crash.
-  - server builds (FastMCP registers all 7 tools) without error.
+  - server builds (FastMCP registers the full TOOLS set) without error.
 
 Mirrors the wiki fixture: rebind the connection → re-register wiki + proposal tables.
 """
@@ -73,10 +73,12 @@ def test_inbox_parity(wiki_db):
     assert read_server.wiki_inbox() == reader.inbox()
 
 
-def test_graph_parity(wiki_db):
-    a, _ = _seed_linked_pair()
-    tool = read_server.wiki_graph(a)
-    assert tool["found"] is True and tool["graph"] == reader.ego_graph(a, 2)
+# WIKI-RETRIEVAL-3 #23 (F1=b): test_graph_parity + test_backlinks_parity + test_graph_missing_note
+# removed — they exercised the granular wiki_graph / wiki_backlinks MCP tools, which were removed
+# from the surface (wiki_context supersets). The graph/backlinks byte-identity (== reader.ego_graph
+# / reader.backlinks) is now asserted by test_wiki_context_subpayloads_byte_identical_to_granular,
+# and the missing-note arm by test_wiki_context_missing_note_is_found_false. The REST graph/backlinks
+# parity (which stays) lives in test_wiki.py.
 
 
 def test_get_note_parity(wiki_db):
@@ -180,9 +182,62 @@ def test_search_rest_mcp_byte_identical(wiki_db):
     assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
 
 
-def test_backlinks_parity(wiki_db):
+# --------------------------------------------------------------------------- #
+# WIKI-RETRIEVAL-3 (#23) — wiki_context: graph + backlinks in ONE composed call  #
+# --------------------------------------------------------------------------- #
+def test_wiki_context_shape_present(wiki_db):
+    """A present note → the composed payload: found + note_id + graph + backlinks, exactly
+    those 4 keys (no more, no less)."""
     a, b = _seed_linked_pair()
-    assert read_server.wiki_backlinks(b) == reader.backlinks(b)
+    ctx = read_server.wiki_context(b)
+    assert set(ctx) == {"found", "note_id", "graph", "backlinks"}
+    assert ctx["found"] is True and ctx["note_id"] == b
+    # graph carries its own 4 keys; backlinks its 3
+    assert set(ctx["graph"]) == {"center", "nodes", "edges", "clusters"}
+    assert set(ctx["backlinks"]) == {"linked", "unlinked", "outbound"}
+
+
+def test_wiki_context_subpayloads_byte_identical_to_granular(wiki_db):
+    """THE no-capability-lost proof (F1=b): wiki_context's ``graph`` is BYTE-IDENTICAL to what the
+    removed granular wiki_graph returned (its ``graph`` == reader.ego_graph) and its ``backlinks``
+    to the removed wiki_backlinks (== reader.backlinks) — because all three compose the SAME reader
+    fns, the single source of truth. So consolidating the 2 tools into wiki_context loses NO fidelity.
+    (The old tools are gone, so we assert against the reader fns they wrapped — the authoritative
+    source the old tools and wiki_context both delegate to.)"""
+    import json
+    a, b = _seed_linked_pair()
+    ctx = read_server.wiki_context(b)
+    # graph == what old wiki_graph(b)["graph"] returned (it was {found, graph: reader.ego_graph(b,2)})
+    assert json.dumps(ctx["graph"], sort_keys=True) == \
+        json.dumps(reader.ego_graph(b, 2), sort_keys=True)
+    # backlinks == what old wiki_backlinks(b) returned (it was reader.backlinks(b) verbatim)
+    assert json.dumps(ctx["backlinks"], sort_keys=True) == \
+        json.dumps(reader.backlinks(b), sort_keys=True)
+    assert ctx["graph"] == reader.ego_graph(b, 2)
+    assert ctx["backlinks"] == reader.backlinks(b)
+
+
+def test_wiki_context_respects_depth(wiki_db):
+    """``depth`` is threaded to ego_graph (not silently fixed at 2) — depth=1 graph matches
+    ego_graph(id, 1)."""
+    a, b = _seed_linked_pair()
+    assert read_server.wiki_context(b, depth=1)["graph"] == reader.ego_graph(b, 1)
+
+
+def test_wiki_context_missing_note_is_found_false(wiki_db):
+    """A missing note → {found:False, note_id} (the wiki convention), never a crash."""
+    assert read_server.wiki_context(99999) == {"found": False, "note_id": 99999}
+
+
+def test_wiki_context_registered_and_audits(wiki_db):
+    """wiki_context is in the TOOLS registry and (like every read tool) audits exactly one row."""
+    a, b = _seed_linked_pair()
+    assert "wiki_context" in read_server.TOOLS
+    sess = read_server.SESSION_ID
+    before = len(pstore.recent_audit(correlation_id=sess, limit=1000))
+    read_server.wiki_context(b)
+    rows = pstore.recent_audit(correlation_id=sess, limit=1000)
+    assert len(rows) == before + 1 and rows[0]["tool"] == "wiki_context"
 
 
 def test_recent_ops_parity(wiki_db):
@@ -223,10 +278,6 @@ def test_wiki_tree_is_registered_and_audits(wiki_db):
 # --------------------------------------------------------------------------- #
 def test_get_missing_note_is_found_false(wiki_db):
     assert read_server.wiki_get_note(99999) == {"found": False, "note_id": 99999}
-
-
-def test_graph_missing_note_is_found_false(wiki_db):
-    assert read_server.wiki_graph(99999) == {"found": False, "note_id": 99999}
 
 
 def test_bad_fts_query_does_not_crash(wiki_db):
@@ -314,8 +365,11 @@ def test_server_builds_with_all_tools():
     server = read_server.build_server()
     assert server is not None
     assert set(read_server.TOOLS.keys()) == {
-        "wiki_search", "wiki_overview", "wiki_inbox", "wiki_graph",
-        "wiki_get_note", "wiki_backlinks", "wiki_recent_ops",
+        "wiki_search", "wiki_overview", "wiki_inbox",
+        "wiki_get_note",
+        # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks REMOVED — wiki_context supersets both.
+        "wiki_context",
+        "wiki_recent_ops",
         "wiki_tree",  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
         "wiki_clusters", "wiki_verify_citations",
         # PORTED #70 — wiki-proposal read-back (was embedded in the shared read_server)

@@ -156,11 +156,13 @@ def test_stdio_build_servers_unchanged():
     # the wiki servers add tools explicitly — assert via the built server. MCP-DEDUP #70:
     # standalone wiki-read 9→11 (+wiki_proposal_status/wiki_list_proposals ported in); wiki-write 6.
     # WIKI-LINK-CORRECTNESS #19: wiki-read 11→12 (+wiki_tree, the MCP mirror of REST /wiki/tree).
+    # WIKI-RETRIEVAL-3 #23 (F1=b): wiki-read 12→11 (+wiki_context, −wiki_graph −wiki_backlinks;
+    # wiki_context supersets the two removed granular tools → net −1).
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 12
+    assert len(wr._tool_manager.list_tools()) == 11
     assert len(ww._tool_manager.list_tools()) == 6
 
 

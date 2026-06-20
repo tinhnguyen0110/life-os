@@ -37,6 +37,9 @@ from .backlinks import backlinks, search, unlinked_mentions
 # ego-graph + global (whole-vault) graph + cluster detection.
 from .graph import detect_clusters, ego_graph, global_graph
 
+# composed note neighborhood (#23): graph + backlinks in one call.
+from .context import context
+
 # overview + inbox.
 from .overview import inbox, overview
 
@@ -51,6 +54,7 @@ __all__ = [
     "reindex_note",
     "backlinks", "search", "unlinked_mentions",
     "ego_graph", "global_graph", "detect_clusters",
+    "context",
     "overview", "inbox",
     "folder_tree", "mocs",
     "note_view",

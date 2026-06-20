@@ -21,9 +21,8 @@ Two servers, **hard-separated by capability** (the M4 security gate, spec L142/L
 | `wiki_search` | `q`, `limit?` | `{results: [...]}` ranked FTS hits |
 | `wiki_overview` | — | `{overview: {stats, inbox, orphans, recentActivity, proposalCount}, warning?}` |
 | `wiki_inbox` | — | fleeting notes awaiting triage |
-| `wiki_graph` | `note_id`, `depth?` | `{found, graph: {center, nodes, edges, clusters}}` |
 | `wiki_get_note` | `note_id` | `{found, note: {...}}` — the citable note (integer ID) |
-| `wiki_backlinks` | `note_id` | `{linked, unlinked, outbound}` |
+| `wiki_context` | `note_id`, `depth?` | `{found, note_id, graph: {center, nodes, edges, clusters}, backlinks: {linked, unlinked, outbound}}` — a note's full neighborhood (graph + backlinks) in ONE call. SUPERSEDES the removed `wiki_graph` + `wiki_backlinks` (#23, F1=b). REST mirror: `GET /wiki/notes/{id}/context`. |
 | `wiki_recent_ops` | `limit?` | `{ops: [...]}` op-log activity |
 
 Every call appends a `wiki_mcp_audit` row (`actor=mcp:reader`, one `correlation_id`

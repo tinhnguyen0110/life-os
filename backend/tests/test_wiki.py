@@ -819,6 +819,40 @@ def test_api_backlinks_404_missing(api):
     assert api.get("/wiki/notes/9999/backlinks").status_code == 404
 
 
+# --- API: context endpoint (WIKI-RETRIEVAL-3 #23) --------------------------- #
+def test_api_context_endpoint(api):
+    """GET /wiki/notes/{id}/context → the composed {found, note_id, graph, backlinks} in one call."""
+    t = api.post("/wiki/notes", json={"title": "Ctx target", "content": "x"}).json()["data"]["id"]
+    s = api.post("/wiki/notes", json={"content": f"see [[{t}]]"}).json()["data"]["id"]
+    r = api.get(f"/wiki/notes/{t}/context")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert set(data) == {"found", "note_id", "graph", "backlinks"}
+    assert data["found"] is True and data["note_id"] == t
+    assert set(data["graph"]) == {"center", "nodes", "edges", "clusters"}
+    assert set(data["backlinks"]) == {"linked", "unlinked", "outbound"}
+    # the linked backlink resolves to the source note (real composed data, not a stub)
+    assert data["backlinks"]["linked"][0]["id"] == s
+
+
+def test_api_context_404_missing(api):
+    assert api.get("/wiki/notes/9999/context").status_code == 404
+
+
+def test_api_context_byte_identical_to_mcp(api):
+    """THE #24 invariant: REST /wiki/notes/{id}/context ``data`` is BYTE-IDENTICAL to the MCP
+    wiki_context(id) present payload — both call the SAME reader.context, so consolidation keeps
+    REST≡MCP parity (no drift between the two surfaces)."""
+    import json
+    from modules.wiki.mcp import read_server as wiki_mcp  # noqa: E402
+
+    t = api.post("/wiki/notes", json={"title": "Parity", "content": "x"}).json()["data"]["id"]
+    api.post("/wiki/notes", json={"content": f"[[{t}]]"})
+    rest_data = api.get(f"/wiki/notes/{t}/context").json()["data"]
+    mcp_data = wiki_mcp.wiki_context(t)
+    assert json.dumps(rest_data, sort_keys=True) == json.dumps(mcp_data, sort_keys=True)
+
+
 # =========================================================================== #
 # W1b-T3 — D6 merge tombstone + D10 archive-never-orphans                      #
 # =========================================================================== #

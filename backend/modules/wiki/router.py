@@ -240,6 +240,18 @@ def get_backlinks(note_id: int):
     return ok(data=reader.backlinks(note_id))
 
 
+@router.get("/notes/{note_id}/context")
+def get_context(note_id: int, depth: int = 2):
+    """WIKI-RETRIEVAL-3 (#23): a note's FULL neighborhood in ONE call —
+    ``{found, note_id, graph:{center,nodes,edges,clusters}, backlinks:{linked,unlinked,outbound}}``.
+    The COMPOSING read (graph + backlinks together) so an agent/UI navigating a note gets both at
+    once instead of 2-3 calls. 404 if the note is absent (the wiki REST convention). Same
+    ``reader.context`` the MCP ``wiki_context`` tool calls → MCP≡REST byte-identical (#24)."""
+    if service.get_note(note_id) is None:
+        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+    return ok(data=reader.context(note_id, depth))
+
+
 @router.post("/notes/{note_id}/refine")
 def refine_note(note_id: int, body: NoteUpdateInput):
     """REFINE a note (C6/D9): update-path + the ≥1-link HARD GATE. 404 if absent;
