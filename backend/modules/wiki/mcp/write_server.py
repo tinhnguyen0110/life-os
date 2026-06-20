@@ -43,10 +43,18 @@ from modules.wiki.proposals_service import create_proposal
 from modules.wiki.proposals_schema import ProposalCreateInput, ProposalKind
 from modules.wiki import proposals_store
 
-# One correlation id per server process — groups this agent session's proposals so
-# the human sees them together in P1 (D-W4c.3).
+# WIKI-LINK-CORRECTNESS (#26): correlationId is now PER-OPERATION (one fresh id per propose
+# call), NOT per-session. The dogfood saw note#76 + link#77 share one session id → an agent
+# couldn't tell two independent writes apart. A per-op id makes each write traceable on its own
+# (the human/agent groups by id = ONE operation). SESSION_ID stays as a process tag (for logs /
+# a coarse "this server instance") but is NOT used as the proposal correlationId anymore.
 SESSION_ID = uuid.uuid4().hex
 ACTOR = "mcp:writer"
+
+
+def _new_correlation_id() -> str:
+    """A fresh correlation id per propose operation (#26 — per-op, not per-session)."""
+    return uuid.uuid4().hex
 
 
 class RationaleRequired(Exception):
@@ -58,17 +66,49 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _audit(tool: str, params: dict[str, Any]) -> None:
-    """Append one audit row per MCP propose call (D-W4c.4). Fail-soft: an audit
-    failure must NOT break the propose the agent asked for (the proposal already
-    enqueued; audit is a secondary add-on — memory fail-closed-write-fail-soft-addon)."""
+def _audit(tool: str, params: dict[str, Any], *, correlation_id: str) -> None:
+    """Append one audit row per MCP propose call (D-W4c.4), tagged with the PER-OP correlation id
+    (#26). Fail-soft: an audit failure must NOT break the propose the agent asked for (the proposal
+    already enqueued; audit is a secondary add-on — memory fail-closed-write-fail-soft-addon)."""
     try:
         proposals_store.append_audit(
             tool=tool, params=params, actor=ACTOR,
-            correlation_id=SESSION_ID, ts=_now_iso(),
+            correlation_id=correlation_id, ts=_now_iso(),
         )
     except Exception:  # noqa: BLE001 — audit is best-effort; never break a propose
         pass
+
+
+def _resolve_link_target(target: str) -> dict[str, Any]:
+    """WIKI-LINK-CORRECTNESS (#26): resolve a link ``target`` (id or title) + surface the status,
+    so a non-existent/mistyped target isn't a SILENT ghost. Reuses the wiki store's resolution
+    (same primitives _derive_links uses — no reinvention). Does NOT block (a ghost can be
+    intentional); just tells the agent:
+      - exact-1 match  → {"targetResolved": <id>}
+      - title >1 match → {"targetAmbiguous": [ids]} (the link still writes; the index uses lowest id)
+      - 0 match        → {"targetGhost": True, "targetNote": "<target> matches no existing note — created as a ghost link"}
+    """
+    from modules.wiki import store as wiki_store
+    t = str(target).strip()
+    if t.isdigit():  # id link — resolved iff that note exists
+        tid = int(t)
+        if wiki_store.note_cache_exists(tid):
+            return {"targetResolved": tid}
+        return {"targetGhost": True,
+                "targetNote": f"note id {tid} does not exist — created as a ghost link"}
+    # title link
+    count = wiki_store.resolve_title_count(t)
+    if count == 0:
+        return {"targetGhost": True,
+                "targetNote": f"'{t}' matches no existing note — created as a ghost link"}
+    if count > 1:
+        # >1 match — the link index resolves to the LOWEST id (see _derive_links). Surface the
+        # count + the id actually used (the store exposes the lowest-id resolver + the count, not
+        # a full id list — reporting count + chosen id is the honest, cheap signal).
+        return {"targetAmbiguous": True, "targetMatchCount": count,
+                "targetResolvedTo": wiki_store.resolve_title(t),
+                "targetNote": f"'{t}' matches {count} notes — the link index uses the lowest id"}
+    return {"targetResolved": wiki_store.resolve_title(t)}
 
 
 def _clean_rationale(rationale: str | None) -> str:
@@ -79,7 +119,8 @@ def _clean_rationale(rationale: str | None) -> str:
 
 
 def _enqueue(kind: ProposalKind, *, target_id: int | None, payload: dict[str, Any],
-             rationale: str | None, tool: str) -> dict[str, Any]:
+             rationale: str | None, tool: str,
+             extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """Shared path: audit → create_proposal (auto-apply-eligible). WIKI-WRITE-THROUGH (#25):
     with the wikiAgentAutonomous default ON, create_proposal AUTO-APPLIES via the SAME
     create_proposal→accept chokepoint (audited, reversible) → the note lands NOW. The result
@@ -87,28 +128,37 @@ def _enqueue(kind: ProposalKind, *, target_id: int | None, payload: dict[str, An
     NOT the proposal-id (the dogfood confusion this fixes). When the toggle is OFF (escape hatch)
     the proposal stays pending → applied=False, noteId=None (proposals-only restored).
 
+    #26: a PER-OP correlation id (one per call, not per-session) tags the audit + the proposal.
+    ``extra`` merges caller-supplied status into the result (link tools pass the target-resolution
+    status — targetResolved/targetAmbiguous/targetGhost).
+
     F1-S1 (trust boundary keys on the CALLER): only this MCP write-server passes
     auto_apply_eligible=True; the REST router (human channel) NEVER does → a REST POST can't
     auto-apply by spoofing actor. rationale is now OPTIONAL (#25)."""
     r = _clean_rationale(rationale)
-    _audit(tool, {"kind": kind, "targetId": target_id, "payload": payload})
+    corr = _new_correlation_id()  # #26: per-OPERATION correlation id
+    _audit(tool, {"kind": kind, "targetId": target_id, "payload": payload}, correlation_id=corr)
     proposal = create_proposal(
         ProposalCreateInput(kind=kind, targetId=target_id, payload=payload,
-                            rationale=r, actor=ACTOR, correlationId=SESSION_ID),
+                            rationale=r, actor=ACTOR, correlationId=corr),
         auto_apply_eligible=True,
     )
     applied = proposal.get("status") == "accepted" and proposal.get("appliedNoteId") is not None
     # Agent-facing result: lead with the note-id when applied (write-through); else proposal-id
     # (toggle OFF → pending). Keep the full proposal for trace/back-compat.
-    return {
+    result: dict[str, Any] = {
         "noteId": proposal.get("appliedNoteId") if applied else None,
         "applied": applied,
         "status": proposal.get("status"),
         "proposalId": proposal.get("id"),
+        "correlationId": corr,  # #26: the per-op id (each write traceable on its own)
         "decidedBy": proposal.get("decidedBy"),
         "warning": proposal.get("warning"),
         "proposal": proposal,
     }
+    if extra:
+        result.update(extra)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -142,10 +192,16 @@ def propose_edit(note_id: int, rationale: str | None = None, title: str | None =
 
 def propose_link(from_note_id: int, target: str, rationale: str | None = None) -> dict[str, Any]:
     """ADD a [[target]] link to a note's body (kind=link_add). ``target`` is a note id or title.
-    WIKI-WRITE-THROUGH: applies NOW (default) → returns ``noteId``; OFF → pending. rationale optional."""
+    WIKI-WRITE-THROUGH: applies NOW (default) → returns ``noteId``; OFF → pending. rationale optional.
+
+    WIKI-LINK-CORRECTNESS (#26): the result SURFACES the target-resolution status so a mistyped/
+    nonexistent target isn't a SILENT ghost — {targetResolved:<id>} | {targetAmbiguous:True,...} |
+    {targetGhost:True, targetNote:"..."}. The link still WRITES (a ghost can be intentional — auto-
+    resolves later when a matching note appears, B4); the status just tells the agent what happened."""
+    status = _resolve_link_target(target)
     return _enqueue("link_add", target_id=int(from_note_id),
                     payload={"target": str(target)}, rationale=rationale,
-                    tool="propose_link")
+                    tool="propose_link", extra=status)
 
 
 def propose_unlink(note_id: int, target: str, rationale: str | None = None) -> dict[str, Any]:

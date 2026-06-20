@@ -123,6 +123,16 @@ def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     return {"ops": reader.recent_ops(limit=int(limit))}
 
 
+def wiki_tree() -> dict[str, Any]:
+    """The vault's virtual folder-tree (W-Explorer): notes nested by their ``folder`` field.
+    WIKI-LINK-CORRECTNESS (#19): returns the tree DICT DIRECTLY ({name, path, folders, notes}) —
+    BYTE-IDENTICAL to REST ``GET /wiki/tree``'s ``data`` (NOT wrapped in a {tree:...} key REST
+    doesn't have). Same ``reader.folder_tree()`` source, no logic dup → MCP≡REST exactly (an agent
+    reads result.folders via MCP just like data.folders via REST; the #19-fix dropped the wrapper)."""
+    _audit("wiki_tree", {})
+    return reader.folder_tree()
+
+
 def wiki_clusters() -> dict[str, Any]:
     """MOC candidates (W5a): graph-detected clusters of linked notes, ranked by
     advisory importance. Each {members:[{id,title}], size, density, importance,
@@ -205,6 +215,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_get_note": wiki_get_note,
     "wiki_backlinks": wiki_backlinks,
     "wiki_recent_ops": wiki_recent_ops,
+    "wiki_tree": wiki_tree,  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
     "wiki_clusters": wiki_clusters,
     "wiki_verify_citations": wiki_verify_citations,
     # PORTED (#70) — wiki-proposal read-back (was embedded in the shared read_server)
@@ -244,6 +255,7 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(wiki_get_note, description=wiki_get_note.__doc__)
     mcp.add_tool(wiki_backlinks, description=wiki_backlinks.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
+    mcp.add_tool(wiki_tree, description=wiki_tree.__doc__)  # #19: MCP mirror of REST /wiki/tree
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
     mcp.add_tool(wiki_verify_citations, description=wiki_verify_citations.__doc__)
     mcp.add_tool(wiki_proposal_status, description=wiki_proposal_status.__doc__)  # ported #70

@@ -38,11 +38,11 @@ def app_db(isolated_paths):
 
 
 def test_finance_analytics_tool_registered_and_count(app_db):
-    """finance_analytics is in the read-server registry; total tool count is 40 after
-    MCP-DEDUP #70 removed the 6 duplicated wiki tools (was 46)."""
+    """finance_analytics is in the read-server registry; total tool count is 41 (REMINDERS-2 #28
+    added reminders_list; was 40 after MCP-DEDUP #70 removed the 6 duplicated wiki tools)."""
     from mcp_servers import read_server as rs
     assert "finance_analytics" in rs.TOOLS
-    assert len(rs.TOOLS) == 40
+    assert len(rs.TOOLS) == 41
 
 
 def test_finance_analytics_envelope_and_jsonable(app_db, monkeypatch):

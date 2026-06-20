@@ -130,6 +130,10 @@ from modules.macro.service import get_history as _macro_history
 # captured news; it cannot capture/fetch or init the store).
 from modules.news.service import digest as _news_digest
 from modules.news.service import list_news as _news_list
+# REMINDERS-2 (#28): the agent reads "what's on my plate" — list_reminders is a READ fn (no
+# mutation; create/tick/delete are NOT imported here, they live on the lifeos-reminders write
+# surface). Read-gate-safe.
+from modules.reminders.service import list_reminders as _reminders_list
 # WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
@@ -469,6 +473,23 @@ def claude_usage(window: str = "5h", verbose: bool = False) -> dict[str, Any]:
         lean["remainingNote"] = ("cap is a placeholder (not from disk); use pct5h/resetIn for "
                                  "the live quota signal")
     return {"usage": lean, "verbose": False}
+
+
+def reminders_list(filter: str = "today") -> dict[str, Any]:
+    """What's on the user's plate: reminders by ``filter`` (today|week|undone|all; unknown →
+    lenient all). REMINDERS-2 (#28): so ANY agent on lifeos-read sees the agenda without a 2nd
+    connection. Agent-first lean shape — the filtered list + counts (not a dump): each reminder is
+    {id, title, due_at(UTC), repeat, done_at}; plus count + undoneCount + the filter applied. The
+    SAME fn is exposed on the lifeos-reminders server (is-identity). Read-only (no mutation)."""
+    view, warnings = _reminders_list(filter)
+    return {
+        "reminders": [{"id": r.id, "title": r.title, "due_at": r.due_at,
+                       "repeat": r.repeat, "done_at": r.done_at} for r in view.reminders],
+        "count": view.count,
+        "undoneCount": view.undoneCount,
+        "filter": view.filter,
+        "warnings": list(warnings or []),
+    }
 
 
 def daily_brief() -> dict[str, Any]:
@@ -1149,6 +1170,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "project_get": project_get,
     "graveyard_overview": graveyard_overview,
     "claude_usage": claude_usage,
+    "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
     "daily_brief": daily_brief,
     "brief_history": brief_history,
     "journal_entries": journal_entries,

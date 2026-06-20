@@ -43,6 +43,9 @@ _MCP_MOUNTS = [
     ("/mcp/wiki-read", "modules.wiki.mcp.read_server"),
     ("/mcp/wiki-write", "modules.wiki.mcp.write_server"),
     ("/mcp/finance", "mcp_servers.finance_server"),
+    # REMINDERS-2 (#28): per-domain lifeos-reminders — a WRITABLE domain (reminders_list read +
+    # reminder_create/tick direct write-through, reversible single-user CRUD, no proposal gate).
+    ("/mcp/reminders", "mcp_servers.reminders_server"),
 ]
 
 

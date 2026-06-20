@@ -95,6 +95,33 @@ def test_recent_ops_parity(wiki_db):
     assert read_server.wiki_recent_ops()["ops"] == reader.recent_ops()
 
 
+def test_wiki_tree_mcp_byte_identical_to_rest_data(wiki_db):
+    """WIKI-LINK-CORRECTNESS #19 (the wrapper-drift fix): the FULL MCP wiki_tree result is
+    BYTE-IDENTICAL to REST /wiki/tree's ``data`` — NOT wrapped in a {tree:...} key REST doesn't
+    have. REST returns ok(data=reader.folder_tree()) → data IS the tree dict; the MCP tool must
+    return that SAME dict directly. Compare the FULL result (sort_keys dumps), so a wrapper drift
+    fails RED (the old test compared the inner tree only + missed the {tree:...} wrapper)."""
+    import json
+    _seed_linked_pair()
+    rest_data = reader.folder_tree()          # == REST /wiki/tree's `data`
+    mcp_result = read_server.wiki_tree()      # the FULL MCP tool result
+    assert json.dumps(mcp_result, sort_keys=True) == json.dumps(rest_data, sort_keys=True), \
+        "MCP wiki_tree must be byte-identical to REST /wiki/tree data (no {tree:...} wrapper)"
+    # explicit: the top-level keys are the tree's (name/path/folders/notes), NOT a {tree} wrapper
+    assert "tree" not in mcp_result, "no {tree:...} wrapper — return the tree dict directly"
+    assert set(mcp_result.keys()) == set(rest_data.keys())
+
+
+def test_wiki_tree_is_registered_and_audits(wiki_db):
+    """wiki_tree is in the TOOLS registry + the build, and (like every read tool) audits one row."""
+    assert "wiki_tree" in read_server.TOOLS
+    sess = read_server.SESSION_ID
+    before = len(pstore.recent_audit(correlation_id=sess, limit=1000))
+    read_server.wiki_tree()
+    rows = pstore.recent_audit(correlation_id=sess, limit=1000)
+    assert len(rows) == before + 1 and rows[0]["tool"] == "wiki_tree"
+
+
 # --------------------------------------------------------------------------- #
 # Graceful failure (no crash)                                                   #
 # --------------------------------------------------------------------------- #
@@ -192,8 +219,9 @@ def test_server_builds_with_all_tools():
     assert server is not None
     assert set(read_server.TOOLS.keys()) == {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_graph",
-        "wiki_get_note", "wiki_backlinks", "wiki_recent_ops", "wiki_clusters",
-        "wiki_verify_citations",
+        "wiki_get_note", "wiki_backlinks", "wiki_recent_ops",
+        "wiki_tree",  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
+        "wiki_clusters", "wiki_verify_citations",
         # PORTED #70 — wiki-proposal read-back (was embedded in the shared read_server)
         "wiki_proposal_status", "wiki_list_proposals",
     }

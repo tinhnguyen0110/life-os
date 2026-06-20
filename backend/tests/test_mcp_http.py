@@ -145,7 +145,7 @@ def test_stdio_build_servers_unchanged():
     import modules.wiki.mcp.write_server as wws
 
     # MCP-DEDUP #70: shared read 46→40 (−6 wiki), shared write 10→4 (−6 wiki_propose_*)
-    assert len(rs.TOOLS) == 40
+    assert len(rs.TOOLS) == 41  # REMINDERS-2 #28: +reminders_list (was 40)
     assert len(ws.TOOLS) == 4
     # MCP-DOMAINS T1: finance subset = 15 (ADDITIVE — read above stays 40, not regressed)
     assert len(fs.TOOLS) == 15
@@ -155,11 +155,12 @@ def test_stdio_build_servers_unchanged():
         assert srv is not None and type(srv).__name__ == "FastMCP"
     # the wiki servers add tools explicitly — assert via the built server. MCP-DEDUP #70:
     # standalone wiki-read 9→11 (+wiki_proposal_status/wiki_list_proposals ported in); wiki-write 6.
+    # WIKI-LINK-CORRECTNESS #19: wiki-read 11→12 (+wiki_tree, the MCP mirror of REST /wiki/tree).
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 11
+    assert len(wr._tool_manager.list_tools()) == 12
     assert len(ww._tool_manager.list_tools()) == 6
 
 

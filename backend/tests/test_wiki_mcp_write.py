@@ -26,6 +26,7 @@ from modules.settings import service as ssvc
 from modules.settings.schema import AppConfigPatch
 from modules.wiki import proposals_service as psvc
 from modules.wiki import proposals_store as pstore
+from modules.wiki import reader
 from modules.wiki import service as wsvc
 from modules.wiki import store as wiki_store
 from modules.wiki.schema import NoteCreateInput, NoteUpdateInput
@@ -74,6 +75,98 @@ def test_propose_link_writes_through(wiki_db):
     r = write_server.propose_link(a, str(b), rationale="related")
     assert r["applied"] is True
     assert f"[[{b}]]" in wsvc.get_note(a).content, "the link was added NOW"
+
+
+# --------------------------------------------------------------------------- #
+# WIKI-LINK-CORRECTNESS (#26) — propose_link target-resolution STATUS           #
+# (a mistyped/nonexistent target isn't a SILENT ghost; the result surfaces it). #
+# --------------------------------------------------------------------------- #
+def test_propose_link_resolved_target_surfaces_id(wiki_db):
+    a, b = _seed_note("A"), _seed_note("Target B")
+    r = write_server.propose_link(a, "Target B")  # title that resolves to exactly 1
+    assert r.get("targetResolved") == b, "an exact title match must surface targetResolved=<id>"
+    assert "targetGhost" not in r and "targetAmbiguous" not in r
+
+
+def test_propose_link_by_id_surfaces_resolved(wiki_db):
+    a, b = _seed_note("A"), _seed_note("B")
+    r = write_server.propose_link(a, str(b))  # id link to an existing note
+    assert r.get("targetResolved") == b
+
+
+def test_propose_link_ghost_target_surfaces_status_not_silent(wiki_db):
+    """THE #26 fix: a non-existent title → result SURFACES targetGhost (NOT a silent ghost).
+    The link STILL writes (a ghost can be intentional — auto-resolves later, B4)."""
+    a = _seed_note("A")
+    r = write_server.propose_link(a, "Nonexistent Title ZZZ")
+    assert r.get("targetGhost") is True, "a nonexistent target must surface targetGhost"
+    assert "matches no existing note" in r.get("targetNote", "")
+    assert r["applied"] is True, "the ghost link still WRITES (not blocked)"
+    assert "[[Nonexistent Title ZZZ]]" in wsvc.get_note(a).content
+
+
+def test_propose_link_ambiguous_target_surfaces_status(wiki_db):
+    """A title matching >1 note → targetAmbiguous + the count + the lowest id used."""
+    a = _seed_note("A")
+    dup1 = _seed_note("Dup")
+    dup2 = _seed_note("Dup")  # same title → ambiguous
+    r = write_server.propose_link(a, "Dup")
+    assert r.get("targetAmbiguous") is True and r.get("targetMatchCount") == 2
+    assert r.get("targetResolvedTo") == min(dup1, dup2), "the index uses the lowest id"
+
+
+def test_propose_link_ghost_id_target_surfaces_status(wiki_db):
+    """An id-link to a non-existent id → targetGhost (the id branch of resolution)."""
+    a = _seed_note("A")
+    r = write_server.propose_link(a, "99999")
+    assert r.get("targetGhost") is True and "does not exist" in r.get("targetNote", "")
+
+
+# --------------------------------------------------------------------------- #
+# #26 — correlationId is PER-OPERATION (not per-session)                         #
+# --------------------------------------------------------------------------- #
+def test_correlation_id_is_per_operation(wiki_db):
+    """Two independent propose calls get DIFFERENT correlationIds (#26 — was per-session: the
+    dogfood saw note + link share one id, couldn't tell two writes apart)."""
+    r1 = write_server.propose_note("op1", "b")
+    r2 = write_server.propose_note("op2", "b")
+    assert r1["correlationId"] and r2["correlationId"]
+    assert r1["correlationId"] != r2["correlationId"], "each propose op must get its own id"
+
+
+# --------------------------------------------------------------------------- #
+# #19+#26 JOIN — the IMMEDIACY round-trip: propose_link(A→B) → backlinks(B)      #
+# IMMEDIATELY includes A (the index updates SYNCHRONOUSLY on the write-through). #
+# --------------------------------------------------------------------------- #
+def test_propose_link_immediacy_backlink_synchronous(wiki_db):
+    """propose_link(A→B) → an IMMEDIATE backlinks(B) includes A. The link index (replace_links)
+    updates synchronously in the writer's apply (single-writer, in-process) — no reindex lag."""
+    a, b = _seed_note("A"), _seed_note("Target B")
+    r = write_server.propose_link(a, "Target B")
+    assert r["applied"] is True
+    bl = reader.backlinks(b)  # IMMEDIATELY after the write — no sleep, no re-poll
+    assert a in {x["id"] for x in bl.get("linked", [])}, \
+        "backlinks(B) must IMMEDIATELY include A (synchronous index on write-through)"
+
+
+# --------------------------------------------------------------------------- #
+# DON'T-CORRUPT GUARD (#20 MOC regression) — directed-inbound semantic UNCHANGED #
+# --------------------------------------------------------------------------- #
+def test_moc_with_only_outbound_keeps_linked_empty(wiki_db):
+    """THE #19 don't-corrupt guard: a MOC-like note (0 INbound, N OUTbound) STILL returns
+    backlinks linked:[] + the outbound in `outbound` — proves the directed-INbound semantic is
+    UNCHANGED (we did NOT fold outbound into linked, which would inject phantom inbound links).
+    + a note WITH real inbound shows it in linked (the other direction)."""
+    # moc links OUT to t1,t2,t3 (3 outbound) but has 0 inbound
+    t1, t2, t3 = _seed_note("T1"), _seed_note("T2"), _seed_note("T3")
+    moc = wsvc.create_note(NoteCreateInput(
+        title="MOC", content=f"see [[{t1}]] [[{t2}]] [[{t3}]]")).id
+    bl_moc = reader.backlinks(moc)
+    assert bl_moc.get("linked", []) == [], "a MOC with 0 inbound must have linked:[] (NOT its outbound)"
+    assert len(bl_moc.get("outbound", [])) == 3, "the 3 outbound are in `outbound`, not `linked`"
+    # the OTHER direction: a target HAS real inbound (the moc) → it shows in linked
+    bl_t1 = reader.backlinks(t1)
+    assert moc in {x["id"] for x in bl_t1.get("linked", [])}, "a real inbound shows in linked"
 
 
 def test_propose_merge_writes_through(wiki_db):
@@ -159,12 +252,13 @@ def test_human_can_override_agent_note(wiki_db):
 # --------------------------------------------------------------------------- #
 def test_write_through_audits_propose_and_accept(wiki_db):
     """A write-through keeps the trace: the MCP-tool audit row + the queue propose + accept rows
-    (the control that makes write-through reversible/inspectable). actor=mcp:writer on the tool/
-    propose rows; the accept row is decided_by agent:auto."""
-    sess = write_server.SESSION_ID
-    write_server.propose_note("a", "b", rationale="r")
-    rows = pstore.recent_audit(correlation_id=sess, limit=1000)
-    tools = {r["tool"] for r in rows}
+    (the control that makes write-through reversible/inspectable). #26: audit rows are tagged with
+    the PER-OP correlationId (not SESSION_ID), so query by the result's correlationId — which also
+    proves the per-op id is what tags this operation's trace."""
+    r = write_server.propose_note("a", "b", rationale="r")
+    corr = r["correlationId"]
+    rows = pstore.recent_audit(correlation_id=corr, limit=1000)
+    tools = {row["tool"] for row in rows}
     assert "propose_note" in tools  # the MCP-tool audit row
     assert "propose" in tools       # create_proposal's queue-action audit
     assert "accept" in tools        # the auto-accept audit (write-through trace)
