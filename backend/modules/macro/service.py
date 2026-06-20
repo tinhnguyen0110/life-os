@@ -109,13 +109,39 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
     label, unit = _LABELS.get(indicator, (indicator, ""))
     rows = store.recent(indicator, limit=2)  # newest-first
     if not rows:
-        # cold start: fetch + persist once, then re-read
+        # cold start: fetch + persist once (real points only — record_point skips mock now),
+        # then re-read.
         refresh()
         rows = store.recent(indicator, limit=2)
 
     n = store.count(indicator)
     if not rows:
-        return MacroIndicatorView(indicator=indicator, label=label, unit=unit, points=0)
+        # DXY-REAL (#15): the store has NO real points (e.g. a no-key install where every
+        # indicator fell open to mock, which refresh() no longer persists). For an unprimed
+        # install we still want DISPLAY numbers — read the reader's mock points DIRECTLY (NOT
+        # via the store, so nothing is persisted) and surface them honestly tagged source='mock'.
+        # This keeps the "empty-series path still returns numbers" contract while the durable
+        # no-persist-mock guard holds. Once real FRED data lands, this branch is never taken.
+        try:
+            points, _warning = reader.fetch_latest(indicator)
+        except Exception:  # noqa: BLE001 — display fallback must never raise
+            points = []
+        if not points:
+            return MacroIndicatorView(indicator=indicator, label=label, unit=unit, points=0)
+        # points are oldest→newest; take the last two for latest + previous (mirrors the store path)
+        latest_p = points[-1]
+        prev_p = points[-2] if len(points) > 1 else None
+        latest_val = float(latest_p["value"])
+        prev_val = float(prev_p["value"]) if prev_p is not None else None
+        change = round(latest_val - prev_val, 4) if prev_val is not None else None
+        src = latest_p.get("source", "mock")
+        return MacroIndicatorView(
+            indicator=indicator, label=label, unit=unit,
+            latest=latest_val, asOf=latest_p["ts"], previous=prev_val, change=change,
+            trend=_trend(latest_val, prev_val), source=src,
+            points=0,  # 0 PERSISTED points — these are display-only reader values, not stored
+            confidence=_confidence_for(latest_val, latest_p["ts"], src, indicator),
+        )
 
     latest_row = rows[0]
     prev_row = rows[1] if len(rows) > 1 else None

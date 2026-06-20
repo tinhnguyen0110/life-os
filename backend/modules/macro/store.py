@@ -44,7 +44,18 @@ def init_macro_tables() -> sqlite3.Connection:
 
 def record_point(indicator: str, value: float, ts: str, source: str = "fred") -> None:
     """Upsert one observation. Re-recording the same (indicator, ts) updates the value/
-    source instead of duplicating (idempotent capture)."""
+    source instead of duplicating (idempotent capture).
+
+    DXY-REAL (#15): a ``source == 'mock'`` point is NEVER persisted (early return, no row
+    written). Mock is the ABSENCE of real data (the LOCKED S1 rule) — persisting it with a
+    today-ts SHADOWS the real (often naturally-lagged) FRED row, freezing the indicator as
+    'mock' even after real data returns. A failed fetch now records nothing → the prior real
+    point stands; freshness/confidence already brake on staleness honestly. This is the single
+    chokepoint covering ALL callers (refresh + the daily snapshot). Cold-start DISPLAY still
+    shows mock-tagged numbers via the reader fallback in service._indicator_view — that path
+    does NOT persist, so it's unaffected by this guard."""
+    if source == "mock":
+        return
     conn = db.get_conn()
     with _lock:
         conn.execute(
@@ -53,6 +64,41 @@ def record_point(indicator: str, value: float, ts: str, source: str = "fred") ->
             (indicator, float(value), ts, source),
         )
         conn.commit()
+
+
+def purge_mock() -> int:
+    """One-shot cleanup: DELETE every row whose ``source = 'mock'`` from macro_history.
+    Returns the number of rows removed.
+
+    DXY-REAL (#15): historical mock rows (persisted before the record_point guard) can SHADOW a
+    real FRED row when their today-ts > the real (naturally-lagged) ts — so the overview shows
+    'mock' even though real data exists. This removes ONLY those mock rows; real ('fred'/'live')
+    rows are untouched (exact source match). Idempotent — once clean, a re-run deletes 0. NOT a
+    startup hook; a re-runnable helper invoked once against the live store after the fix lands."""
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM macro_history WHERE source = 'mock'")
+        conn.commit()
+        return int(cur.rowcount)
+
+
+def count_by_source(source: str) -> int:
+    """How many rows carry the given exact source (e.g. 'fred'/'mock'). Used to prove a purge
+    removed ONLY mock rows (the real-row count must be unchanged before/after)."""
+    conn = db.get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM macro_history WHERE source = ?", (source,)
+        ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+def count_all() -> int:
+    """Total rows in macro_history (across all indicators/sources). For purge before/after deltas."""
+    conn = db.get_conn()
+    with _lock:
+        row = conn.execute("SELECT COUNT(*) AS c FROM macro_history").fetchone()
+    return int(row["c"]) if row else 0
 
 
 def latest(indicator: str) -> sqlite3.Row | None:

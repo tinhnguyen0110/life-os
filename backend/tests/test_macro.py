@@ -167,11 +167,15 @@ def test_overview_has_all_tracked_indicators(macro_db):
     overview, warnings = service.get_overview()
     got = {v.indicator for v in overview.indicators}
     assert got == set(service.tracked_indicators())
-    # cold start auto-refreshed → each has data + a descriptive trend
+    # cold start (network off → all mock) STILL returns DISPLAY numbers + a descriptive trend.
+    # DXY-REAL (#15): mock is no longer PERSISTED (record_point skips it), so points==0 here —
+    # the numbers come from service._indicator_view's reader display-fallback, not the store. The
+    # contract is "empty-series path still returns numbers", NOT "mock is persisted".
     for v in overview.indicators:
-        assert v.latest is not None
+        assert v.latest is not None, f"{v.indicator}: cold-start must still show a display number"
         assert v.trend in ("up", "down", "flat")
-        assert v.points >= 1
+        assert v.points == 0, f"{v.indicator}: mock must NOT be persisted (display-only), got points={v.points}"
+        assert v.source == "mock", "network off → display values are honestly tagged mock"
 
 
 def test_overview_mock_is_honest(macro_db, monkeypatch):
@@ -248,11 +252,120 @@ def test_endpoint_history_unknown_404(client):
 
 
 # --------------------------------------------------------------------------- #
-# Refresh persists                                                             #
+# Refresh persists — REAL points only (DXY-REAL #15: mock is never persisted)    #
 # --------------------------------------------------------------------------- #
-def test_refresh_persists_points(macro_db):
+def test_refresh_persists_real_points(macro_db, monkeypatch):
+    """With a REAL CSV payload, refresh() persists fred points for every indicator. DXY-REAL
+    (#15): refresh only persists REAL data now — so this test FEEDS a real CSV (was relying on
+    mock persistence, which the guard removed)."""
+    _mock_csv(monkeypatch,
+              "observation_date,X\n2026-03-01,3.64\n2026-04-01,3.65\n2026-05-01,3.66\n")
     written, warnings = service.refresh()
     assert written > 0
-    # every tracked indicator now has stored points
+    # every tracked indicator now has stored REAL points
     for ind in service.tracked_indicators():
         assert store.count(ind) > 0
+    # and they're all 'fred', not 'mock' (the persisted source is real)
+    assert store.count_by_source("mock") == 0, "no mock row may be persisted by refresh"
+    assert store.count_by_source("fred") > 0
+
+
+# =========================================================================== #
+# DXY-REAL (#15) — mock is NEVER persisted into macro_history (+ one-shot purge) #
+# =========================================================================== #
+# THE BUG: refresh() persisted source='mock' rows with a today-ts that SHADOW the real
+# (naturally-lagged) FRED row → get_overview reads newest-first → returns the frozen mock; a
+# fresh refresh can't dislodge it (real ts < frozen mock ts). Extends the LOCKED S1 "mock =
+# absence of real data, never counts" rule to the WRITE path.
+
+# --- (a) record_point skips a mock-sourced point (no row written) ---
+def test_DXY_record_point_skips_mock(macro_db):
+    """record_point('...','mock') writes NOTHING — the single chokepoint that makes mock
+    un-persistable across ALL callers (refresh + snapshot)."""
+    store.record_point("dxy", 100.0, "2026-06-16", "mock")
+    assert store.count("dxy") == 0, "a mock point must not be persisted"
+    assert store.latest("dxy") is None
+    # a real point IS persisted (the guard is mock-only, not a blanket block)
+    store.record_point("dxy", 119.5, "2026-06-12", "fred")
+    assert store.count("dxy") == 1 and store.latest("dxy")["source"] == "fred"
+
+
+def test_DXY_record_point_mock_cannot_shadow_real(macro_db):
+    """The exact bug shape: a real (lagged) row exists; a later mock row with a NEWER ts is
+    offered → it must NOT persist, so get_overview's newest-first read still returns the REAL
+    row (not a frozen mock). This is the shadowing the fix prevents."""
+    store.record_point("dxy", 119.5, "2026-06-12", "fred")     # real, lagged ts
+    store.record_point("dxy", 100.0, "2026-06-16", "mock")     # newer ts, mock → must be skipped
+    rows = store.recent("dxy", limit=2)
+    assert len(rows) == 1, "the mock row must not have been written"
+    assert rows[0]["source"] == "fred" and rows[0]["value"] == 119.5, "the REAL row still wins"
+
+
+# --- (b) FORCE-FRED-FAIL distinguishing: a fetch failure persists NO new mock row,
+#         and the prior REAL point still surfaces in get_overview (THE durable-root spine) ---
+def test_DXY_GATEb_fred_failure_persists_no_mock_real_survives(macro_db, monkeypatch):
+    """THE SPINE (a 'just purge once' fix FAILS this): seed a REAL dxy point, then make the FRED
+    fetch FAIL (network off via macro_db → fetch_latest returns mock). A refresh persists NO new
+    mock row; get_overview still surfaces the prior REAL point (source='fred'), NOT a frozen mock
+    with a today-ts. This is what makes the fix durable across every future outage."""
+    # seed a real point (macro_db disables network, so do it directly via the store)
+    store.record_point("dxy", 119.5, "2026-06-12", "fred")
+    assert store.count("dxy") == 1
+
+    # refresh while FRED is down (macro_db's _no_network → fetch_latest falls open to mock)
+    written, warnings = service.refresh()
+    # no NEW mock row landed for dxy — count is still exactly the one real row
+    assert store.count("dxy") == 1, "a failed FRED fetch must persist NO new mock row"
+    assert store.count_by_source("mock") == 0, "no mock row may exist after a failed refresh"
+
+    # get_overview surfaces the REAL point (not a frozen mock with today's ts)
+    overview, _ = service.get_overview()
+    dxy = next(v for v in overview.indicators if v.indicator == "dxy")
+    assert dxy.source == "fred", "the prior REAL point must still surface, not a frozen mock"
+    assert dxy.value == 119.5 if hasattr(dxy, "value") else dxy.latest == 119.5
+    assert dxy.asOf == "2026-06-12", "asOf is the real point's ts, not a today-stamped mock"
+
+
+# --- (c) purge_mock deletes ONLY mock rows; real count unchanged; idempotent ---
+def test_DXY_purge_mock_deletes_only_mock(macro_db):
+    """purge_mock removes every source='mock' row and leaves real rows untouched (the live-store
+    guard); returns the count; idempotent (re-run → 0)."""
+    # seed real rows (via the guard-respecting path) + stuck mock rows (direct insert to bypass
+    # the new guard, simulating the historical pollution this purge cleans).
+    store.record_point("cpi", 300.0, "2026-06-01", "fred")
+    store.record_point("dxy", 119.5, "2026-06-12", "fred")
+    conn = store.db.get_conn()
+    conn.execute("INSERT INTO macro_history(indicator,value,ts,source) VALUES('dxy',100.0,'2026-06-16','mock')")
+    conn.execute("INSERT INTO macro_history(indicator,value,ts,source) VALUES('cpi',1.0,'2026-06-15','mock')")
+    conn.commit()
+
+    before_real = store.count_by_source("fred")
+    before_mock = store.count_by_source("mock")
+    assert before_real == 2 and before_mock == 2
+
+    purged = store.purge_mock()
+    assert purged == 2, f"must purge exactly the 2 mock rows, got {purged}"
+    assert store.count_by_source("fred") == before_real, "REAL row count must be UNCHANGED"
+    assert store.count_by_source("mock") == 0, "all mock rows gone"
+    # the real rows are intact + readable
+    assert store.latest("cpi")["value"] == 300.0 and store.latest("dxy")["value"] == 119.5
+    # idempotent: a re-run on a clean store deletes 0
+    assert store.purge_mock() == 0, "purge must be idempotent (clean store → 0)"
+
+
+# --- (d) cold-start (empty series) still returns DISPLAY numbers (mock-tagged, NOT persisted) ---
+def test_DXY_GATEd_cold_start_still_returns_numbers(macro_db):
+    """An UNPRIMED install (empty store, network off → all mock): get_overview still returns
+    display numbers for each indicator (the reader display-fallback) — but persists NOTHING
+    (points==0). The 'empty-series path still returns numbers' contract survives the no-persist
+    guard."""
+    # store is empty (macro_db just created the table); network is off → fetch_latest → mock
+    assert store.count("dxy") == 0
+    overview, warnings = service.get_overview()
+    dxy = next(v for v in overview.indicators if v.indicator == "dxy")
+    assert dxy.latest is not None, "cold-start must still show a display number"
+    assert dxy.source == "mock", "honestly tagged mock"
+    assert dxy.points == 0, "display-only — nothing persisted"
+    # and nothing leaked into the store
+    assert store.count("dxy") == 0, "the display-fallback must NOT persist"
+    assert store.count_by_source("mock") == 0, "no mock row anywhere in the store"
