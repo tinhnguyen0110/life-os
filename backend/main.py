@@ -47,7 +47,15 @@ def _build_mcp_servers() -> list:
     LAN — north-star) so REMOTE/multi-client streamable-http works (default ON → 421 on a
     non-localhost Host). Each via the server's own build_server(transport_security=...) so
     the capability gate + import graph stay pristine (no new import in the server modules).
-    Returns the 4 FastMCP instances (session_manager exists only AFTER streamable_http_app)."""
+    Returns the 4 FastMCP instances (session_manager exists only AFTER streamable_http_app).
+
+    MCP-STATELESS (#75, agent-first): stateless_http=True → the HTTP servers hold NO per-
+    session state, so a backend RESTART does NOT drop connected MCP clients (no mcp-session-id
+    to re-initialize). Verified safe: all tools are pure request/response (no server-push/
+    notification/subscribe), so stateless loses nothing. session_manager.run() is STILL
+    required in the lifespan (the SDK's streamable_http_app threads json_response +
+    stateless through to the StreamableHTTPSessionManager; run() starts its task group
+    regardless of stateful/stateless — removing it would 500 every call)."""
     import importlib
 
     from mcp.server.transport_security import TransportSecuritySettings
@@ -56,7 +64,7 @@ def _build_mcp_servers() -> list:
     servers = []
     for _path, mod_name in _MCP_MOUNTS:
         mod = importlib.import_module(mod_name)
-        servers.append(mod.build_server(transport_security=sec))
+        servers.append(mod.build_server(transport_security=sec, stateless_http=True))
     return servers
 
 

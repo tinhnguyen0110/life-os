@@ -174,15 +174,21 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
 # FastMCP server — registers each propose tool over stdio. Lazy (build_server)   #
 # so importing this module for the no-mutate test doesn't spin up a server.      #
 # --------------------------------------------------------------------------- #
-def build_server(transport_security: Any = None) -> Any:
+def build_server(transport_security: Any = None, stateless_http: bool = False) -> Any:
     """Construct the FastMCP write server with all 6 propose tools registered.
 
     ``transport_security`` (default None = stdio-identical) is threaded into FastMCP so
     main.py can mount this over streamable-http (DNS-rebinding OFF for remote/LAN clients,
-    MCP-HTTP). None keeps the stdio entrypoint + the propose-only gate behaviourally unchanged."""
+    MCP-HTTP). None keeps the stdio entrypoint + the propose-only gate behaviourally unchanged.
+
+    ``stateless_http`` (default False = stdio-identical) → MCP-STATELESS (#75): True = no
+    per-session state, so a backend RESTART does NOT drop HTTP clients. Propose tools are
+    pure request/response (enqueue + return), so stateless loses nothing. main.py passes
+    True for the HTTP mount; the stdio main() entrypoint keeps False."""
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP("life-os-wiki-write", transport_security=transport_security)
+    mcp = FastMCP("life-os-wiki-write", transport_security=transport_security,
+                  stateless_http=stateless_http)
     mcp.add_tool(propose_note, description=propose_note.__doc__)
     mcp.add_tool(propose_edit, description=propose_edit.__doc__)
     mcp.add_tool(propose_link, description=propose_link.__doc__)

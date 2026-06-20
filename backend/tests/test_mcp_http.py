@@ -8,7 +8,10 @@ Defensive cases (each a real assertion, per the dispatch):
 (b) DNS-rebinding 421 → TestClient sends Host 'testserver' (non-localhost); without
     enable_dns_rebinding_protection=False the handshake 421s. We KEEP that Host (don't
     override to localhost) so a 200 proves the remote-client path this sprint exists to fix.
-(c) 4 distinct managers → assert 4 distinct mcp-session-id values across the 4 mounts.
+(c) MCP-STATELESS (#75): the 4 mounts are stateless_http=True → the handshake issues NO
+    mcp-session-id (no per-session state) so a backend RESTART can't drop a client; a
+    tools/list works with NO prior initialize-session (restart-survivable). (Was: 4
+    distinct session ids — stateful; the agent-first switch removed sessions entirely.)
 (d) stdio unbroken → each build_server() still builds + len(TOOLS) == 40/4/11/6
     (MCP-DEDUP #70: shared read 46→40, shared write 10→4, standalone wiki-read 9→11).
 (e) no `from __future__ import annotations` added to the 4 server modules.
@@ -49,19 +52,45 @@ def client(isolated_paths):
 # (a) + (b) + (c): the 4 handshakes return 200 (NOT 500/421/404) + distinct ids #
 # --------------------------------------------------------------------------- #
 def test_four_mcp_endpoints_handshake_200(client):
-    """Each /<mount>/mcp `initialize` → 200 with an mcp-session-id. 200 (not 404) proves
-    the session manager is RUN (a); 200 (not 421) proves DNS-rebinding is OFF for the
-    non-localhost TestClient Host (b)."""
-    session_ids = []
+    """Each /<mount>/mcp `initialize` → 200. 200 (not 404) proves the session manager is
+    RUN (a); 200 (not 421) proves DNS-rebinding is OFF for the non-localhost TestClient
+    Host (b). MCP-STATELESS (#75): the servers are stateless_http=True now, so the
+    handshake issues NO mcp-session-id (no session to track) — that is the agent-first WIN
+    (a backend restart can't drop a session that doesn't exist). See the dedicated
+    stateless test below for the no-session-id assertion."""
     for mount in MOUNTS:
         r = client.post(f"{mount}/mcp", json=_init_body(),
                         headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 200, f"{mount}/mcp handshake not 200: {r.status_code} {r.text[:200]}"
-        sid = r.headers.get("mcp-session-id")
-        assert sid, f"{mount}/mcp returned no mcp-session-id"
-        session_ids.append(sid)
-    # (c) 4 mounts → 4 FastMCP → 4 session managers → 4 DISTINCT session ids (no collision)
-    assert len(set(session_ids)) == 4, f"session ids collided: {session_ids}"
+
+
+def test_stateless_handshake_issues_no_session_id(client):
+    """MCP-STATELESS (#75) — the spine: a stateless server holds NO per-session state, so
+    the `initialize` handshake returns NO mcp-session-id header. THIS is what makes a backend
+    RESTART non-disruptive — there's no session id a client would have to re-initialize after
+    the server comes back. (Stateful mode issued one per mount; stateless issues none.)"""
+    for mount in MOUNTS:
+        r = client.post(f"{mount}/mcp", json=_init_body(),
+                        headers={"Accept": "application/json, text/event-stream"})
+        assert r.status_code == 200
+        assert r.headers.get("mcp-session-id") is None, (
+            f"{mount}/mcp issued an mcp-session-id — not stateless "
+            f"(a session id means a restart could orphan the client)")
+
+
+def test_stateless_call_needs_no_prior_session(client):
+    """RESTART-SURVIVABLE behavior: a stateless server accepts a tools/list with NO
+    mcp-session-id header and NO prior initialize-session — i.e. a client that was
+    connected before a restart keeps working without re-initializing. (In stateful mode
+    a call without the session id from initialize would 400/404; stateless serves it.)"""
+    r = client.post("/mcp/read/mcp",
+                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                    headers={"Accept": "application/json, text/event-stream"})
+    # 200 = served without a session handshake (the restart-survivable property). Not a
+    # 4xx "missing session id" the stateful server would have returned.
+    assert r.status_code == 200, (
+        f"stateless tools/list without a session must 200 (restart-survivable), got "
+        f"{r.status_code}: {r.text[:200]}")
 
 
 def test_json_only_accept_is_406_not_silently_ok(client):

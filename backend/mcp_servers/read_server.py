@@ -1108,17 +1108,23 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
 # lazily in build_server() so importing this module (for tests / the no-write    #
 # capability check) does NOT require the SDK to spin up a server.                #
 # --------------------------------------------------------------------------- #
-def build_server(transport_security: Any = None) -> Any:
+def build_server(transport_security: Any = None, stateless_http: bool = False) -> Any:
     """Construct the FastMCP server with all read tools registered. Separated from
     import so tests can import TOOLS without constructing the server. FastMCP infers
     each tool's schema from the fn signature + docstring.
 
     ``transport_security`` (default None = stdio-identical) is passed through to FastMCP
     so main.py can mount this over streamable-http with DNS-rebinding protection OFF for
-    remote/LAN clients (MCP-HTTP). None keeps the stdio entrypoint behaviourally unchanged."""
+    remote/LAN clients (MCP-HTTP). None keeps the stdio entrypoint behaviourally unchanged.
+
+    ``stateless_http`` (default False = stdio-identical) → MCP-STATELESS (#75): True = no
+    per-session state, so a backend RESTART does NOT drop HTTP clients (no mcp-session-id to
+    re-initialize — agent-first). Read tools are pure request/response (no server-push/
+    subscribe), so stateless loses nothing. main.py passes True for the HTTP mount."""
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP("life-os-read", transport_security=transport_security)
+    mcp = FastMCP("life-os-read", transport_security=transport_security,
+                  stateless_http=stateless_http)
     for fn in TOOLS.values():
         mcp.add_tool(fn, description=fn.__doc__)
     return mcp
