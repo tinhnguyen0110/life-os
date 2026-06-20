@@ -43,6 +43,9 @@ from .overview import inbox, overview
 # folder-tree + MOC listing.
 from .tree import folder_tree, mocs
 
+# wiki_get modes (#21): full | outline | section.
+from .note_view import note_view
+
 __all__ = [
     "recent_ops",
     "reindex_note",
@@ -50,4 +53,5 @@ __all__ = [
     "ego_graph", "global_graph", "detect_clusters",
     "overview", "inbox",
     "folder_tree", "mocs",
+    "note_view",
 ]

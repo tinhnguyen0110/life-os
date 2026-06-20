@@ -51,10 +51,12 @@ def wiki_info():
 
 
 @router.get("/search")
-def search(q: str = ""):
-    """Full-text search → ``[{id, title, snippet, status}]`` ranked by relevance
-    (C1). Empty/malformed ``q`` → empty list (never 500)."""
-    return ok(data=reader.search(q))
+def search(q: str = "", query: str = ""):
+    """Full-text search → RANKED top-5 ``[{id, title, folder, snippet, score}]`` (WIKI-RETRIEVAL-2
+    #22 — agent-first lean: top-5 not flat, +score so the agent sees WHY it matched, NO body).
+    Accepts ``q`` OR ``query`` (alias — a client sending ?query=… works too; ``q`` wins if both).
+    Empty/malformed → empty list (never 500). Same reader.search the MCP wiki_search uses (#24)."""
+    return ok(data=reader.search(q or query))
 
 
 @router.get("/overview")
@@ -216,14 +218,17 @@ def merge_notes(body: MergeInput):
 
 
 @router.get("/notes/{note_id}")
-def get_note(note_id: int):
-    """One note. Follows a redirect tombstone (a merged-away id returns the merge
-    target + a warning, NOT 404 — citations survive, B5). 404 only if the id never
-    existed (or was plain-deleted, not merged)."""
+def get_note(note_id: int, mode: str = "full", heading: str | None = None):
+    """One note. Follows a redirect tombstone (a merged-away id returns the merge target + a
+    warning, NOT 404 — citations survive, B5). 404 only if the id never existed.
+
+    WIKI-RETRIEVAL-2 (#21) ``mode``: full (DEFAULT, the bare note UNCHANGED) | outline (heading
+    ToC + meta, NO body) | section (+``heading`` → only that section). Same reader.note_view the
+    MCP wiki_get_note uses → byte-identical (#24)."""
     note, warning = service.resolve_note(note_id)
     if note is None:
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
-    return ok(data=note.model_dump(), warning=warning)
+    return ok(data=reader.note_view(note, mode=mode, heading=heading), warning=warning)
 
 
 @router.get("/notes/{note_id}/backlinks")

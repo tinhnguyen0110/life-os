@@ -71,11 +71,14 @@ def _audit(tool: str, params: dict[str, Any]) -> None:
 # Every tool returns a dict (never a bare list/None) so the agent gets a stable  #
 # envelope; a missing note returns {found: False, ...} not a crash.              #
 # --------------------------------------------------------------------------- #
-def wiki_search(q: str, limit: int = 30) -> dict[str, Any]:
-    """Full-text search the vault → ranked results. Bad/empty/FTS-special ``q`` →
-    empty results (reader sanitizes; never raises)."""
-    _audit("wiki_search", {"q": q, "limit": limit})
-    return {"results": reader.search(q, limit=limit)}
+def wiki_search(q: str = "", query: str = "", limit: int = 5) -> dict[str, Any]:
+    """Full-text search the vault → RANKED top-K results (WIKI-RETRIEVAL-2 #22 — default top-5,
+    each {id,title,folder,snippet,score} so the agent sees WHY it matched, NO body → drill via
+    wiki_get). Accepts ``q`` OR ``query`` (alias; q wins if both given). Bad/empty/FTS-special →
+    empty results (reader sanitizes; never raises). Same reader.search as REST /wiki/search (#24)."""
+    term = q or query
+    _audit("wiki_search", {"q": term, "limit": limit})
+    return {"results": reader.search(term, limit=limit)}
 
 
 def wiki_overview() -> dict[str, Any]:
@@ -101,14 +104,22 @@ def wiki_graph(note_id: int, depth: int = 2) -> dict[str, Any]:
     return {"found": True, "graph": g}
 
 
-def wiki_get_note(note_id: int) -> dict[str, Any]:
-    """One note by its INTEGER id (the citation key — the agent cites "note 47",
-    D1). A missing note → {found: False} (not a crash)."""
-    _audit("wiki_get_note", {"note_id": note_id})
+def wiki_get_note(note_id: int, mode: str = "full", heading: str | None = None) -> dict[str, Any]:
+    """One note by its INTEGER id (the citation key — the agent cites "note 47", D1). A missing
+    note → {found: False} (not a crash).
+
+    WIKI-RETRIEVAL-2 (#21) ``mode``: full (DEFAULT — {found, note:<full dict>}, backward-compat) |
+    outline (heading ToC + meta, NO body) | section (+``heading`` → only that section). The note
+    payload is reader.note_view(...) — the SAME fn REST /wiki/notes/{id} uses → byte-identical
+    (#24). ``found`` here = the note EXISTS; for section, ``sectionFound`` = the heading was found."""
+    _audit("wiki_get_note", {"note_id": note_id, "mode": mode, "heading": heading})
     note = _get_note(int(note_id))
     if note is None:
         return {"found": False, "note_id": int(note_id)}
-    return {"found": True, "note": note.model_dump()}
+    view = reader.note_view(note, mode=mode, heading=heading)
+    if (mode or "full").strip().lower() == "outline" or (mode or "full").strip().lower() == "section":
+        return {"found": True, **view}  # outline/section: merge the view (carries its own 'mode')
+    return {"found": True, "note": view}  # full: the bare note dict (backward-compat)
 
 
 def wiki_backlinks(note_id: int) -> dict[str, Any]:

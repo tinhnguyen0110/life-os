@@ -1007,9 +1007,10 @@ def test_search_returns_ranked_with_snippet(wiki_db):
     wiki_service.create_note(NoteCreateInput(title="Beta note", content="mango once only"))
     results = wiki_reader.search("mango")
     assert len(results) == 2
-    # each has the contract shape + a snippet highlighting the term
+    # WIKI-RETRIEVAL-2 (#22): the result shape is now {id,title,folder,snippet,score} — dropped
+    # the unused `status`, added `folder` + the FTS `score` (agent sees WHY it ranked). Top-5 default.
     for r in results:
-        assert set(r) == {"id", "title", "snippet", "status"}
+        assert set(r) == {"id", "title", "folder", "snippet", "score"}
     assert any("<b>mango</b>" in r["snippet"] for r in results)
 
 

@@ -50,15 +50,17 @@ def _sanitize_fts_query(q: str) -> str:
 
 
 def fts_search(q: str, limit: int = 30) -> list[sqlite3.Row]:
-    """Full-text search → rows ``{id, title, status, snippet}`` ranked by FTS5
-    rank. Query is sanitized (bad input → [] , never a 500). Empty q → []."""
+    """Full-text search → rows ``{id, title, status, folder, snippet, score}`` ranked by FTS5
+    rank. WIKI-RETRIEVAL-2 (#22): +folder (for the ranked result) + ``score`` = the FTS5 ``rank``
+    (bm25; MORE NEGATIVE = MORE relevant — surfaced raw so the agent sees WHY a result ranked).
+    Query is sanitized (bad input → [] , never a 500). Empty q → []."""
     match = _sanitize_fts_query(q)
     if not match:
         return []
     conn = db.get_conn()
     sql = (
-        "SELECT f.rowid AS id, n.title AS title, n.status AS status, "
-        "snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet "
+        "SELECT f.rowid AS id, n.title AS title, n.status AS status, n.folder AS folder, "
+        "snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet, rank AS score "
         "FROM notes_fts f JOIN wiki_notes n ON n.id = f.rowid "
         "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?"
     )

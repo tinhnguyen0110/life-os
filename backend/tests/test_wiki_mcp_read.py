@@ -85,6 +85,101 @@ def test_get_note_parity(wiki_db):
     assert tool["found"] is True and tool["note"] == wsvc.get_note(a).model_dump()
 
 
+# --------------------------------------------------------------------------- #
+# WIKI-RETRIEVAL-2 (#21) — wiki_get_note modes (full | outline | section)        #
+# --------------------------------------------------------------------------- #
+def _seed_structured_note() -> int:
+    body = ("Intro line.\n\n## Career\ncareer planning content.\n\n"
+            "## Finance\nfinance content.\n\n### Sub\nsub detail.")
+    from modules.wiki.schema import NoteCreateInput
+    return wsvc.create_note(NoteCreateInput(title="Big", content=body, folder="A",
+                                            noteType="moc", tags=["x"])).id
+
+
+def test_get_mode_full_is_backward_compat(wiki_db):
+    """mode=full (+ no-mode default) → the bare full note dict UNCHANGED (the pre-#21 shape)."""
+    nid = _seed_structured_note()
+    default = read_server.wiki_get_note(nid)
+    full = read_server.wiki_get_note(nid, mode="full")
+    bare = wsvc.get_note(nid).model_dump()
+    assert default["note"] == bare and full["note"] == bare, "full = the bare note, unchanged"
+
+
+def test_get_mode_outline_has_headings_no_body(wiki_db):
+    """mode=outline → headings (the ## ToC) + meta (kind/status/folder/tags), NO body."""
+    nid = _seed_structured_note()
+    out = read_server.wiki_get_note(nid, mode="outline")
+    assert out["found"] is True and out["mode"] == "outline"
+    texts = [(h["level"], h["text"]) for h in out["headings"]]
+    assert texts == [(2, "Career"), (2, "Finance"), (3, "Sub")]
+    assert out["meta"]["kind"] == "moc" and out["meta"]["folder"] == "A"
+    # NO body anywhere in the outline (token-cheap)
+    assert "note" not in out and "content" not in out
+
+
+def test_get_mode_section_returns_only_that_section(wiki_db):
+    """mode=section&heading=X → only that section's content (to the next same/higher heading)."""
+    nid = _seed_structured_note()
+    sec = read_server.wiki_get_note(nid, mode="section", heading="Career")
+    assert sec["sectionFound"] is True
+    assert sec["section"]["content"] == "career planning content."
+    # an unknown heading → sectionFound False (honest, not a crash); the note still 'found'
+    miss = read_server.wiki_get_note(nid, mode="section", heading="Nope")
+    assert miss["found"] is True and miss["sectionFound"] is False and miss["section"] is None
+
+
+def test_get_modes_rest_mcp_byte_identical(wiki_db):
+    """#24 invariant for the new modes: the MCP wiki_get_note payload == REST /wiki/notes/{id}
+    data (reader.note_view) byte-identical. (full → MCP wraps {found, note:<view>}; outline/section
+    → MCP merges {found, **view} — compare the view portion vs REST's note_view directly.)"""
+    import json
+    nid = _seed_structured_note()
+    note = wsvc.get_note(nid)
+    for mode, heading in (("full", None), ("outline", None), ("section", "Finance")):
+        rest = reader.note_view(note, mode=mode, heading=heading)  # == REST data
+        mcp = read_server.wiki_get_note(nid, mode=mode, heading=heading)
+        mcp_view = mcp["note"] if mode == "full" else {k: v for k, v in mcp.items() if k != "found"}
+        assert json.dumps(mcp_view, sort_keys=True) == json.dumps(rest, sort_keys=True), \
+            f"mode={mode}: MCP payload must == REST note_view byte-identical"
+
+
+# --------------------------------------------------------------------------- #
+# WIKI-RETRIEVAL-2 (#22) — wiki_search ranked top-5 + query alias                #
+# --------------------------------------------------------------------------- #
+def test_search_ranked_top5_with_score(wiki_db):
+    """search → ≤5 RANKED results, each {id,title,folder,snippet,score}; NOT a flat dump."""
+    from modules.wiki.schema import NoteCreateInput
+    for i in range(8):
+        wsvc.create_note(NoteCreateInput(title=f"career note {i}", content="career career stuff"))
+    res = read_server.wiki_search(q="career")["results"]
+    assert len(res) <= 5, "ranked top-5, not flat-all"
+    for r in res:
+        assert set(r) == {"id", "title", "folder", "snippet", "score"}
+    # ranked: scores are in FTS rank order (ascending = best-first; rank is more-negative=better)
+    scores = [r["score"] for r in res]
+    assert scores == sorted(scores), "results are in rank order"
+
+
+def test_search_query_alias_equals_q(wiki_db):
+    """The dogfood-hit `query` alias works == `q` (both name the same search)."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="career plan", content="career"))
+    import json
+    by_q = read_server.wiki_search(q="career")["results"]
+    by_query = read_server.wiki_search(query="career")["results"]
+    assert json.dumps(by_q, sort_keys=True) == json.dumps(by_query, sort_keys=True)
+
+
+def test_search_rest_mcp_byte_identical(wiki_db):
+    """#24: MCP wiki_search results == REST /wiki/search data (reader.search) byte-identical."""
+    import json
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="career", content="career"))
+    mcp = read_server.wiki_search(q="career")["results"]
+    rest = reader.search("career")
+    assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
+
+
 def test_backlinks_parity(wiki_db):
     a, b = _seed_linked_pair()
     assert read_server.wiki_backlinks(b) == reader.backlinks(b)

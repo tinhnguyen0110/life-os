@@ -59,11 +59,15 @@ def backlinks(note_id: int) -> dict[str, Any]:
             "outbound": outbound}
 
 
-def search(q: str, limit: int = 30) -> list[dict[str, Any]]:
-    """Full-text search → ``[{id, title, snippet, status}]`` ranked by FTS5 rank
-    (C1). Empty/bad query → ``[]`` (never raises — store sanitizes)."""
+def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Full-text search → RANKED top-K ``[{id, title, folder, snippet, score}]`` (FTS5 rank).
+    WIKI-RETRIEVAL-2 (#22): agent-first — default TOP-5 (was 30/flat), each result carries
+    ``folder`` + ``score`` (the FTS5 rank; more-negative = more relevant) so the agent sees WHY
+    it matched, then drills with wiki_get. NO body (snippet + id only — token-cheap). Empty/bad
+    query → ``[]`` (never raises — store sanitizes)."""
     return [
-        {"id": r["id"], "title": r["title"], "snippet": r["snippet"], "status": r["status"]}
+        {"id": r["id"], "title": r["title"], "folder": r["folder"],
+         "snippet": r["snippet"], "score": r["score"]}
         for r in wiki_store.fts_search(q, limit=limit)
     ]
 
