@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS wiki_redirects (
     created  TEXT    NOT NULL       -- ISO-8601 UTC
 );
 
+-- wiki_folder_meta: WIKI-RETRIEVAL-1 (#20) — a light KV of per-folder descriptions, so an agent
+-- navigating the tree (like `ls`) knows what a folder holds without reading note bodies. A folder
+-- with NO row → meta:null in the tree (honest-mirror, NEVER a fabricated desc). Single-purpose
+-- (folder_path PK + desc); chosen over a readme/_folder-note convention to avoid body-parsing +
+-- "which note is the readme" ambiguity (decide-and-log, no-overengineering). Start with ONLY desc.
+CREATE TABLE IF NOT EXISTS wiki_folder_meta (
+    folder_path  TEXT    PRIMARY KEY,   -- the W-Explorer virtual path (e.g. 'A/B'); '' = root
+    desc         TEXT    NOT NULL,      -- human/agent description of what the folder holds
+    updated      TEXT    NOT NULL       -- ISO-8601 UTC
+);
+
 -- notes_fts: FTS5 full-text index (C1). A PLAIN fts5 table (NOT content='') —
 -- contentless can't produce snippet()/rank, which search + unlinked-mentions
 -- require (verified on disk). It stores its own copy of the indexed text, which

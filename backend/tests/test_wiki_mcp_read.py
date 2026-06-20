@@ -107,7 +107,8 @@ def test_wiki_tree_mcp_byte_identical_to_rest_data(wiki_db):
     mcp_result = read_server.wiki_tree()      # the FULL MCP tool result
     assert json.dumps(mcp_result, sort_keys=True) == json.dumps(rest_data, sort_keys=True), \
         "MCP wiki_tree must be byte-identical to REST /wiki/tree data (no {tree:...} wrapper)"
-    # explicit: the top-level keys are the tree's (name/path/folders/notes), NOT a {tree} wrapper
+    # explicit: the top-level keys are the tree node's (name/path/meta/counts/folders/notes — #20
+    # added meta/counts), NOT a {tree} wrapper
     assert "tree" not in mcp_result, "no {tree:...} wrapper — return the tree dict directly"
     assert set(mcp_result.keys()) == set(rest_data.keys())
 

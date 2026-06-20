@@ -96,6 +96,13 @@ from .fts import (
     fts_upsert,
 )
 
+# per-folder description KV (WIKI-RETRIEVAL-1 #20).
+from .folder_meta import (
+    all_folder_meta,
+    get_folder_meta,
+    set_folder_meta,
+)
+
 # graph + overview aggregate queries (C3/C4/C5).
 from .queries import (
     all_notes,
@@ -137,6 +144,8 @@ __all__ = [
     "count_ghost_links", "note_ids_with_resolved_link", "degree",
     "resolved_neighbors", "edges_among", "all_resolved_edges", "fleeting_notes",
     "outbound_link_count", "total_link_count",
+    # folder-meta KV (#20)
+    "get_folder_meta", "all_folder_meta", "set_folder_meta",
 ]
 
 # Register tables at import so a fresh process / first request has them ready

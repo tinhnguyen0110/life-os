@@ -82,8 +82,11 @@ def test_INV1_pre_folder_note_reads_as_root_and_roundtrips(wiki_db):
 # INVARIANT 2 — tree correct                                                    #
 # --------------------------------------------------------------------------- #
 def test_INV2_empty_vault_honest_tree(wiki_db):
+    # WIKI-RETRIEVAL-1 (#20): the tree node now carries meta (null when no folder_meta row) +
+    # counts (additive, ls-style navigation). Empty vault → honest empty root WITH those fields.
     t = reader.folder_tree()
-    assert t == {"name": "", "path": "", "folders": [], "notes": []}
+    assert t == {"name": "", "path": "", "meta": None, "counts": {"notes": 0},
+                 "folders": [], "notes": []}
 
 
 def test_INV2_root_notes_at_top(wiki_db):
@@ -190,5 +193,7 @@ def test_api_tree_and_move(client):
 
 
 def test_api_tree_empty_honest(client):
+    # #20: +meta(null)/counts additive on the tree node.
     assert client.get("/wiki/tree").json()["data"] == {
-        "name": "", "path": "", "folders": [], "notes": []}
+        "name": "", "path": "", "meta": None, "counts": {"notes": 0},
+        "folders": [], "notes": []}

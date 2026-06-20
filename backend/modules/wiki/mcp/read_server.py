@@ -123,14 +123,18 @@ def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     return {"ops": reader.recent_ops(limit=int(limit))}
 
 
-def wiki_tree() -> dict[str, Any]:
-    """The vault's virtual folder-tree (W-Explorer): notes nested by their ``folder`` field.
-    WIKI-LINK-CORRECTNESS (#19): returns the tree DICT DIRECTLY ({name, path, folders, notes}) —
-    BYTE-IDENTICAL to REST ``GET /wiki/tree``'s ``data`` (NOT wrapped in a {tree:...} key REST
-    doesn't have). Same ``reader.folder_tree()`` source, no logic dup → MCP≡REST exactly (an agent
-    reads result.folders via MCP just like data.folders via REST; the #19-fix dropped the wrapper)."""
-    _audit("wiki_tree", {})
-    return reader.folder_tree()
+def wiki_tree(folder: str | None = None, depth: int | None = None) -> dict[str, Any]:
+    """The vault's virtual folder-tree (W-Explorer) for ls-style navigation WITHOUT reading bodies.
+    Each folder node: {name, path, meta:{desc}|null, counts:{notes:N}, folders:[...], notes:[...]};
+    each note-stub: {id, title, kind, status} (WIKI-RETRIEVAL-1 #20 — meta/counts/kind/status so an
+    agent knows what a folder holds + which note is a MOC index, token-cheap, no body). ``folder``
+    scopes to a subtree; ``depth`` limits nesting.
+
+    WIKI-LINK-CORRECTNESS (#19) invariant KEPT: returns the tree DICT DIRECTLY — BYTE-IDENTICAL to
+    REST ``GET /wiki/tree``'s ``data`` (same reader.folder_tree(folder,depth), no {tree:...} wrapper,
+    no logic dup → MCP≡REST exactly; #24)."""
+    _audit("wiki_tree", {"folder": folder, "depth": depth})
+    return reader.folder_tree(folder=folder, depth=depth)
 
 
 def wiki_clusters() -> dict[str, Any]:

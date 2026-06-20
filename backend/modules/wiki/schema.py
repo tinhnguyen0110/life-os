@@ -103,6 +103,13 @@ class MergeInput(BaseModel):
     targetId: int
 
 
+class FolderMetaInput(BaseModel):
+    """``PUT /wiki/folders/{path}/meta`` body (WIKI-RETRIEVAL-1 #20) — set a folder's description
+    (the tree's ``meta:{desc}``). A blank ``desc`` CLEARS the meta (→ meta:null, honest-null)."""
+
+    desc: str = Field(default="", max_length=500, description="what this folder holds (blank clears)")
+
+
 class DeviceRegisterInput(BaseModel):
     """``POST /wiki/sync/devices`` body (M3 A1a) — register/refresh a sync device."""
 

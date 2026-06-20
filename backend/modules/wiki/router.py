@@ -23,6 +23,7 @@ from core.responses import ok
 from datetime import datetime, timezone
 
 from . import citations, proposals_service, reader, service, sync_store
+from . import store as wiki_store
 from .proposals_schema import (
     BatchAcceptInput,
     DecideInput,
@@ -32,6 +33,7 @@ from .schema import (
     CitationVerifyInput,
     ConflictResolveInput,
     DeviceRegisterInput,
+    FolderMetaInput,
     MergeInput,
     NoteCreateInput,
     NoteUpdateInput,
@@ -171,11 +173,23 @@ def mocs():
 
 
 @router.get("/tree")
-def tree():
+def tree(folder: str | None = None, depth: int | None = None):
     """W-Explorer virtual folder-tree built from notes' ``folder`` fields. Nested
-    ``{name, path, folders:[...], notes:[{id, title}]}`` rooted at "". Folders are
-    virtual (files stay flat at <id>.md — D1). Empty vault → honest empty root."""
-    return ok(data=reader.folder_tree())
+    ``{name, path, meta:{desc}|null, counts:{notes:N}, folders:[...], notes:[{id,title,kind,
+    status}]}`` rooted at "" (WIKI-RETRIEVAL-1 #20: +meta/counts/kind/status for ls-style
+    navigation without reading bodies). ``folder`` scopes to a subtree; ``depth`` limits nesting.
+    Folders are virtual (files stay flat at <id>.md — D1). Empty vault → honest empty root. This
+    is the SAME shape the MCP wiki_tree returns (byte-identical — the #24 invariant)."""
+    return ok(data=reader.folder_tree(folder=folder, depth=depth))
+
+
+@router.put("/folders/{folder_path:path}/meta")
+def set_folder_meta(folder_path: str, body: FolderMetaInput):
+    """WIKI-RETRIEVAL-1 (#20): set a folder's description (shows as the tree's ``meta:{desc}``).
+    A blank desc CLEARS the meta (→ meta:null, honest-null vs an empty 'described as nothing').
+    ``folder_path`` is the virtual path (may contain '/'). Returns the resulting meta (or null)."""
+    wiki_store.set_folder_meta(folder_path, body.desc)
+    return ok(data={"folderPath": folder_path, "meta": wiki_store.get_folder_meta(folder_path)})
 
 
 @router.post("/notes")
