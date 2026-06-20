@@ -571,10 +571,17 @@ def decision_weight() -> DecisionWeight:
 
     # q_macro — the macro_overview confidence, now the REAL compute_q (the seam, T4). Use the
     # MEAN of the per-indicator q as the macro layer's q (overview-level data quality).
+    # DXY-HONEST (#15 corrective): EXCLUDE mock/honest-missing indicators from the mean (the
+    # LOCKED S1 rule — mock = absence of real data, NEVER counts). A mock indicator's confidence
+    # is a placeholder; including it (e.g. a fake 0.77 from a mislabeled proxy) INFLATES q_macro,
+    # and counting it as 0 would DRAG q_macro down — both wrong. The honest q_macro is the mean
+    # of the REAL indicators only. All-mock → macro_qs empty → q_macro 0.0 (the existing guard).
     overview, _ = macro_svc.get_overview()
-    macro_qs = [v.confidence for v in overview.indicators]
+    macro_qs = [v.confidence for v in overview.indicators if v.source != "mock"]
     q_macro = round(sum(macro_qs) / len(macro_qs), 4) if macro_qs else 0.0
-    macro_note = f"macro: {len(macro_qs)} indicators, mean q={q_macro}, source={overview.source}"
+    n_total = len(overview.indicators)
+    macro_note = (f"macro: {len(macro_qs)}/{n_total} REAL indicators (mock excluded), "
+                  f"mean q={q_macro}, source={overview.source}")
 
     # q_flow (minimal) + s_asset (minimal)
     q_flow, flow_note = _q_flow()

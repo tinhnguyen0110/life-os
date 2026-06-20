@@ -47,9 +47,19 @@ _LABELS = {
 _FLAT_EPS = 1e-9
 
 
+# DXY-HONEST (#15 corrective): indicators we TRACK + display but that have NO live FRED feed
+# (the real source needs a dedicated API, not built — user-PARKED). They surface as honest mock
+# (source='mock' + a clear "no live feed" warning) and are EXCLUDED from q_macro (mock never
+# counts — the LOCKED S1 rule). dxy is here because FRED's DTWEXBGS ≠ the ICE DXY index; mapping
+# it would mislabel a different instrument as DXY (the honest-mirror breach this corrects).
+_FEEDLESS_INDICATORS: tuple[str, ...] = ("dxy",)
+
+
 def tracked_indicators() -> list[str]:
-    """The macro indicators tracked (keys of the configured FRED series map)."""
-    return list(settings.fred_series.keys())
+    """The macro indicators tracked: the FRED-backed ones (keys of fred_series) PLUS the
+    feed-less ones (DXY-HONEST #15 — known + displayed, but no live feed → honest mock). Both
+    appear in the overview; the feed-less read source='mock' with a warning, never 'fred'."""
+    return list(settings.fred_series.keys()) + list(_FEEDLESS_INDICATORS)
 
 
 # FINANCE-ASSISTANT P2 (#54): the confidence SEAM, now wired to the REAL q-engine. P1 shipped
@@ -107,6 +117,11 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
     """Build one indicator's view from stored points. Auto-refreshes on first read if
     the indicator has no data yet (so an unprimed install still returns numbers)."""
     label, unit = _LABELS.get(indicator, (indicator, ""))
+    # DXY-HONEST (#15 corrective, T1b): a FEED-LESS indicator carries an honest reason it's mock,
+    # surfaced on the view so the agent reads WHY (the reader produces it but get_overview reads the
+    # store, dropping it). Real indicators → None. Use the display label so it reads "DXY" not "dxy".
+    feedless_warning = (f"no live {label} feed (dedicated API not built) — mock"
+                        if indicator in _FEEDLESS_INDICATORS else None)
     rows = store.recent(indicator, limit=2)  # newest-first
     if not rows:
         # cold start: fetch + persist once (real points only — record_point skips mock now),
@@ -127,7 +142,8 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
         except Exception:  # noqa: BLE001 — display fallback must never raise
             points = []
         if not points:
-            return MacroIndicatorView(indicator=indicator, label=label, unit=unit, points=0)
+            return MacroIndicatorView(indicator=indicator, label=label, unit=unit, points=0,
+                                      warning=feedless_warning)
         # points are oldest→newest; take the last two for latest + previous (mirrors the store path)
         latest_p = points[-1]
         prev_p = points[-2] if len(points) > 1 else None
@@ -141,6 +157,7 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
             trend=_trend(latest_val, prev_val), source=src,
             points=0,  # 0 PERSISTED points — these are display-only reader values, not stored
             confidence=_confidence_for(latest_val, latest_p["ts"], src, indicator),
+            warning=feedless_warning,  # DXY-HONEST T1b: honest reason it's mock (feed-less), None for real
         )
 
     latest_row = rows[0]
@@ -162,6 +179,7 @@ def _indicator_view(indicator: str) -> MacroIndicatorView:
         # FINANCE-ASSISTANT P2 (#54): pass value + ts + source → real compute_q freshness.
         # FINANCE-AUDIT-S1 (#59): pass the indicator key → cadence-aware freshness + mock-excluded.
         confidence=_confidence_for(latest_val, latest_row["ts"], latest_row["source"], indicator),
+        warning=feedless_warning,  # DXY-HONEST T1b: None for a real indicator (the common store path)
     )
 
 
@@ -267,16 +285,21 @@ def get_history(indicator: str, days: int = 365, limit: int = 1000) -> MacroHist
     FINANCE-ASSISTANT P1 (#52): the daily-sentiment indicators (fear_greed/btc_dominance) are
     valid here too — they live in macro_history (snapshot routine), not fred_series, so they're
     NOT cold-start-refreshed (no FRED series to pull); an unprimed sentiment series is honest-
-    empty until the snapshot routine runs."""
+    empty until the snapshot routine runs.
+
+    DXY-HONEST (#15 corrective): the feed-less indicators (dxy) are also valid/tracked — they
+    have no FRED series so they are NOT cold-start-refreshed (refresh would only yield mock,
+    which isn't persisted anyway); their history is honest-empty (or whatever real points were
+    recorded out-of-band) until a real feed exists."""
     from datetime import timedelta
 
     is_fred = indicator in settings.fred_series
-    if not (is_fred or indicator in DAILY_SENTIMENT):
+    if not (is_fred or indicator in DAILY_SENTIMENT or indicator in _FEEDLESS_INDICATORS):
         return None
     store.init_macro_tables()
-    # cold start: prime FRED series so history isn't spuriously empty. Sentiment indicators
-    # have no FRED series to pull — they fill via the daily snapshot routine, honest-empty
-    # until then (don't refresh()).
+    # cold start: prime FRED series so history isn't spuriously empty. Sentiment + feed-less
+    # indicators have no FRED series to pull — they fill via the daily snapshot routine /
+    # out-of-band, honest-empty until then (don't refresh()).
     if is_fred and store.count(indicator) == 0:
         refresh()
 

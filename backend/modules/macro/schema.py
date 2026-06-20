@@ -53,6 +53,12 @@ class MacroIndicatorView(BaseModel):
     confidence: float = Field(
         default=0.2, ge=0.0, le=1.0,
         description="Phase-1 source-based confidence (fred 0.9 / mock 0.2); Phase-2 → compute_q()")
+    # DXY-HONEST (#15 corrective, T1b) — an OPTIONAL honest reason this indicator is mock/limited,
+    # surfaced WHERE THE AGENT READS (the reader produces it, but get_overview reads the store so it
+    # was dropped — this carries it through). Set for FEED-LESS indicators (e.g. dxy: "no live DXY
+    # feed (dedicated API not built) — mock"); None for a real FRED indicator. Additive/nullable.
+    warning: str | None = Field(
+        default=None, description="honest reason this indicator is mock/limited (feed-less), or None if real")
 
 
 class MacroOverview(BaseModel):

@@ -115,13 +115,14 @@ def test_d_real_csv_is_fred_not_mock(macro_db, monkeypatch):
     assert points[-1]["value"] != reader._MOCK_BASE.get("fed_funds_rate")
 
 
-def test_d_dxy_empty_csv_falls_to_mock(macro_db, monkeypatch):
-    """DISTINGUISHING: DXY (DTWEXBGS) the public CSV doesn't serve cleanly → an empty/
-    header-only body → fall-soft to mock, tagged source='mock' honestly (no 500)."""
-    _mock_csv(monkeypatch, "observation_date,DTWEXBGS\n")  # header only, no rows
+def test_d_dxy_is_feedless_mock_not_fred(macro_db, monkeypatch):
+    """DXY-HONEST (#15 corrective): dxy is FEED-LESS (no fred_series entry — FRED's DTWEXBGS is a
+    DIFFERENT instrument from the ICE DXY index; mapping it would mislabel). So fetch_latest('dxy')
+    takes the feed-less path → honest mock (source='mock', NEVER 'fred') + a clear 'no live feed'
+    warning. Even if a CSV were served, dxy has no series_id to fetch. NEVER presents a proxy as DXY."""
     points, warning = reader.fetch_latest("dxy")
-    assert points and all(p["source"] == "mock" for p in points)
-    assert warning and "mock" in warning.lower()
+    assert points and all(p["source"] == "mock" for p in points), "dxy must read source='mock', never 'fred'"
+    assert warning and "no live dxy feed" in warning.lower(), f"honest feed-less warning expected, got {warning!r}"
 
 
 def test_d_fail_soft_never_raises(macro_db, monkeypatch):
@@ -255,17 +256,23 @@ def test_endpoint_history_unknown_404(client):
 # Refresh persists — REAL points only (DXY-REAL #15: mock is never persisted)    #
 # --------------------------------------------------------------------------- #
 def test_refresh_persists_real_points(macro_db, monkeypatch):
-    """With a REAL CSV payload, refresh() persists fred points for every indicator. DXY-REAL
-    (#15): refresh only persists REAL data now — so this test FEEDS a real CSV (was relying on
-    mock persistence, which the guard removed)."""
+    """With a REAL CSV payload, refresh() persists fred points for every FRED-BACKED indicator.
+    DXY-REAL (#15): refresh only persists REAL data now — so this FEEDS a real CSV. DXY-HONEST
+    (#15 corrective): the FEED-LESS indicators (dxy) get mock from refresh → NOT persisted → 0
+    rows (honest — no live DXY feed); so scope the per-indicator assertion to the FRED-backed
+    set, and assert the feed-less ones persist nothing."""
+    from core.config import settings
     _mock_csv(monkeypatch,
               "observation_date,X\n2026-03-01,3.64\n2026-04-01,3.65\n2026-05-01,3.66\n")
     written, warnings = service.refresh()
     assert written > 0
-    # every tracked indicator now has stored REAL points
-    for ind in service.tracked_indicators():
-        assert store.count(ind) > 0
-    # and they're all 'fred', not 'mock' (the persisted source is real)
+    # every FRED-BACKED indicator now has stored REAL points
+    for ind in settings.fred_series:
+        assert store.count(ind) > 0, f"FRED-backed {ind} must persist real points"
+    # the feed-less indicators (dxy) persist NOTHING (mock, not stored) — honestly feed-less
+    for ind in service._FEEDLESS_INDICATORS:
+        assert store.count(ind) == 0, f"feed-less {ind} must NOT persist (mock only)"
+    # and the persisted source is all real ('fred'), zero mock
     assert store.count_by_source("mock") == 0, "no mock row may be persisted by refresh"
     assert store.count_by_source("fred") > 0
 
@@ -369,3 +376,47 @@ def test_DXY_GATEd_cold_start_still_returns_numbers(macro_db):
     # and nothing leaked into the store
     assert store.count("dxy") == 0, "the display-fallback must NOT persist"
     assert store.count_by_source("mock") == 0, "no mock row anywhere in the store"
+
+
+# =========================================================================== #
+# DXY-HONEST (#15 corrective) — dxy is feed-less mock, NEVER a mislabeled FRED  #
+# proxy. FRED's DTWEXBGS (broad trade-weighted dollar) ≠ the ICE DXY index.     #
+# =========================================================================== #
+def test_DXYHONEST_dxy_not_in_fred_series():
+    """The config no longer maps dxy → DTWEXBGS (the honest-mirror breach). dxy is feed-less."""
+    from core.config import settings
+    assert "dxy" not in settings.fred_series, "dxy must NOT be a FRED series (DTWEXBGS ≠ ICE DXY)"
+    # but it's still TRACKED + displayed (feed-less), so it doesn't vanish
+    assert "dxy" in service.tracked_indicators(), "dxy must still be tracked (feed-less, not dropped)"
+    assert "dxy" in service._FEEDLESS_INDICATORS
+
+
+def test_DXYHONEST_dxy_overview_is_mock_with_warning(macro_db):
+    """TEETH (T1b — the test now asserts what its NAME claims): in the overview dxy reads
+    source='mock' (NEVER 'fred') AND carries a NON-EMPTY honest warning surfaced WHERE THE AGENT
+    READS (the view, not just the dropped reader return). The warning is FEED-LESS-SPECIFIC: a
+    REAL indicator (cpi) on the SAME overview has warning=None — proving it's not a blanket label.
+    (network off → cpi is mock-by-outage, but its `warning` field stays None because warning is
+    feed-less-specific, NOT source-specific — the distinguishing.)"""
+    overview, warnings = service.get_overview()
+    dxy = next(v for v in overview.indicators if v.indicator == "dxy")
+    assert dxy.source == "mock", "dxy must be source='mock', never a mislabeled 'fred' proxy"
+    assert dxy.latest is not None, "dxy still shows a (mock) display number — doesn't vanish"
+    # TEETH: the honest warning IS surfaced on the view (was dropped before T1b)
+    assert dxy.warning is not None and dxy.warning != "", "dxy must carry an honest warning on the view"
+    low = dxy.warning.lower()
+    assert ("no live" in low and "feed" in low) or "dxy" in low, \
+        f"the warning must name the feed-less reality, got {dxy.warning!r}"
+    # DISTINGUISHING: the warning is feed-less-SPECIFIC, not blanket — a REAL indicator is None.
+    cpi = next(v for v in overview.indicators if v.indicator == "cpi")
+    assert cpi.warning is None, (
+        f"a real (FRED-backed) indicator must have warning=None — feed-less-specific, not "
+        f"blanket; cpi.warning={cpi.warning!r}")
+
+
+def test_DXYHONEST_dxy_fetch_warning_is_honest(macro_db):
+    """The reader warning for dxy names the feed-less reality (no live DXY feed / dedicated API),
+    not a generic 'fetch failed' — so the user knows it's PARKED, not broken."""
+    points, warning = reader.fetch_latest("dxy")
+    assert warning is not None and "no live dxy feed" in warning.lower()
+    assert all(p["source"] == "mock" for p in points)

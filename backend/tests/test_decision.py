@@ -1300,3 +1300,81 @@ def test_DA_q_macro_path_unchanged_dispersion(isolated_paths, monkeypatch):
     r = q_from_points(pts, needed=2, data_type="macro")
     assert r.paramsUsed["agreement"] == "dispersion", "q_from_points must stay on dispersion"
     assert r.agreement < 1.0, "divergent same-kind macro values → real disagreement (dispersion)"
+
+
+# =========================================================================== #
+# DXY-HONEST (#15 corrective) — q_macro EXCLUDES mock indicators (mock=absence,  #
+# never counts). The 0.596-vs-0.511 split is the distinguishing case.            #
+# =========================================================================== #
+def _overview_real_plus_mock(real_conf: float, n_real: int, mock_conf: float):
+    """A MacroOverview with n_real source='fred' indicators (confidence=real_conf) + ONE
+    source='mock' indicator (confidence=mock_conf). Used to prove q_macro EXCLUDES the mock."""
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    inds = [MacroIndicatorView(indicator=f"r{n}", label="x", unit="", latest=1.0,
+                               asOf="2026-06-01", trend="up", source="fred", points=3,
+                               confidence=real_conf) for n in range(n_real)]
+    inds.append(MacroIndicatorView(indicator="dxy", label="DXY", unit="index", latest=1.0,
+                                   asOf="2026-06-01", trend="flat", source="mock", points=0,
+                                   confidence=mock_conf))
+    return MacroOverview(indicators=inds, source="fred")
+
+
+def test_DXYHONEST_q_macro_excludes_mock_the_596_vs_511_split(isolated_paths, monkeypatch):
+    """THE distinguishing test: 6 REAL indicators @0.596 + 1 MOCK @0.0. q_macro must be the mean
+    of the REAL only (0.596), NOT the mean INCLUDING the mock-as-0 (0.5109 = the drag bug), NOT
+    an inflated value. EXCLUDE (0.596) ≠ count-as-0 (0.5109) — that gap is what proves the fix."""
+    import modules.macro.service as macro_svc
+    ov = _overview_real_plus_mock(real_conf=0.596, n_real=6, mock_conf=0.0)
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, []))
+    # isolate the macro layer so q_macro is readable cleanly
+    monkeypatch.setattr(dec, "macro_cycle", lambda: _stub_cycle(0.5))
+    monkeypatch.setattr(dec, "_q_flow", lambda: (0.5, "flow"))
+    monkeypatch.setattr(dec, "_s_asset", lambda: (0.5, "asset"))
+
+    dw = dec.decision_weight()
+    q_macro = {ly.layer: ly.q for ly in dw.breakdown}["q_macro"]
+    assert q_macro == pytest.approx(0.596, abs=1e-3), \
+        f"q_macro must be the mean of the 6 REAL (0.596), got {q_macro}"
+    # the DISTINGUISHING anchor: the count-as-0 value (the bug) would be 6*0.596/7 = 0.5109
+    count_as_0 = round(6 * 0.596 / 7, 4)
+    assert abs(q_macro - count_as_0) > 0.05, (
+        f"EXCLUDE-mock ({q_macro}) must differ from count-mock-as-0 ({count_as_0}) — proves the "
+        f"mock is excluded, not dragged in as 0")
+
+
+def test_DXYHONEST_q_macro_all_mock_is_zero_no_divzero(isolated_paths, monkeypatch):
+    """Edge: ALL indicators mock → macro_qs empty → q_macro 0.0 (the existing `if macro_qs else
+    0.0` guard handles it — no ZeroDivisionError)."""
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    import modules.macro.service as macro_svc
+    inds = [MacroIndicatorView(indicator=f"m{n}", label="x", unit="", latest=1.0,
+                               asOf="2026-06-01", trend="up", source="mock", points=0,
+                               confidence=0.2) for n in range(3)]
+    monkeypatch.setattr(macro_svc, "get_overview",
+                        lambda: (MacroOverview(indicators=inds, source="mock"), []))
+    monkeypatch.setattr(dec, "macro_cycle", lambda: _stub_cycle(0.5))
+    monkeypatch.setattr(dec, "_q_flow", lambda: (0.5, "flow"))
+    monkeypatch.setattr(dec, "_s_asset", lambda: (0.5, "asset"))
+
+    dw = dec.decision_weight()   # must not raise
+    q_macro = {ly.layer: ly.q for ly in dw.breakdown}["q_macro"]
+    assert q_macro == 0.0, f"all-mock → q_macro 0.0 (no div-by-zero), got {q_macro}"
+
+
+def test_DXYHONEST_q_macro_real_only_unchanged(isolated_paths, monkeypatch):
+    """A pure-real overview (no mock) is UNAFFECTED by the exclude filter — q_macro is the mean
+    of all (real) indicators, same as before the corrective."""
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    import modules.macro.service as macro_svc
+    inds = [MacroIndicatorView(indicator=f"r{n}", label="x", unit="", latest=1.0,
+                               asOf="2026-06-01", trend="up", source="fred", points=3,
+                               confidence=0.7) for n in range(4)]
+    monkeypatch.setattr(macro_svc, "get_overview",
+                        lambda: (MacroOverview(indicators=inds, source="fred"), []))
+    monkeypatch.setattr(dec, "macro_cycle", lambda: _stub_cycle(0.5))
+    monkeypatch.setattr(dec, "_q_flow", lambda: (0.5, "flow"))
+    monkeypatch.setattr(dec, "_s_asset", lambda: (0.5, "asset"))
+
+    dw = dec.decision_weight()
+    q_macro = {ly.layer: ly.q for ly in dw.breakdown}["q_macro"]
+    assert q_macro == pytest.approx(0.7, abs=1e-3), "all-real → mean unchanged (filter is a no-op here)"

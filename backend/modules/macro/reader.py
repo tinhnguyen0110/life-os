@@ -171,12 +171,22 @@ def fetch_latest(indicator: str) -> tuple[list[dict], str | None]:
       - CSV ok                 → real points, source='fred', no warning
       - CSV empty/err          → mock points + "macro ... — mock" (e.g. DXY/DTWEXBGS,
                                  which the public CSV doesn't serve cleanly)
-      - unknown indicator      → ([], "unknown macro indicator <ind>")
+      - feed-less but known    → mock points + a clear "no live feed" warning (DXY-HONEST #15:
+                                 e.g. dxy — the ICE DXY index needs a dedicated API, not built;
+                                 we surface an honest mock baseline tagged source='mock', NEVER
+                                 a mislabeled FRED proxy)
+      - truly unknown          → ([], "unknown macro indicator <ind>")
     NEVER raises. (The JSON API path with an api_key is retained as a secondary fallback
     if a key is configured AND the CSV failed — but the no-key CSV is the default real
     source, so most installs need no key.)"""
     series_id = settings.fred_series.get(indicator)
     if series_id is None:
+        # DXY-HONEST (#15 corrective): a KNOWN but feed-less indicator (it has a mock baseline,
+        # e.g. dxy) → honest mock + a clear "no live feed" warning. A TRULY unknown indicator
+        # (no baseline) stays the empty "unknown" path. dxy must read source='mock', never 'fred'
+        # — FRED's DTWEXBGS is a different instrument; the real ICE DXY needs a dedicated API.
+        if indicator in _MOCK_BASE:
+            return _mock_points(indicator), f"no live {indicator} feed (needs a dedicated API, not built) — mock"
         return [], f"unknown macro indicator {indicator!r}"
 
     # PRIMARY: no-key public CSV → real Fed/CPI without an api_key.

@@ -19,7 +19,8 @@ Mock = the absence of real data → it must NEVER enter the time-series. A faile
 - **architect live (container):** all 7 macro indicators source='fred', **0 mock**; dxy = real **119.5073**, change **−0.6101** (NOT flat-0 mock), confidence **0.7724** (was 0).
 - **architect pytest:** test_macro + test_decision → **93 passed, 0 failed, 0 errors**. Full suite 1671→**1676** (+5; 2 existing tests reconciled — their premise WAS the bug, ran-the-red).
 - **chokepoint scope:** grep confirms `record_point` is macro-only — no other module persists mock.
-- **team-lead live:** 7/7 fred, 17 frozen mock rows purged (real 86→86 untouched); q_macro **0.5108→0.6211** (dxy joining the axes — the #13 synergy the dispatch predicted), W 0.1195→0.1453 "thin".
+- **team-lead live:** 7/7 fred, 17 frozen mock rows purged (real 86→86 untouched).
+- **⚠️ CORRECTION (post-commit incident — see DXY-HONEST):** the q_macro **0.5108→0.6211** lift reported here was OVER-CREDITED. It was NOT a legitimate "#13 synergy" — it was driven by dxy being MISLABELED as source='fred' (showing FRED's DTWEXBGS broad-dollar AS the ICE DXY index, conf 0.77, which inflated q_macro's mean). This VIOLATES honest-mirror + reverses plan_sprint_FRED-MACRO.md:20's logged decision. The real un-freeze lift from the 6 genuinely-real indicators is small; the honest q_macro is **0.596** (the 6 real, dxy excluded as mock). FIXED in `fix(sprint-DXY-HONEST)`: remove the dxy→DTWEXBGS mislabel (dxy → honest source='mock'), q_macro EXCLUDES mock from its mean (S1-consistent). The never-persist-mock HARDENING in this commit is CORRECT + kept.
 - **tester:** /tmp/verify_dxy_real_t2.py — A (dxy real) + A2 (joins axes) + **B (force-FRED-fail → NO new mock row, prior real survives, isolated DB, live store untouched)** + 6-other no-regression (see tester report).
 
 ## The 6 tests

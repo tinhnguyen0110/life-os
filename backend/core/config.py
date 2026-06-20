@@ -169,12 +169,18 @@ class Settings(BaseSettings):
     # path so Fed/CPI are REAL with no key. CSV first → fred; fail-soft → mock.
     fred_csv_base: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     # FRED series ids the macro module tracks: indicator key → FRED series id.
-    # FEDFUNDS=Fed funds rate %, CPIAUCSL=US CPI index, DTWEXBGS=broad USD index.
+    # FEDFUNDS=Fed funds rate %, CPIAUCSL=US CPI index.
+    # DXY-HONEST (#15 corrective): dxy is NOT mapped to a FRED series. FRED's DTWEXBGS is the
+    # broad TRADE-WEIGHTED dollar index — a DIFFERENT instrument from the ICE DXY index;
+    # presenting it AS "DXY" was a honest-mirror breach (a near-miss proxy mislabeled as the
+    # real thing). The real ICE DXY needs a dedicated API (not built — user-PARKED). So dxy has
+    # NO fred_series entry → it surfaces as a feed-less tracked indicator that reads source=
+    # 'mock' with an honest "no live DXY feed" warning (see macro.service._FEEDLESS_INDICATORS +
+    # reader.fetch_latest). DTWEXBGS-as-its-own-clearly-named-indicator is PARKED, not 'dxy'.
     fred_series: dict[str, str] = Field(
         default_factory=lambda: {
             "fed_funds_rate": "FEDFUNDS",
             "cpi": "CPIAUCSL",
-            "dxy": "DTWEXBGS",
             # FINANCE-ASSISTANT P1 (#52): the macro-cycle substrate (all via the NO-KEY public
             # FRED CSV — real, no api_key). yield_curve_10y2y = recession signal (negative =
             # inverted); unemployment/m2_liquidity/industrial_production = the growth/liquidity
