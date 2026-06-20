@@ -15,6 +15,14 @@ logger = logging.getLogger("life-os.exchange.service")
 # In-memory cache of last successful sync (single-user, no DB needed for this)
 _last_snapshot: ExchangeOverview | None = None
 
+# DUST-FOLD (#17): sub-$1 balances are folded into ONE ·dust summary row for DISPLAY (value
+# preserved, total unchanged) — same philosophy as finance's holdings fold. The threshold is the
+# SAME concept as modules.finance.service.DUST_USD_THRESHOLD; mirrored here (NOT imported)
+# because finance.service imports exchange.service at top-level → a top-level import back would be
+# circular. Single conceptual source = finance; keep these in sync if it ever changes.
+DUST_USD_THRESHOLD = 1.00          # mirror of finance.service.DUST_USD_THRESHOLD (circular-import safe)
+DUST_SYMBOL = "·dust"              # mirror of finance.service.DUST_SYMBOL
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -48,7 +56,7 @@ def _parse_balances(raw: list[dict]) -> tuple[list[OkxBalance], float]:
             frozen = float(item.get("frozenBal") or 0)
             usd_val = item.get("eqUsd")
             usd_float = float(usd_val) if usd_val not in (None, "", "0") else None
-            bal = OkxBalance(
+            bal = OkxBalance(  # type: ignore[call-arg]  # DUST-FOLD #17: isDust/count have defaults; no pydantic mypy plugin in env → mypy reads defaulted fields as required (known gotcha)
                 symbol=item.get("ccy", "?"),
                 available=available,
                 frozen=frozen,
@@ -68,6 +76,42 @@ def _parse_balances(raw: list[dict]) -> tuple[list[OkxBalance], float]:
     # Sort by USD value descending (most valuable first)
     balances.sort(key=lambda b: b.usdValue or 0, reverse=True)
     return balances, total_usd
+
+
+def _is_dust_balance(b: OkxBalance) -> bool:
+    """DUST-FOLD (#17) dust predicate for an OkxBalance (the flat-list analogue of finance's
+    _is_dust). A balance is dust when it has a KNOWN usdValue (not None) STRICTLY BELOW $1 —
+    INCLUDING a usdValue that rounds to 0.0 (a true-zero coin OKX still values, e.g. ETH/LINK/
+    DOGE at 1e-7 qty). Differs from finance's predicate: OkxBalance has NO ``price`` field, so
+    usdValue is the sole value signal (the price clause is dropped per the dispatch). A
+    null-usdValue balance is UNKNOWN, not small → NOT dust (stays VISIBLE — the finance lock).
+    ``< threshold`` is STRICT: exactly $1.00 stays visible."""
+    return b.usdValue is not None and b.usdValue < DUST_USD_THRESHOLD
+
+
+def _fold_dust_balances(balances: list[OkxBalance]) -> list[OkxBalance]:
+    """DUST-FOLD (#17): collapse the sub-$1 balances (see _is_dust_balance) into ONE flat ·dust
+    summary OkxBalance so dust doesn't clutter the list. Exchange has NO channel grouping (one
+    flat list), so this is a single fold (vs finance's per-channel). Kept individual: usdValue
+    ≥ $1, AND any null-usdValue balance (unknown ≠ small — stays visible). 0 dust → no dust row.
+    DISPLAY-only: the caller computed total_usd from the FULL set before folding, and the ·dust
+    summary carries usdValue=Σ(dust), so Σ(folded incl ·dust) == the pre-fold total. The summary
+    preserves the sorted order's tail position (appended last = smallest, like the real dust)."""
+    kept: list[OkxBalance] = []
+    dust: list[OkxBalance] = []
+    for b in balances:
+        (dust if _is_dust_balance(b) else kept).append(b)
+    if not dust:
+        return kept
+    dust_value = round(sum(float(b.usdValue or 0.0) for b in dust), 2)
+    kept.append(OkxBalance(
+        symbol=DUST_SYMBOL,
+        available=0.0, frozen=0.0, total=0.0,
+        usdValue=dust_value,
+        accAvgPx=None, spotUpl=None, spotUplRatio=None,
+        isDust=True, count=len(dust),
+    ))
+    return kept
 
 
 def _parse_positions(raw: list[dict]) -> list[OkxPosition]:
@@ -109,6 +153,9 @@ def sync() -> tuple[ExchangeOverview, str | None]:
     try:
         raw_bal = reader.fetch_balances()
         balances, total_usd = _parse_balances(raw_bal)
+        # DUST-FOLD (#17): fold sub-$1 balances into one ·dust summary — AFTER total_usd is
+        # computed from the full set, so this is DISPLAY-only (total unchanged; Σ folded == total).
+        balances = _fold_dust_balances(balances)
     except Exception as exc:
         logger.warning("OKX balance fetch failed: %s", exc)
         warnings.append(f"balance fetch failed: {type(exc).__name__}")

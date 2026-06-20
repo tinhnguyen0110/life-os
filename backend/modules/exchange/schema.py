@@ -25,6 +25,13 @@ class OkxBalance(BaseModel):
         None, description="OKX's own unrealized P&L in USD (cross-check only, not a 2nd pnl)")
     spotUplRatio: float | None = Field(
         None, description="OKX's own unrealized P&L as a FRACTION (×100 = pct; cross-check)")
+    # DUST-FOLD (#17) — ADDITIVE/NULLABLE (no break). When ``isDust`` is True this row is the
+    # ONE ·dust summary (symbol="·dust", usdValue=Σ of folded sub-$1 balances, count=how many);
+    # mirrors finance Holding.isDust/count so the FE/agent renders the summary the same way.
+    isDust: bool = Field(
+        False, description="True only on the synthetic ·dust summary row (folded sub-$1 balances)")
+    count: int | None = Field(
+        None, description="how many balances this ·dust summary folds (None on normal rows)")
 
 
 class OkxPosition(BaseModel):

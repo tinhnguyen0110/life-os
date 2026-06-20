@@ -332,3 +332,111 @@ def test_reader_get_raises_on_http_error():
         )
         with pytest.raises(httpx.HTTPStatusError):
             reader.fetch_balances()
+
+
+# =========================================================================== #
+# DUST-FOLD (#17) — sub-$1 balances fold into one ·dust summary (DISPLAY-only)   #
+# =========================================================================== #
+# Mirrors finance's holdings dust-fold philosophy on the flat OkxBalance list. The dust
+# predicate is usdValue-only (OkxBalance has no price); null-usdValue stays VISIBLE (unknown ≠
+# small — the finance lock); strict < $1; total UNCHANGED (fold is display-only, value preserved).
+
+from modules.exchange.schema import OkxBalance  # noqa: E402
+
+
+def _bal(symbol, usd):
+    """An OkxBalance with the given symbol + usdValue (qty fields irrelevant to the fold)."""
+    return OkxBalance(symbol=symbol, available=0.0, frozen=0.0, total=0.0, usdValue=usd)
+
+
+# --- (a) sub-$1 priced dust → folded into one ·dust row ---
+def test_DUST_subdollar_balances_are_folded():
+    """ETH 7e-7, DOGE rounds-to-0, LINK $0.50 (all < $1) → ONE ·dust summary (isDust, count=3,
+    usdValue=Σ). The big USDT stays individual."""
+    bals = [_bal("USDT", 9000.0), _bal("ETH", 0.0000007), _bal("DOGE", 0.0), _bal("LINK", 0.50)]
+    folded = service._fold_dust_balances(bals)
+    symbols = [b.symbol for b in folded]
+    assert "USDT" in symbols and service.DUST_SYMBOL in symbols
+    assert "ETH" not in symbols and "DOGE" not in symbols and "LINK" not in symbols
+    dust = next(b for b in folded if b.isDust)
+    assert dust.count == 3, f"·dust must fold all 3 sub-$1 balances, got count={dust.count}"
+    assert dust.usdValue == pytest.approx(0.50, abs=1e-6)  # 7e-7 + 0 + 0.50, rounded
+    assert dust.symbol == service.DUST_SYMBOL
+    assert dust.available == 0.0 and dust.frozen == 0.0 and dust.total == 0.0
+    assert dust.accAvgPx is None and dust.spotUpl is None
+
+
+# --- (b) ≥$1 stays individual (not over-folding); exactly $1.00 is the strict boundary ---
+def test_DUST_dollar_and_above_stay_individual():
+    """A balance ≥ $1 is NOT dust — stays an individual row. Exactly $1.00 stays visible (strict
+    `< threshold`), $0.99 folds (the boundary distinguishing)."""
+    bals = [_bal("BTC", 1.00), _bal("SOL", 5.0), _bal("PEPE", 0.99)]
+    folded = service._fold_dust_balances(bals)
+    symbols = [b.symbol for b in folded]
+    assert "BTC" in symbols, "exactly $1.00 must stay visible (strict <)"
+    assert "SOL" in symbols
+    assert "PEPE" not in symbols, "$0.99 (< $1) must fold"
+    dust = next((b for b in folded if b.isDust), None)
+    assert dust is not None and dust.count == 1 and dust.usdValue == pytest.approx(0.99)
+
+
+# --- (c) null-usdValue stays VISIBLE (the distinguishing — unknown ≠ small) ---
+def test_DUST_null_usdvalue_stays_visible():
+    """A balance with usdValue=None is UNKNOWN, not small → NOT folded (the finance lock). A
+    naive `usdValue < 1 or None` would WRONGLY fold it; assert it stays an individual row."""
+    bals = [_bal("USDT", 9000.0), _bal("MYSTERY", None), _bal("ETH", 0.0000007)]
+    folded = service._fold_dust_balances(bals)
+    symbols = [b.symbol for b in folded]
+    assert "MYSTERY" in symbols, "null-usdValue must stay VISIBLE (unknown ≠ small)"
+    mystery = next(b for b in folded if b.symbol == "MYSTERY")
+    assert mystery.isDust is False and mystery.usdValue is None
+    # only the real dust (ETH) is folded, not MYSTERY
+    dust = next(b for b in folded if b.isDust)
+    assert dust.count == 1, "only ETH is dust; MYSTERY (unknown) is not folded"
+
+
+def test_DUST_predicate_matches_lock():
+    """_is_dust_balance: < $1 known → dust; exactly $1 / ≥$1 / None → not dust."""
+    assert service._is_dust_balance(_bal("a", 0.5)) is True
+    assert service._is_dust_balance(_bal("b", 0.0)) is True          # rounds-to-0 priced coin
+    assert service._is_dust_balance(_bal("c", 1.00)) is False        # strict boundary
+    assert service._is_dust_balance(_bal("d", 2.0)) is False
+    assert service._is_dust_balance(_bal("e", None)) is False        # unknown ≠ small
+
+
+def test_DUST_no_dust_no_summary_row():
+    """0 dust balances → NO ·dust row is added (the list is unchanged)."""
+    bals = [_bal("USDT", 9000.0), _bal("BTC", 30000.0)]
+    folded = service._fold_dust_balances(bals)
+    assert not any(b.isDust for b in folded)
+    assert len(folded) == 2
+
+
+# --- (d) total_usd UNCHANGED through the real sync() flow (DISPLAY-only) ---
+def test_DUST_total_usd_unchanged_through_sync():
+    """End-to-end: sync() with a real OKX-shaped payload containing sub-$1 dust folds the LIST but
+    totalUsdValue is computed from the FULL set BEFORE the fold → Σ(folded incl ·dust) == total."""
+    raw_balances = [
+        {"ccy": "USDT", "availBal": "9000", "frozenBal": "0", "eqUsd": "9000.0"},
+        {"ccy": "BTC", "availBal": "0.01", "frozenBal": "0", "eqUsd": "1.00"},     # exactly $1 → kept
+        {"ccy": "ETH", "availBal": "0.0000004", "frozenBal": "0", "eqUsd": "0.0000007"},  # dust
+        {"ccy": "LINK", "availBal": "0.001", "frozenBal": "0", "eqUsd": "0.50"},   # dust
+    ]
+    with patch.object(service.settings, "okx_api_key", "key"), \
+         patch.object(service.settings, "okx_api_secret", "secret"), \
+         patch.object(service.settings, "okx_api_passphrase", "pass"), \
+         patch("modules.exchange.service.reader.fetch_balances", return_value=raw_balances), \
+         patch("modules.exchange.service.reader.fetch_positions", return_value=[]):
+        overview, _ = service.sync()
+
+    # the ·dust row exists, dust coins are folded, big + exactly-$1 stay individual
+    symbols = [b.symbol for b in overview.balances]
+    assert service.DUST_SYMBOL in symbols
+    assert "ETH" not in symbols and "LINK" not in symbols
+    assert "USDT" in symbols and "BTC" in symbols
+    # totalUsdValue is the FULL pre-fold sum (9000 + 1 + ~0 + 0.50)
+    assert overview.totalUsdValue == pytest.approx(9001.5000007, abs=1e-4)
+    # DISPLAY-only invariant: Σ(folded balances' usdValue) == totalUsdValue (to the cent)
+    folded_sum = sum(b.usdValue or 0.0 for b in overview.balances)
+    assert folded_sum == pytest.approx(overview.totalUsdValue, abs=0.01), \
+        "Σ(folded incl ·dust) must equal the pre-fold total (display-only fold)"
