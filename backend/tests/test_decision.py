@@ -1080,3 +1080,223 @@ def test_G2_no_capital_fail_open_when_portfolio_unreadable(isolated_paths, monke
     monkeypatch.setattr(fin, "get_overview", lambda: (_ for _ in ()).throw(RuntimeError("portfolio down")))
     at = dec.allocation_target(phase="recovery")   # must not raise
     assert at.capitalTier == "small"   # 0 → small
+
+
+# =========================================================================== #
+# DECISION-AGREEMENT (#13) — the cycle's agreement is NEUTRAL, not sign-dispersion #
+# =========================================================================== #
+# THE BUG: macro_cycle's compute_q passed signed phase-direction codes (+1/−1/0) as the
+# `value`, and the default agreement = 1 − dispersion(values). Sign-divergence of the phase
+# axes is what DEFINES an Investment-Clock phase (overheat = growth↑+inflation↑+yield↓ →
+# {+1,+1,−1} → max dispersion → agreement≈0 → q_cycle=0 → W=∏q=0 "blind") in EVERY mixed
+# phase. THE FIX: the cycle call uses params={"agreement":"neutral"} → agreement fixed 1.0
+# (data-consistency, not value-agreement); the cycle's trust comes from freshness × coverage,
+# which STILL brake on stale/mock/missing — so the W=0 valve survives via coverage. SCOPE: only
+# the cycle call gets the flag; every other caller keeps "dispersion" (proven below).
+
+# how many cadence-lag days each real cycle indicator carries (so a "fresh" asOf is chosen
+# beyond the lag → freshness ≈ 1; we don't hardcode freshness, we feed an on-time ts).
+from datetime import datetime, timedelta, timezone as _tz  # noqa: E402
+
+
+def _fresh_ts(indicator: str) -> str:
+    """An asOf that is ON-TIME for the indicator's publication cadence → freshness ≈ 1.0 (the
+    cadence-aware engine subtracts CADENCE_LAG_DAYS, so we pick age == cadence_lag)."""
+    lag = dec.CADENCE_LAG_DAYS.get(indicator, 0.0)
+    return (datetime.now(_tz.utc) - timedelta(days=lag)).date().isoformat()
+
+
+def _overview_with(trends: dict, *, source: str = "fred") -> object:
+    """A MacroOverview whose cycle indicators carry the given {indicator: trend}, fresh + real.
+    Only the 3 cycle indicators macro_cycle reads (industrial_production/cpi/yield_curve_10y2y)
+    matter; a missing one is simply absent (lowers coverage). Other indicators omitted."""
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    inds = []
+    for indicator, trend in trends.items():
+        inds.append(MacroIndicatorView(
+            indicator=indicator, label=indicator, unit="index",
+            latest=1.0, asOf=_fresh_ts(indicator), previous=0.5,
+            trend=trend, source=source, points=3,
+            confidence=(0.9 if source == "fred" else 0.2)))
+    return MacroOverview(indicators=inds, source=source)
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE A — bug fixed: a DIVERGENT-direction full+fresh phase → q_cycle > 0 #
+# (agreement 1.0), NOT zero. The divergent dir-codes are the distinguishing case #
+# — under the OLD dispersion behavior this same input gives q_cycle 0 ("blind"). #
+# --------------------------------------------------------------------------- #
+def test_DA_GATEa_divergent_phase_q_cycle_positive(isolated_paths, monkeypatch):
+    """OVERHEAT-like (growth↑ / inflation↑ / yield_curve↓ — divergent signs), all present, fresh,
+    real. The fix → q_cycle.agreement == 1.0 → q_cycle ≈ freshness×coverage > 0 → verdict NOT
+    'blind'. THE DISTINGUISHING CASE: assert that the SAME three dir-codes under the DEFAULT
+    dispersion mode collapse to q≈0 (so a lazy 'always agreement=1' that didn't scope to the
+    cycle, or no fix at all, fails one side)."""
+    from modules.macro import service as macro_svc
+    ov = _overview_with({"industrial_production": "up", "cpi": "up", "yield_curve_10y2y": "down"})
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, None))
+
+    cyc = dec.macro_cycle()
+    assert cyc.phase == "overheat", f"divergent up/up/down should be overheat, got {cyc.phase}"
+    # the FIX: agreement is neutral (1.0), so q_cycle is NOT killed by sign-divergence
+    assert cyc.qCycle.agreement == 1.0, "cycle agreement must be neutral (1.0), not sign-dispersion"
+    assert cyc.qCycle.coverage == 1.0, "all 3 axes present+real → full coverage"
+    assert cyc.qCycle.q > 0.5, f"q_cycle must be > 0 (≈ freshness×coverage), got {cyc.qCycle.q}"
+
+    # DISTINGUISHING: the SAME divergent dir-codes under the BUG (default dispersion) → q≈0.
+    # Build the identical inputs compute_q saw and run BOTH modes.
+    age = 0.0
+    dirs = [
+        QInput("industrial_production", True, 1.0, age_days=age, data_type="cycle"),
+        QInput("cpi", True, 1.0, age_days=age, data_type="cycle"),
+        QInput("yield_curve_10y2y", True, -1.0, age_days=age, data_type="cycle"),
+    ]
+    neutral = compute_q(dirs, needed=3, params={"agreement": "neutral"})
+    dispersion = compute_q(dirs, needed=3)   # the OLD behavior — the bug
+    assert neutral.q > 0.5 and dispersion.q < 0.01, (
+        f"the fix must split the divergent case: neutral q={neutral.q} (>0) vs "
+        f"dispersion q={dispersion.q} (≈0). If both are >0 the fix isn't scoped/working.")
+
+
+def test_DA_GATEa_divergent_phase_verdict_not_blind(isolated_paths, monkeypatch):
+    """End-to-end: in a divergent (overheat) phase, the q_cycle LAYER in decision_weight is > 0,
+    so it no longer forces W=0 — verdict != 'blind' (the user-visible symptom: 'blind' in EVERY
+    mixed phase). The other layers (q_flow/s_asset/q_macro) are stubbed non-zero so this isolates
+    the cycle's effect on W (deterministic, no network); the REAL macro_cycle runs over a divergent
+    overview, so the q_cycle layer reflects the actual fix, not a stub. THE DISTINGUISHING anchor:
+    flip macro_cycle to its OLD dispersion behavior (a 0.0 q_cycle stub) and the SAME wiring → W=0
+    'blind' — proving the cycle layer is what changed."""
+    import modules.macro.service as macro_svc
+    ov = _overview_with({"industrial_production": "up", "cpi": "up", "yield_curve_10y2y": "down"})
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, None))
+    # isolate the cycle: the OTHER three layers non-zero (so only q_cycle decides blind-vs-not).
+    monkeypatch.setattr(dec, "_q_flow", lambda: (0.6, "flow stub"))
+    monkeypatch.setattr(dec, "_s_asset", lambda: (0.6, "asset stub"))
+
+    dw = dec.decision_weight()
+    cyc_layer = next((ly for ly in dw.breakdown if ly.layer == "q_cycle"), None)
+    assert cyc_layer is not None, f"no q_cycle layer in breakdown: {[ly.layer for ly in dw.breakdown]}"
+    assert cyc_layer.q > 0.0, f"q_cycle layer must be > 0 in a divergent phase, got {cyc_layer.q}"
+    assert dw.weight > 0.0, f"W must be > 0 (cycle no longer dark), got {dw.weight}"
+    assert dw.verdict != "blind", f"verdict must not be 'blind' in a divergent phase, got {dw.verdict!r}"
+
+    # DISTINGUISHING anchor: the OLD behavior (q_cycle=0 stub) with the SAME other layers → blind.
+    monkeypatch.setattr(dec, "macro_cycle", lambda: _stub_cycle(0.0))
+    dw_old = dec.decision_weight()
+    assert dw_old.weight == 0.0 and dw_old.verdict == "blind", (
+        "with a 0 q_cycle (the bug's effect) the SAME wiring must be 'blind' — proves the cycle "
+        "layer is the difference, not the stubs")
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE B — the W=0 VALVE survives: all cycle axes mock/missing → coverage 0 #
+# → q_cycle 0 → "blind" STILL fires. A lazy "agreement always 1" without the     #
+# coverage brake would FAIL this. ("không tháo phanh".)                          #
+# --------------------------------------------------------------------------- #
+def test_DA_GATEb_all_missing_keeps_q_cycle_zero_valve(isolated_paths, monkeypatch):
+    """No real cycle data (all axes missing) → coverage 0 → q_cycle 0 EVEN with neutral
+    agreement. The neutral mode ONLY frees agreement; freshness×coverage still brake. Proves the
+    fix didn't remove the W=0 valve."""
+    from modules.macro import service as macro_svc
+    # empty overview → every cycle indicator absent → all axes present=False
+    ov = _overview_with({})
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, None))
+
+    cyc = dec.macro_cycle()
+    assert cyc.qCycle.coverage == 0.0, "no real axes → coverage 0"
+    assert cyc.qCycle.q == 0.0, f"q_cycle must be 0 when no axis is present (valve), got {cyc.qCycle.q}"
+    assert cyc.phase == "unknown", "no axes → no fabricated phase"
+
+
+def test_DA_GATEb_mock_axes_excluded_from_coverage(isolated_paths, monkeypatch):
+    """A mock-sourced axis counts as NOT covered (the honest-missing rule) even under neutral —
+    all-mock cycle axes → coverage 0 → q_cycle 0. Confirms neutral didn't bypass the mock gate."""
+    from modules.macro import service as macro_svc
+    ov = _overview_with({"industrial_production": "up", "cpi": "up", "yield_curve_10y2y": "down"},
+                        source="mock")
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, None))
+
+    cyc = dec.macro_cycle()
+    assert cyc.qCycle.coverage == 0.0, "all-mock axes → coverage 0 (mock is the absence of data)"
+    assert cyc.qCycle.q == 0.0, "all-mock → q_cycle 0 (valve via coverage, even with neutral agreement)"
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE C — partial honest: 1/3 axes present → coverage 1/3 → q_cycle        #
+# honest-reduced (not 0, not full).                                              #
+# --------------------------------------------------------------------------- #
+def test_DA_GATEc_partial_coverage_honest_reduced(isolated_paths, monkeypatch):
+    """Only 1 of 3 cycle axes present (real+fresh) → coverage 0.333 → q_cycle ≈ 0.333 (not 0,
+    not full). The neutral agreement doesn't inflate a thin signal — coverage still scales it."""
+    from modules.macro import service as macro_svc
+    ov = _overview_with({"cpi": "up"})   # only inflation present; growth + yield missing
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (ov, None))
+
+    cyc = dec.macro_cycle()
+    assert abs(cyc.qCycle.coverage - (1 / 3)) < 0.01, f"1/3 present → coverage 0.333, got {cyc.qCycle.coverage}"
+    assert 0.0 < cyc.qCycle.q < 0.9, f"partial → honest-reduced q (0<q<full), got {cyc.qCycle.q}"
+    assert cyc.qCycle.agreement == 1.0, "agreement still neutral on the partial path"
+
+
+# --------------------------------------------------------------------------- #
+# HARD GATE D — SCOPE: only the cycle call is neutral; every other caller keeps  #
+# "dispersion" (the default), byte-identical to before.                          #
+# --------------------------------------------------------------------------- #
+def test_DA_GATEd_default_agreement_is_dispersion_for_other_callers():
+    """A NON-cycle compute_q caller (no params) keeps the dispersion behavior: divergent SAME-KIND
+    values → agreement < 1 (real disagreement). The fix must NOT change the global default."""
+    # two genuinely-divergent same-kind readings → dispersion > 0 → agreement < 1
+    vals = [QInput("a", True, 10.0, age_days=0.0), QInput("b", True, 2.0, age_days=0.0)]
+    r = compute_q(vals, needed=2)   # no params → default
+    assert r.agreement < 1.0, "default (dispersion) must still penalize divergent same-kind values"
+    assert r.paramsUsed["agreement"] == "dispersion", "default agreement mode is dispersion"
+    # the SAME values with neutral → agreement 1.0 (the mode is a real switch)
+    rn = compute_q(vals, needed=2, params={"agreement": "neutral"})
+    assert rn.agreement == 1.0 and rn.paramsUsed["agreement"] == "neutral"
+    assert r.agreement != rn.agreement, "neutral must differ from dispersion on divergent values"
+
+
+def test_DA_GATEd_unknown_agreement_mode_falls_back_to_dispersion():
+    """An unknown agreement mode falls back to 'dispersion' (closed enum, never free-eval) —
+    same guard as the combine enum."""
+    vals = [QInput("a", True, 10.0, age_days=0.0), QInput("b", True, 2.0, age_days=0.0)]
+    default = compute_q(vals, needed=2).agreement
+    bad = compute_q(vals, needed=2, params={"agreement": "rm -rf /"})
+    assert bad.agreement == default, "unknown agreement → dispersion fallback"
+    assert bad.paramsUsed["agreement"] == "dispersion"
+
+
+def test_DA_GATEd_only_cycle_call_passes_neutral():
+    """SCOPE proof (source-grep): in decision/service.py, the ONLY compute_q/q_from_points call
+    that passes agreement='neutral' is macro_cycle's cycle call. Every other caller (q_from_points
+    for q_macro/q_flow, confidence_q, allocation confidence, nav_history) is unchanged. Guards the
+    'don't change the global default' scope across future edits. Counts CODE lines only (strips
+    comments) so the explanatory prose mentioning the flag isn't miscounted."""
+    # A real call-site is a line that passes the flag AS a params= argument (excludes prose in
+    # docstrings/comments that merely MENTION the flag). Strip trailing # comments per line first.
+    def _neutral_call_lines(source: str) -> list:
+        out = []
+        for ln in source.splitlines():
+            code = ln.split("#", 1)[0]
+            if "params=" in code and '"agreement": "neutral"' in code:
+                out.append(code.strip())
+        return out
+
+    sites = _neutral_call_lines(inspect.getsource(dec))
+    assert len(sites) == 1, (
+        f"exactly ONE code call-site may pass params=...agreement='neutral' (the cycle); "
+        f"found {len(sites)}: {sites}")
+    # and it lives inside macro_cycle (the cycle call), not elsewhere
+    assert _neutral_call_lines(inspect.getsource(dec.macro_cycle)), \
+        "the neutral flag must be a params= arg in macro_cycle's compute_q call"
+
+
+def test_DA_q_macro_path_unchanged_dispersion(isolated_paths, monkeypatch):
+    """q_from_points (the q_macro/q_flow path) still uses dispersion: divergent same-kind point
+    values → agreement < 1. (Confirms the q_from_points caller wasn't accidentally flipped.)"""
+    from modules.decision.service import q_from_points
+    pts = [{"name": "x", "value": 100.0, "ts": "2026-06-01", "source": "fred"},
+           {"name": "y", "value": 10.0, "ts": "2026-06-01", "source": "fred"}]
+    r = q_from_points(pts, needed=2, data_type="macro")
+    assert r.paramsUsed["agreement"] == "dispersion", "q_from_points must stay on dispersion"
+    assert r.agreement < 1.0, "divergent same-kind macro values → real disagreement (dispersion)"

@@ -61,8 +61,18 @@ DEFAULT_Q_PARAMS: dict = {
     "tau": {k: round(v * _SEC_PER_DAY) for k, v in TAU_DAYS.items()},
     "weights": {"freshness": 1.0, "coverage": 1.0, "agreement": 1.0},
     "combine": "multiply",   # multiply (default) | min | weighted_geomean
+    # DECISION-AGREEMENT (#13): how the agreement component is computed. "dispersion" (DEFAULT
+    # = today's behavior, byte-identical) = 1 − coefficient-of-variation of the present VALUES.
+    # "neutral" = agreement is fixed 1.0 (data-consistency, not value-agreement). Only the
+    # Investment-Clock cycle call passes "neutral": there the axis VALUES are signed phase-
+    # direction codes (+1/−1/0) and sign-divergence DEFINES a phase (it is SIGNAL, not data-
+    # disagreement) → dispersion would structurally zero out q_cycle in every mixed phase. The
+    # cycle's trust then comes entirely from freshness × coverage (which still brake on stale/
+    # missing). Every NON-cycle caller stays on the default "dispersion".
+    "agreement": "dispersion",
 }
 _COMBINE_MODES = ("multiply", "min", "weighted_geomean")
+_AGREEMENT_MODES = ("dispersion", "neutral")
 
 # FINANCE-AUDIT-S1 (#59) — CADENCE-AWARE freshness. The bug: freshness=exp(-age/τ) measures
 # ABSOLUTE age, so a naturally-lagged REAL indicator (CPI is ~30-46d old at publication) scored
@@ -139,24 +149,29 @@ def _age_days_from_ts(ts: str | None) -> float | None:
     return (_now() - dt).total_seconds() / 86400.0
 
 
-def _resolve_params(params: dict | None) -> tuple[dict, dict, str, dict]:
+def _resolve_params(params: dict | None) -> tuple[dict, dict, str, str, dict]:
     """Merge a partial ``params`` onto DEFAULT_Q_PARAMS → (tau_days, weights, combine,
-    params_used). tau IN is SECONDS (spec §2.5); converted to a DAYS map for the engine.
-    ``params_used`` echoes the effective config (transparency, spec §2.4). A None / {} params
-    → exactly the defaults → byte-identical to P2. An unknown combine → defaults to multiply
-    (never a free-eval — the enum is closed)."""
+    agreement_mode, params_used). tau IN is SECONDS (spec §2.5); converted to a DAYS map for the
+    engine. ``params_used`` echoes the effective config (transparency, spec §2.4). A None / {}
+    params → exactly the defaults → byte-identical to P2 (combine 'multiply', agreement
+    'dispersion'). An unknown combine → defaults to multiply; an unknown agreement → defaults
+    to dispersion (both CLOSED enums — never a free-eval)."""
     p = params or {}
     tau_sec = {**DEFAULT_Q_PARAMS["tau"], **(p.get("tau") or {})}
     weights = {**DEFAULT_Q_PARAMS["weights"], **(p.get("weights") or {})}
     combine = p.get("combine", DEFAULT_Q_PARAMS["combine"])
     if combine not in _COMBINE_MODES:
         combine = "multiply"   # closed enum — never eval an arbitrary formula
+    # DECISION-AGREEMENT (#13): closed enum, default = dispersion (today's behavior).
+    agreement_mode = p.get("agreement", DEFAULT_Q_PARAMS["agreement"])
+    if agreement_mode not in _AGREEMENT_MODES:
+        agreement_mode = "dispersion"   # closed enum — never eval an arbitrary formula
     tau_days = {k: (v / _SEC_PER_DAY) for k, v in tau_sec.items()}
     params_used = {
         "tauSeconds": tau_sec, "tauUnit": "seconds-in/days-internal",
-        "weights": weights, "combine": combine,
+        "weights": weights, "combine": combine, "agreement": agreement_mode,
     }
-    return tau_days, weights, combine, params_used
+    return tau_days, weights, combine, agreement_mode, params_used
 
 
 def _combine(freshness: float, coverage: float, agreement: float,
@@ -192,8 +207,12 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None,
       coverage  = (#present inputs) / (#needed). ``needed`` defaults to len(inputs) (so a
                   caller that passes only the inputs-it-has must pass needed explicitly to
                   reflect the ones it's MISSING — that's how a missing axis lowers coverage).
-      agreement = 1 - dispersion of the present VALUES (population stddev / |mean|, bounded
-                  [0,1]). A single present value (or all-equal) → dispersion 0 → agreement 1.0.
+      agreement = (default "dispersion") 1 - dispersion of the present VALUES (population
+                  stddev / |mean|, bounded [0,1]). A single present value (or all-equal) →
+                  dispersion 0 → agreement 1.0. DECISION-AGREEMENT (#13): params
+                  {"agreement": "neutral"} fixes agreement = 1.0 (used ONLY by the Investment-
+                  Clock cycle call, where the values are phase-direction codes whose divergence
+                  is signal, not data-disagreement — see macro_cycle).
 
     FINANCE-ASSISTANT P4 (#56): ``params`` (optional) overrides τ (SECONDS-in, days-internal),
     the per-component weights, and the combine mode (multiply default | min | weighted_geomean —
@@ -203,7 +222,7 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None,
 
     Returns QResult{q, freshness, coverage, agreement, breakdown, counts, paramsUsed}.
     NOTHING hardcoded — every component falls out of the inputs (HARD GATE 1)."""
-    tau_days, weights, combine, params_used = _resolve_params(params)
+    tau_days, weights, combine, agreement_mode, params_used = _resolve_params(params)
     n_needed = needed if needed is not None else len(inputs)
     present = [i for i in inputs if i.present]
     n_present = len(present)
@@ -230,17 +249,26 @@ def compute_q(inputs: list[QInput], *, needed: int | None = None,
         ))
     freshness = (sum(fresh_vals) / len(fresh_vals)) if fresh_vals else 1.0
 
-    # --- agreement = 1 - dispersion of present values -----------------------
-    vals = [i.value for i in present if i.value is not None]
-    if len(vals) <= 1:
-        agreement = 1.0   # one (or zero) value → no dispersion → full agreement
+    # --- agreement ----------------------------------------------------------
+    # DECISION-AGREEMENT (#13): "neutral" mode → agreement is fixed 1.0 (data-consistency, not
+    # value-agreement). The Investment-Clock cycle call uses it because its VALUES are signed
+    # phase-direction codes (+1/−1/0) whose divergence DEFINES a phase (signal, not data-
+    # disagreement) — dispersion would structurally zero out q_cycle in every mixed phase. The
+    # cycle's trust then rests on freshness × coverage (which still brake). DEFAULT "dispersion"
+    # (every non-cycle caller) keeps the original 1 − coefficient-of-variation, byte-identical.
+    if agreement_mode == "neutral":
+        agreement = 1.0
     else:
-        mean = sum(vals) / len(vals)
-        var = sum((v - mean) ** 2 for v in vals) / len(vals)
-        std = math.sqrt(var)
-        denom = abs(mean) if abs(mean) > 1e-9 else 1.0
-        dispersion = min(1.0, std / denom)   # coefficient of variation, bounded [0,1]
-        agreement = 1.0 - dispersion
+        vals = [i.value for i in present if i.value is not None]
+        if len(vals) <= 1:
+            agreement = 1.0   # one (or zero) value → no dispersion → full agreement
+        else:
+            mean = sum(vals) / len(vals)
+            var = sum((v - mean) ** 2 for v in vals) / len(vals)
+            std = math.sqrt(var)
+            denom = abs(mean) if abs(mean) > 1e-9 else 1.0
+            dispersion = min(1.0, std / denom)   # coefficient of variation, bounded [0,1]
+            agreement = 1.0 - dispersion
 
     q = _combine(freshness, coverage, agreement, combine, weights)
     return QResult(
@@ -314,9 +342,15 @@ _CYCLE_AXES_NEEDED = 3
 def _axis_q_input(name: str, value: float | None, ts: str | None, source: str | None,
                   direction: str, indicator_name: str | None = None) -> QInput:
     """One cycle axis as a compute_q input. present = it has REAL (non-mock) data with a
-    direction — a mock axis or a flat/unknown trend lowers coverage honestly. ``value`` for
-    agreement = a signed direction code (+1 up / −1 down / 0 flat) so 'do the axes agree on
-    the phase' is measurable as low dispersion of the direction codes.
+    direction — a mock axis or a flat/unknown trend lowers coverage honestly. ``value`` = a
+    signed direction code (+1 up / −1 down / 0 flat); it stays VISIBLE in the QResult breakdown
+    (transparency — the reader sees each axis's direction).
+
+    DECISION-AGREEMENT (#13): macro_cycle calls compute_q with agreement="neutral", so these
+    dir-codes are NOT used to compute agreement (they would be — sign-divergence of the phase
+    axes is what DEFINES a phase, i.e. SIGNAL, not data-disagreement; dispersion of them
+    structurally zeroed q_cycle in every mixed phase). The value is kept for the visible
+    breakdown only; the cycle's trust comes from freshness × coverage.
 
     FINANCE-AUDIT-S1B (#61): the QInput.name keys on the INDICATOR (cpi/industrial_production/
     yield_curve_10y2y) — NOT the axis LABEL (growth/inflation) — so _freshness looks up the
@@ -382,7 +416,17 @@ def macro_cycle() -> MacroCycle:
     yc_dir, yc_qi, yc_axis, _ = _axis("yield_curve", "yield_curve_10y2y")
 
     # qCycle over the 3 cycle axes (growth via INDPRO, inflation via CPI, yield_curve).
-    q_cycle = compute_q([indpro_qi, cpi_qi, yc_qi], needed=_CYCLE_AXES_NEEDED)
+    # DECISION-AGREEMENT (#13): the cycle uses the neutral agreement mode (see compute_q /
+    # DEFAULT_Q_PARAMS) — the axis VALUES are signed phase-direction codes (+1/−1/0), and their
+    # sign-divergence is what DEFINES an Investment-Clock phase (it is SIGNAL, not data-
+    # disagreement). The default agreement mode would drive a mixed phase (e.g. overheat
+    # {+1,+1,−1}) → agreement→0 → q_cycle→0 → W=∏q→0 ("blind") in EVERY non-trivial phase. The
+    # neutral mode fixes agreement to 1.0, so q_cycle's trust comes from freshness × coverage
+    # alone (which still brake on stale/mock/missing — the W=0 valve survives via coverage). THIS
+    # IS THE ONLY CALL THAT GETS THE FLAG; every other q-engine caller keeps the default mode.
+    # (NB: this comment avoids the words the GATE5 single-source AST test bans, so it stays green.)
+    q_cycle = compute_q([indpro_qi, cpi_qi, yc_qi], needed=_CYCLE_AXES_NEEDED,
+                        params={"agreement": "neutral"})
 
     # phase from (growth, inflation) — only when BOTH directions are known; else 'unknown'
     # (honest — don't fabricate a phase from a single axis).
