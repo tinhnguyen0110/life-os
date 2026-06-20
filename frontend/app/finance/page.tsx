@@ -267,17 +267,17 @@ export default function FinancePage() {
             />
           )}
           <div className="kicker" style={{ position: "relative" }}>Tổng tài sản</div>
-          <div className="num" style={{ fontSize: 36, fontWeight: 700, position: "relative" }}>{fmtUSD(data.totalValue)}</div>
+          <div className="num" style={{ fontSize: 36, fontWeight: 700, position: "relative" }} data-amount>{fmtUSD(data.totalValue)}</div>
           <div className="nwd" style={{ display: "flex", gap: 14, marginTop: 4, position: "relative" }}>
-            <span className={`num ${changeTone}`}>
+            <span className={`num ${changeTone}`} data-amount>
               {changeNeg ? "▼" : "▲"} {fmtSign(data.change?.abs)} · {fmtPct(data.change?.pct ?? null)} toàn danh mục
             </span>
           </div>
         </div>
-        <KpiCard label="Dry powder" value={fmtUSD(data.dryPowder)} sub="sẵn sàng DCA" />
+        <KpiCard label="Dry powder" value={<span data-amount>{fmtUSD(data.dryPowder)}</span>} sub="sẵn sàng DCA" />
         <KpiCard
           label="P&L mở"
-          value={data.pnlTotal ? fmtSign(data.pnlTotal.abs) : "—"}
+          value={<span data-amount>{data.pnlTotal ? fmtSign(data.pnlTotal.abs) : "—"}</span>}
           tone={totalTone}
           sub={pnlSubNode(data.pnlTotal, data.pnlScope)}
         />

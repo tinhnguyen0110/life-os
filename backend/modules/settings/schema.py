@@ -41,6 +41,11 @@ class AppConfig(BaseModel):
     # NOT hardcoded in the tool (team-lead lock).
     riskCapitalSmallUsd: float = Field(default=50000.0, ge=0, description="capital below this → may tilt aggressive (allocation_target)")
     riskCapitalLargeUsd: float = Field(default=500000.0, ge=0, description="capital at/above this → fractional-Kelly conservative (allocation_target)")
+    # SIDEBAR-UX (#72): user-pinned sidebar routes (ordered) → render a "Ghim" group at the
+    # top. Persisted BACKEND (not localStorage) so pins SYNC across devices (Tailscale multi-
+    # device). Stored as-is (no route validation — a route the user pinned then we renamed
+    # must NOT 422; the FE skips routes that don't resolve). Empty list = no pins.
+    pinnedRoutes: list[str] = Field(default_factory=list, description="user-pinned sidebar routes (ordered) — render a 'Ghim' group at the top; synced via /settings (multi-device)")
 
 
 class AppConfigPatch(BaseModel):
@@ -60,3 +65,6 @@ class AppConfigPatch(BaseModel):
     # FINANCE-ASSISTANT P3 (#55): user-editable capital-size risk thresholds.
     riskCapitalSmallUsd: float | None = Field(default=None, ge=0)
     riskCapitalLargeUsd: float | None = Field(default=None, ge=0)
+    # SIDEBAR-UX (#72): the pinned-routes mirror. None = don't touch the stored pins; an
+    # EMPTY list [] = CLEAR the pins (exclude_none keeps [] in the merge → persists the clear).
+    pinnedRoutes: list[str] | None = Field(default=None)

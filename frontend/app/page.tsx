@@ -94,7 +94,7 @@ export default function HomePage() {
                     dangerouslySetInnerHTML={{ __html: sparkHtml }} />
                 )}
                 <div className="kicker" style={{ position: "relative" }}>Tổng tài sản · USD</div>
-                <div className="num" style={{ fontSize: 34, fontWeight: 700, position: "relative" }}>{fmtUSD(fin?.totalValue)}</div>
+                <div className="num" style={{ fontSize: 34, fontWeight: 700, position: "relative" }} data-amount>{fmtUSD(fin?.totalValue)}</div>
                 <div className="nwd" style={{ position: "relative", marginTop: 4 }}>
                   <span className={`num ${(fin?.change?.abs ?? 0) < 0 ? "neg" : "pos"}`}>
                     {(fin?.change?.abs ?? 0) < 0 ? "▼" : "▲"} {fmtSign(fin?.change?.abs)} · {fmtPct(fin?.change?.pct ?? null)}
@@ -132,7 +132,7 @@ export default function HomePage() {
                   <div style={{ borderTop: "1px solid var(--line)", marginTop: 4, paddingTop: 6 }}>
                     <div className="mrow" style={{ borderBottom: 0, padding: 0 }} data-testid="home-pnl-total">
                       <span className="k"><b>Tổng</b></span>
-                      <span className={`v num ${(fin.pnlTotal.abs ?? 0) < 0 ? "neg" : "pos"}`}>
+                      <span className={`v num ${(fin.pnlTotal.abs ?? 0) < 0 ? "neg" : "pos"}`} data-amount>
                         {fmtSign(fin.pnlTotal.abs)} ({fmtPct(fin.pnlTotal.pct ?? null)})
                       </span>
                     </div>

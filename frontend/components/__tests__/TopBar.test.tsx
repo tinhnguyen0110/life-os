@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const push = vi.fn();
 let mockPath = "/market";
@@ -10,9 +11,17 @@ vi.mock("@/lib/useNav", () => ({
 
 const getHealth = vi.fn();
 const getRoutines = vi.fn();
+const verifyPrivacyPass = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getHealth: () => getHealth(), getRoutines: () => getRoutines() };
+  return {
+    ...actual,
+    getHealth: () => getHealth(),
+    getRoutines: () => getRoutines(),
+    // #74 change 5: mock the NAMED verify helper (usePrivacy.unlock calls it) — NOT
+    // apiGet/apiPost (module-closure: a low-level mock won't intercept the named call).
+    verifyPrivacyPass: (...a: unknown[]) => verifyPrivacyPass(...a),
+  };
 });
 
 import { TopBar } from "../TopBar";
@@ -31,7 +40,15 @@ describe("TopBar", () => {
     push.mockClear();
     getHealth.mockReset();
     getRoutines.mockReset();
+    verifyPrivacyPass.mockReset();
     getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 3, total: 4, runsToday: 0, lastRunAt: null } });
+    localStorage.clear();
+    document.body.removeAttribute("data-privacy");
+  });
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    document.body.removeAttribute("data-privacy");
   });
 
   it("routine-active pill shows the LIVE activeCount (wired to /routines)", async () => {
@@ -81,5 +98,96 @@ describe("TopBar", () => {
     render(<TopBar />);
     expect(screen.getByTestId("crumb")).toHaveTextContent("Dự án");
     await settleTopBar();
+  });
+
+  // #74 change 3 + 5 — privacy toggle on the TopBar; ON hides money (locked) + a pass
+  // modal reveals it (POST /settings/privacy/verify).
+  describe("privacy toggle + reveal-pass modal", () => {
+    async function readyTopBar() {
+      getHealth.mockResolvedValue({ success: true, data: { status: "ok", modules: [] } });
+      render(<TopBar route="Home" />);
+      await waitFor(() => expect(screen.getByTestId("tb-privacy-toggle")).toBeInTheDocument());
+    }
+
+    it("renders the toggle in the TopBar right cluster (default OFF, money shown)", async () => {
+      await readyTopBar();
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "0");
+      expect(document.body.hasAttribute("data-privacy")).toBe(false);
+      await settleTopBar();
+    });
+
+    it("OFF → click turns ON + LOCKS (body[data-privacy=on], money masked) + persists", async () => {
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle"));
+      // ON + locked → the mask body attr is set (••••)
+      await waitFor(() => expect(document.body.getAttribute("data-privacy")).toBe("on"));
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-locked", "1");
+      // persisted device-local
+      expect(localStorage.getItem("lifeos.privacy")).toBe(JSON.stringify({ on: true }));
+      await settleTopBar();
+    });
+
+    it("ON+locked → click opens the reveal MODAL (does NOT just toggle off)", async () => {
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // ON + locked
+      await waitFor(() => expect(document.body.getAttribute("data-privacy")).toBe("on"));
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // → modal
+      await waitFor(() => expect(screen.getByTestId("privacy-modal")).toBeInTheDocument());
+      // still locked (modal open, not yet revealed)
+      expect(document.body.getAttribute("data-privacy")).toBe("on");
+      await settleTopBar();
+    });
+
+    it("right pass → data.ok=true → UNLOCKS (money shown), modal closes", async () => {
+      verifyPrivacyPass.mockResolvedValue({ success: true, data: { ok: true } });
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // lock
+      await waitFor(() => expect(document.body.getAttribute("data-privacy")).toBe("on"));
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // open modal
+      await user.type(screen.getByTestId("privacy-modal-input"), "0110");
+      await user.click(screen.getByTestId("privacy-modal-submit"));
+      // verify called with the attempt (NOT the pass hardcoded in FE)
+      await waitFor(() => expect(verifyPrivacyPass).toHaveBeenCalledWith("0110"));
+      // unlocked → body mask removed (money shows) + modal closed
+      await waitFor(() => expect(document.body.hasAttribute("data-privacy")).toBe(false));
+      expect(screen.queryByTestId("privacy-modal")).toBeNull();
+      // privacy is STILL on (eye 🙈) — unlocked, not off
+      expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "1");
+      await settleTopBar();
+    });
+
+    it("wrong pass → data.ok=false → 'Sai mã' error in modal, STAYS hidden", async () => {
+      verifyPrivacyPass.mockResolvedValue({ success: true, data: { ok: false } });
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // lock
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // modal
+      await user.type(screen.getByTestId("privacy-modal-input"), "9999");
+      await user.click(screen.getByTestId("privacy-modal-submit"));
+      await waitFor(() => expect(screen.getByTestId("privacy-modal-error")).toHaveTextContent(/Sai mã/i));
+      // still masked, modal still open
+      expect(document.body.getAttribute("data-privacy")).toBe("on");
+      expect(screen.getByTestId("privacy-modal")).toBeInTheDocument();
+      await settleTopBar();
+    });
+
+    it("ON+unlocked → click turns privacy OFF (back to normal, money shown)", async () => {
+      verifyPrivacyPass.mockResolvedValue({ success: true, data: { ok: true } });
+      const user = userEvent.setup();
+      await readyTopBar();
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // lock
+      await user.click(screen.getByTestId("tb-privacy-toggle")); // modal
+      await user.type(screen.getByTestId("privacy-modal-input"), "0110");
+      await user.click(screen.getByTestId("privacy-modal-submit"));
+      await waitFor(() => expect(document.body.hasAttribute("data-privacy")).toBe(false)); // unlocked
+      // now ON+unlocked → click → privacy OFF
+      await user.click(screen.getByTestId("tb-privacy-toggle"));
+      await waitFor(() => expect(screen.getByTestId("tb-privacy-toggle")).toHaveAttribute("data-privacy-on", "0"));
+      expect(localStorage.getItem("lifeos.privacy")).toBe(JSON.stringify({ on: false }));
+      await settleTopBar();
+    });
   });
 });

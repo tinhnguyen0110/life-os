@@ -125,7 +125,7 @@ export default function PortfolioPage() {
                 <div style={{ position: "relative", display: "grid", placeItems: "center" }}>
                   <span dangerouslySetInnerHTML={{ __html: donut(segs) }} />
                   <div style={{ position: "absolute", textAlign: "center" }}>
-                    <div className="num" style={{ fontSize: 20, fontWeight: 700 }}>{fmtUSD(data.totalValue)}</div>
+                    <div className="num" style={{ fontSize: 20, fontWeight: 700 }} data-amount>{fmtUSD(data.totalValue)}</div>
                     <div className="hint">tổng</div>
                   </div>
                 </div>

@@ -43,10 +43,13 @@ def test_get_settings_defaults(app_client):
                       "patternCheckEnabled", "errorChannel", "timezone", "displayName",
                       "wikiAgentAutonomous",
                       # #55 FINANCE-ASSISTANT P3: user-configurable capital-size risk thresholds
-                      "riskCapitalSmallUsd", "riskCapitalLargeUsd"}
+                      "riskCapitalSmallUsd", "riskCapitalLargeUsd",
+                      # #72 SIDEBAR-UX: backend-persisted pinned sidebar routes (multi-device)
+                      "pinnedRoutes"}
     assert d["briefHour"] == 8 and d["idleThresholdDays"] == 7 and d["automationEnabled"] is True
     assert d["wikiAgentAutonomous"] is False  # W4d safe default OFF
     assert d["riskCapitalSmallUsd"] == 50000.0 and d["riskCapitalLargeUsd"] == 500000.0  # #55 defaults
+    assert d["pinnedRoutes"] == []  # #72 default: no pins → empty list (not missing/null)
 
 
 def test_patch_settings_round_trip(app_client):
@@ -189,3 +192,117 @@ def test_automation_enabled_false_persists_and_readable(app_client):
     assert r.status_code == 200
     assert r.json()["data"]["automationEnabled"] is False
     assert app_client.get("/settings").json()["data"]["automationEnabled"] is False
+
+
+# --------------------------------------------------------------------------- #
+# SIDEBAR-UX (#72) — pinnedRoutes: backend-persisted pinned sidebar routes that #
+# SYNC across devices (Tailscale multi-device). PATCH→GET round-trip, ordered,  #
+# []-clears, partial-patch-safe, default []. Exercise the REAL endpoint loop     #
+# (built-but-not-wired: don't trust the schema — the sync point IS the round-trip).#
+# --------------------------------------------------------------------------- #
+def test_pinned_routes_default_empty(app_client):
+    """(4) default: a fresh config → pinnedRoutes is [] (not missing/null)."""
+    d = app_client.get("/settings").json()["data"]
+    assert d["pinnedRoutes"] == []
+
+
+def test_pinned_routes_patch_get_round_trip_ordered_and_persists(app_client):
+    """(1) THE MULTI-DEVICE SYNC POINT: PATCH the pins → GET reflects them IN ORDER →
+    a fresh GET (the '2nd device') still shows them (persisted backend, not localStorage)."""
+    r = app_client.patch("/settings", json={"pinnedRoutes": ["/finance", "/projects", "/market"]})
+    assert r.status_code == 200
+    assert r.json()["data"]["pinnedRoutes"] == ["/finance", "/projects", "/market"]  # ordered
+    # fresh GET = a 2nd device reading the synced config
+    g = app_client.get("/settings").json()["data"]
+    assert g["pinnedRoutes"] == ["/finance", "/projects", "/market"]
+
+
+def test_pinned_routes_empty_list_clears_not_noop(app_client):
+    """(2) clear: PATCH [] CLEARS the pins (empty list persists — NOT a no-op that
+    leaves the old pins). The exclude_none merge keeps [] (only None is dropped)."""
+    app_client.patch("/settings", json={"pinnedRoutes": ["/finance", "/projects"]})
+    r = app_client.patch("/settings", json={"pinnedRoutes": []})
+    assert r.status_code == 200
+    assert r.json()["data"]["pinnedRoutes"] == []
+    assert app_client.get("/settings").json()["data"]["pinnedRoutes"] == []  # persisted clear
+
+
+def test_pinned_routes_partial_patch_does_not_touch_pins(app_client):
+    """(3) partial-patch-safe BOTH ways: a PATCH WITHOUT pinnedRoutes leaves the stored
+    pins intact (exclude_none); and a PATCH of ONLY pinnedRoutes doesn't touch other fields."""
+    # set pins + a known briefHour
+    app_client.patch("/settings", json={"pinnedRoutes": ["/finance"], "briefHour": 9})
+    # patch ANOTHER field only → pins survive
+    app_client.patch("/settings", json={"displayName": "owner"})
+    g = app_client.get("/settings").json()["data"]
+    assert g["pinnedRoutes"] == ["/finance"]  # pins untouched by a no-pin PATCH
+    assert g["briefHour"] == 9 and g["displayName"] == "owner"
+    # patch ONLY pins → other fields untouched
+    app_client.patch("/settings", json={"pinnedRoutes": ["/projects"]})
+    g2 = app_client.get("/settings").json()["data"]
+    assert g2["pinnedRoutes"] == ["/projects"]
+    assert g2["briefHour"] == 9 and g2["displayName"] == "owner"  # unchanged
+
+
+def test_pinned_routes_stale_route_stored_as_is_no_422(app_client):
+    """fail-soft: a stale/unknown route string is STORED AS-IS (no route validation) — a
+    route the user pinned then we renamed must NOT 422 (the FE skips unresolved routes)."""
+    r = app_client.patch("/settings", json={"pinnedRoutes": ["/renamed-gone", "/finance"]})
+    assert r.status_code == 200  # not 422 — we don't validate route existence
+    assert r.json()["data"]["pinnedRoutes"] == ["/renamed-gone", "/finance"]
+
+
+def test_pinned_routes_unknown_field_still_422(app_client):
+    """extra=forbid is intact even with the new field — an unknown key is still a 422."""
+    assert app_client.patch("/settings", json={"pinnedRoute": ["/x"]}).status_code == 422  # typo'd key
+
+
+# --------------------------------------------------------------------------- #
+# PRIVACY VERIFY (#74) — env-based reveal-pass check. POST /settings/privacy/   #
+# verify {pass} → {ok: bool}. The pass is env-stored (LIFEOS_PRIVACY_PASS), NEVER#
+# sent to the FE; the FE sends the attempt, the BE compares (constant-time).     #
+# Single-user localhost veil — public + unlimited (no auth/rate-limit).          #
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def known_privacy_pass(monkeypatch):
+    """Pin the pass to a known value (don't depend on the real .env in tests)."""
+    from core.config import settings
+    monkeypatch.setattr(settings, "privacy_pass", "0110")
+
+
+def test_privacy_verify_right_pass_ok_true(app_client, known_privacy_pass):
+    """The correct pass → {ok: true} (the reveal succeeds)."""
+    r = app_client.post("/settings/privacy/verify", json={"pass": "0110"})
+    assert r.status_code == 200
+    assert r.json()["data"] == {"ok": True}
+
+
+def test_privacy_verify_wrong_pass_ok_false(app_client, known_privacy_pass):
+    """A wrong pass → {ok: false} (200, not an error — the FE just stays hidden)."""
+    r = app_client.post("/settings/privacy/verify", json={"pass": "9999"})
+    assert r.status_code == 200
+    assert r.json()["data"] == {"ok": False}
+
+
+def test_privacy_verify_empty_pass_ok_false(app_client, known_privacy_pass):
+    """An empty pass attempt → {ok: false} (never matches a non-empty stored pass)."""
+    r = app_client.post("/settings/privacy/verify", json={"pass": ""})
+    assert r.status_code == 200
+    assert r.json()["data"] == {"ok": False}
+
+
+def test_privacy_verify_missing_field_ok_false(app_client, known_privacy_pass):
+    """No `pass` field at all → defaults to "" → {ok: false} (no 422 — a missing attempt
+    is just a failed reveal, not a malformed request)."""
+    r = app_client.post("/settings/privacy/verify", json={})
+    assert r.status_code == 200
+    assert r.json()["data"] == {"ok": False}
+
+
+def test_privacy_pass_never_in_any_settings_response(app_client, known_privacy_pass):
+    """The pass NEVER leaks to the FE: it's NOT in GET /settings (it's an env field on
+    core.config, not AppConfig) and the verify endpoint returns only {ok}, never the pass."""
+    g = app_client.get("/settings").json()["data"]
+    assert "privacy_pass" not in g and "privacyPass" not in g
+    body = app_client.post("/settings/privacy/verify", json={"pass": "0110"}).json()
+    assert "0110" not in str(body)  # the response carries only {ok: true}, never the pass

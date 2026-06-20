@@ -81,7 +81,10 @@ describe("Sidebar", () => {
 
   it("renders all 14 nav items", async () => {
     if (!Sidebar) return;
-    render(<Sidebar />);
+    // #74 change 4: nav sections default-collapsed → only the active group's items
+    // render. Render collapsed (64px rail) which FORCES all groups open, so the full
+    // set of nav items is present (the structural invariant this test guards).
+    render(<Sidebar collapsed />);
     const items = document.querySelectorAll("[data-nav-item]");
     expect(items.length).toBeGreaterThanOrEqual(14);
     await flushEffects();

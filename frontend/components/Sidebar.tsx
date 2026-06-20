@@ -11,6 +11,8 @@ import { useSafePathname } from "@/lib/useNav";
 import { Icon } from "@/lib/icons";
 import { getRoutines, getProjects, getMarket, getClaudeUsage } from "@/lib/api";
 import { useNavGroups } from "@/lib/useSidebarPrefs";
+import { usePins } from "@/lib/usePins";
+import { useNavGroupCollapse } from "@/lib/useNavGroupCollapse";
 import { SidebarCustomizer } from "./SidebarCustomizer";
 
 /** A nav item is active if pathname equals its route, or (for non-home) starts with it. */
@@ -19,7 +21,7 @@ function isActive(route: string, pathname: string): boolean {
   return pathname === route || pathname.startsWith(route + "/");
 }
 
-export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void }) {
+export function Sidebar({ collapsed = false, onToggleCollapse }: { collapsed?: boolean; onToggleCollapse?: () => void }) {
   const pathname = useSafePathname();
   // Active state is applied only after mount so server + client first paint agree
   // (the safe-pathname fallback can differ from the server value during hydration,
@@ -33,7 +35,28 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
   // so server/client agree; the applied list takes over after prefs load post-mount
   // — same hydration-safe gate as `mounted`.
   const { navGroups } = useNavGroups();
+  const { pinnedItems, isPinned, togglePin } = usePins();
+  const { isOpen: isSectionOpen, toggle: toggleSection } = useNavGroupCollapse();
   const [custOpen, setCustOpen] = useState(false);
+
+  // #74 change 4: the section that owns the active route auto-expands (so the current
+  // screen is never hidden under a collapsed group). null until mounted (hydration-safe).
+  const activeSection = mounted
+    ? navGroups.find((g) => g.items.some((i) => isActive(i.route, pathname)))?.sec ?? null
+    : null;
+
+  // pin click — stop the Link navigation, fire the PATCH (fail-closed; the next GET
+  // reflects). Defined here so each nav row + the Ghim group reuse it.
+  function onPinClick(e: React.MouseEvent, route: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    void togglePin(route);
+  }
+
+  // #74: privacy is BLUR-ONLY now — it veils money totals (CSS on [data-privacy="on"]
+  // [data-amount]) but does NOT hide any nav screen. Every route stays visible in the
+  // sidebar regardless of privacy. (The hide-finance-group behavior was removed per the
+  // user's refined spec.) So nav + Ghim render the full lists unconditionally.
 
   // F2-M4: wire ALL 4 sidebar badges to LIVE data (was static placeholders per
   // sidebar-badges-static-placeholder — done all-together, not piecemeal). Each fetch
@@ -111,11 +134,62 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
       </div>
 
       <nav className="sb-nav" aria-label="Điều hướng chính">
-        {navGroups.map((group) => (
-          <div key={group.sec} data-nav-group>
-            <div className="sb-sec">{group.sec}</div>
-            {group.items.map((item) => {
+        {/* 📌 Ghim — pinned routes (backend-persisted), at the TOP. A pin is an ADD: the
+            route ALSO stays in its home section below. Empty pins → no group (no empty
+            header). fail-soft: unresolved pins are dropped by usePins. */}
+        {pinnedItems.length > 0 && (
+          <div data-nav-group data-testid="nav-group-pinned">
+            <div className="sb-sec">📌 Ghim</div>
+            {pinnedItems.map((item) => {
               const active = mounted && isActive(item.route, pathname);
+              return (
+                <Link
+                  key={`pin-${item.route}`}
+                  href={item.route}
+                  className={`sb-item${active ? " on" : ""}`}
+                  title={item.label}
+                  aria-current={active ? "page" : undefined}
+                  data-route={item.route}
+                  data-pinned-item
+                >
+                  <Icon name={item.icon} />
+                  <span className="lbl">{item.label}</span>
+                  <button
+                    type="button"
+                    className="sb-pin-btn on"
+                    onClick={(e) => onPinClick(e, item.route)}
+                    title="Bỏ ghim"
+                    aria-label={`Bỏ ghim ${item.label}`}
+                    data-testid={`unpin-${item.route}`}
+                  >
+                    ★
+                  </button>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+        {navGroups.map((group) => {
+          // #74 change 4: section collapsible. DEFAULT collapsed; open when manually
+          // toggled OR it's the active group OR Ghim (Ghim handled separately above).
+          // When the WHOLE sidebar is collapsed (64px rail), group-collapse is MOOT —
+          // force every group open so all icons show (the two mechanisms don't conflict).
+          const open = collapsed || isSectionOpen(group.sec, activeSection);
+          return (
+          <div key={group.sec} data-nav-group data-section-open={open ? "1" : "0"}>
+            <button
+              type="button"
+              className={`sb-sec sb-sec-toggle${open ? " open" : ""}`}
+              onClick={() => toggleSection(group.sec)}
+              aria-expanded={open}
+              data-testid={`nav-sec-toggle-${group.sec}`}
+            >
+              <span className="sb-sec-lbl">{group.sec}</span>
+              <span className="sb-sec-chev" aria-hidden>▸</span>
+            </button>
+            {open && group.items.map((item) => {
+              const active = mounted && isActive(item.route, pathname);
+              const pinned = isPinned(item.route);
               return (
                 <Link
                   key={item.route}
@@ -133,11 +207,27 @@ export function Sidebar({ onToggleCollapse }: { onToggleCollapse?: () => void })
                       {badgeText(item.route, item.badge.text)}
                     </span>
                   )}
+                  {/* pin star — appears on hover (CSS); when pinned it stays lit. Home
+                      ("/") is never pinnable (it's already the fixed root). */}
+                  {item.route !== "/" && (
+                    <button
+                      type="button"
+                      className={`sb-pin-btn${pinned ? " on" : ""}`}
+                      onClick={(e) => onPinClick(e, item.route)}
+                      title={pinned ? "Bỏ ghim" : "Ghim lên đầu"}
+                      aria-label={pinned ? `Bỏ ghim ${item.label}` : `Ghim ${item.label}`}
+                      aria-pressed={pinned}
+                      data-testid={`pin-${item.route}`}
+                    >
+                      {pinned ? "★" : "☆"}
+                    </button>
+                  )}
                 </Link>
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       <Link href="/settings" className="sb-user" data-route="/settings" data-nav-item>

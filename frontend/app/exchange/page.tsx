@@ -191,7 +191,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
           <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 }}>
             Tổng tài khoản
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--font-mono, monospace)", letterSpacing: "-0.01em" }} data-testid="exchange-total">
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--font-mono, monospace)", letterSpacing: "-0.01em" }} data-testid="exchange-total" data-amount>
             {fmtUSD(overview.totalUsdValue)}
           </div>
         </div>

@@ -40,6 +40,20 @@ def test_wiki_agent_autonomous_patch_round_trips(isolated_paths):
     assert cfg.get_config().wikiAgentAutonomous is False
 
 
+def test_pinned_routes_default_empty_and_round_trips(isolated_paths):
+    """#72 SIDEBAR-UX: pinnedRoutes defaults [] and persists a list via md_store (a fresh
+    read reflects it, ordered — the multi-device sync substrate). [] clears."""
+    assert cfg.get_config().pinnedRoutes == []  # default
+    cfg.set_config(AppConfigPatch(pinnedRoutes=["/finance", "/projects"]))
+    assert cfg.get_config().pinnedRoutes == ["/finance", "/projects"]  # ordered, persisted
+    # a patch of ANOTHER field leaves the pins intact (exclude_none merge)
+    cfg.set_config(AppConfigPatch(briefHour=11))
+    assert cfg.get_config().pinnedRoutes == ["/finance", "/projects"]
+    # [] CLEARS (empty list persists, not a no-op)
+    cfg.set_config(AppConfigPatch(pinnedRoutes=[]))
+    assert cfg.get_config().pinnedRoutes == []
+
+
 def test_absent_config_is_defaults(isolated_paths):
     """Nothing persisted → full defaults (fail-open), never 500."""
     assert cfg.get_config() == AppConfig()

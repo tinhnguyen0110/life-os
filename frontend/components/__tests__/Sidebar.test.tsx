@@ -41,8 +41,14 @@ async function settleSidebar() {
   await waitFor(() => expect(screen.getByTestId("nav-badge-/projects")).toHaveTextContent("7"));
 }
 
+// #74 change 4: nav sections default-COLLAPSED. These structural tests assume the full
+// nav is visible → seed localStorage with ALL sections open so items/badges render. (The
+// collapse behavior itself is tested in Sidebar.sidebarux.test.tsx.)
+const ALL_SECTIONS = ["Tổng quan", "Dự án", "Tài chính", "Tin tức", "Hằng ngày", "Tri thức", "Sự nghiệp", "Hệ thống", "Cấu hình"];
+
 describe("Sidebar", () => {
   beforeEach(() => {
+    localStorage.setItem("lifeos.navgroups", JSON.stringify({ open: ALL_SECTIONS }));
     // defaults: all 4 badge fetches resolve so the sidebar has live values.
     getRoutines.mockResolvedValue({ success: true, data: { routines: [], activeCount: 5, total: 5, runsToday: 0, lastRunAt: null } });
     getProjects.mockResolvedValue({ success: true, data: { projects: [], summary: { total: 7 } } });
@@ -51,6 +57,7 @@ describe("Sidebar", () => {
   });
   afterEach(() => {
     cleanup();
+    localStorage.clear();
     getRoutines.mockReset();
     getProjects.mockReset();
     getMarket.mockReset();
@@ -74,7 +81,9 @@ describe("Sidebar", () => {
   it("renders every nav group from NAV (default: all modules enabled)", async () => {
     mockPath = "/";
     const { container } = render(<Sidebar onToggleCollapse={() => {}} />);
-    const secs = Array.from(container.querySelectorAll(".sb-sec")).map((e) => e.textContent);
+    // #74 change 4: the section header is now a toggle button; read the LABEL span
+    // (.sb-sec-lbl) so the chevron glyph doesn't pollute the section name.
+    const secs = Array.from(container.querySelectorAll(".sb-sec-lbl")).map((e) => e.textContent);
     for (const g of NAV) {
       expect(secs).toContain(g.sec);
     }

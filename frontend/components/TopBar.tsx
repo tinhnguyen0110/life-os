@@ -10,6 +10,8 @@ import { useSafeRouter, useSafePathname } from "@/lib/useNav";
 import { CRUMB } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
 import { getHealth, getRoutines, ApiError } from "@/lib/api";
+import { usePrivacy } from "@/lib/usePrivacy";
+import { PrivacyRevealModal } from "./PrivacyRevealModal";
 
 type ApiState = "checking" | "live" | "down";
 
@@ -23,6 +25,8 @@ function crumbFor(pathname: string): string {
 export function TopBar({ route }: { route?: string } = {}) {
   const router = useSafeRouter();
   const pathname = useSafePathname();
+  const { privacy, locked, setPrivacy, unlock } = usePrivacy();
+  const [revealOpen, setRevealOpen] = useState(false);
   const [api, setApi] = useState<ApiState>("checking");
   const [spinning, setSpinning] = useState(false);
   // Live "routine active" count (S13 badge) — null until loaded / on failure.
@@ -84,6 +88,31 @@ export function TopBar({ route }: { route?: string } = {}) {
       <div className="pill">
         Sync <b>2 phút trước</b>
       </div>
+      {/* #74 change 3+5 — privacy toggle (moved here from the sidebar). Same usePrivacy
+          hook (CustomEvent broadcast keeps the body[data-privacy] mask in sync). Behavior:
+          OFF → turn ON (money HIDDEN/locked); ON+locked → open the pass modal to reveal;
+          ON+unlocked → turn OFF (back to normal). 👁 off / 🙈 on, accent when on. */}
+      <button
+        type="button"
+        className={`icbtn${privacy ? " on" : ""}`}
+        onClick={() => {
+          if (!privacy) setPrivacy(true);          // OFF → lock money
+          else if (locked) setRevealOpen(true);    // ON+locked → ask for pass
+          else setPrivacy(false);                  // ON+unlocked → back to normal
+        }}
+        title={
+          !privacy ? "Bật chế độ riêng tư (ẩn số tiền)"
+            : locked ? "Mở khóa để hiện số tiền" : "Tắt chế độ riêng tư (hiện số tiền)"
+        }
+        aria-label="Chế độ riêng tư"
+        aria-pressed={privacy}
+        data-testid="tb-privacy-toggle"
+        data-privacy-on={privacy ? "1" : "0"}
+        data-privacy-locked={privacy && locked ? "1" : "0"}
+      >
+        <span aria-hidden style={{ fontSize: 15, lineHeight: 1 }}>{privacy ? "🙈" : "👁"}</span>
+      </button>
+      <PrivacyRevealModal open={revealOpen} onClose={() => setRevealOpen(false)} onSubmit={unlock} />
       <button
         type="button"
         className={`icbtn${spinning ? " spinning" : ""}`}

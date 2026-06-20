@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     okx_api_secret: str = Field(default="", description="OKX API secret")
     okx_api_passphrase: str = Field(default="", description="OKX API passphrase")
 
+    # --- Privacy veil (#74) — reveal pass for FE privacy mode ----------------
+    # Privacy mode HIDES money displays; revealing requires this pass. Env-stored
+    # (LIFEOS_PRIVACY_PASS), NOT a synced settings field — single-user localhost veil,
+    # NOT access control (the FE sends the attempt, BE compares; the pass never goes to
+    # the FE). Default "0110" so it works without editing .env. (User call: keep simple,
+    # no hash/no DB/no sync.)
+    privacy_pass: str = Field(default="0110", description="privacy reveal pass (env LIFEOS_PRIVACY_PASS); simple veil, single-user")
+
     # --- Macro (MACRO-1) — FRED economic data, key-optional --------------------
     # FRED (St. Louis Fed) has a free JSON API that requires an api_key. Set via
     # LIFEOS_FRED_API_KEY. Left empty → the macro module fail-opens to honest mock

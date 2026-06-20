@@ -16,7 +16,7 @@ export function ShellLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div id="app" className={collapsed ? "collapsed" : undefined}>
-      <Sidebar onToggleCollapse={() => setCollapsed((c) => !c)} />
+      <Sidebar collapsed={collapsed} onToggleCollapse={() => setCollapsed((c) => !c)} />
       <div className="main">
         <TopBar />
         <div className="view">

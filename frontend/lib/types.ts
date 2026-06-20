@@ -394,6 +394,11 @@ export interface AppConfig {
    *  decision/allocation tilt reads these — surfaced here so the user can tune them. */
   riskCapitalSmallUsd?: number;
   riskCapitalLargeUsd?: number;
+  /** #72 SIDEBAR-UX (feature B): user-pinned nav routes, rendered as a "📌 Ghim" group
+   *  at the top of the sidebar (in this order). Persisted BACKEND (not localStorage) —
+   *  this is the multi-device-sync point. Optional in the type until backend-2 freezes
+   *  the field; the FE treats a missing value as [] (no Ghim group). */
+  pinnedRoutes?: string[];
 }
 
 /** Partial update — only provided keys change. extra=forbid (unknown key → 422). */

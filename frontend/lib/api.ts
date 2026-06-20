@@ -395,6 +395,13 @@ export function getCryptoBasis(): Promise<ApiResponse<CryptoBasis>> {
   return apiGet<CryptoBasis>("/finance/crypto-basis");
 }
 
+/** #74 change 5 — verify the privacy reveal-pass. The pass lives in BE env (never sent
+ *  to the FE); we POST the user's ATTEMPT and read data.ok. Always HTTP 200 (a wrong
+ *  pass is data.ok=false, not an error). */
+export function verifyPrivacyPass(pass: string): Promise<ApiResponse<{ ok: boolean }>> {
+  return apiPost<{ ok: boolean }>("/settings/privacy/verify", { pass });
+}
+
 /** Finance — user override for crypto cost basis (PUT /finance/crypto-basis). */
 export function setCryptoBasis(basis: number): Promise<ApiResponse<CryptoBasis>> {
   return apiPut<CryptoBasis>("/finance/crypto-basis", { basis });
