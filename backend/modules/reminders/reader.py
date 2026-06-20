@@ -9,13 +9,24 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from .schema import Reminder
+from .schema import Reminder, now_iso
 
 logger = logging.getLogger("life-os.reminders.reader")
 
 
+def _is_overdue(due_at: str | None, done_at: str | None) -> bool:
+    """SEMANTIC 2 (#29): overdue = un-done AND past-due, INDEPENDENT of notified_count. due_at is
+    UTC-normalized (#1A) so a string compare vs now-UTC-ISO is a correct time comparison."""
+    if done_at is not None or not due_at:
+        return False
+    return due_at < now_iso()  # due_at is non-None+non-empty here (narrowed above)
+
+
 def row_to_reminder(row: sqlite3.Row) -> Reminder:
-    """Map one row to a Reminder. Raises (caught by the list mapper) on a malformed row."""
+    """Map one row to a Reminder + derive ``overdue`` (#29). Raises (caught by the list mapper)
+    on a malformed row. ``last_notified`` tolerates a pre-migration row missing the column."""
+    keys = row.keys()
+    last_notified = row["last_notified"] if "last_notified" in keys else None
     return Reminder(
         id=int(row["id"]),
         title=row["title"],
@@ -25,8 +36,10 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
         re_notify_every=row["re_notify_every"],
         max_times=row["max_times"],
         notified_count=int(row["notified_count"]),
+        last_notified=last_notified,
         done_at=row["done_at"],
         created=row["created"],
+        overdue=_is_overdue(row["due_at"], row["done_at"]),
     )
 
 

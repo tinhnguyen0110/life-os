@@ -22,7 +22,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from core.base import BaseModule
+from core.base import BaseModule, Routine
 from core.responses import ok
 
 from . import service
@@ -77,5 +77,35 @@ def delete_reminder(reminder_id: int):
     return ok(data={"deleted": reminder_id})
 
 
-# The registry discovers this MODULE. No routines in #27 (notify is #29).
-MODULE = BaseModule(name="reminders", router=router)
+# --------------------------------------------------------------------------- #
+# REMINDERS-3 (#29) — the reminders-notify routine (the alarm fires, every 1 min) #
+# --------------------------------------------------------------------------- #
+def _notify_work() -> tuple[str, str]:
+    """One notify scan — returns (status, detail). Fires due/re-notify reminders (Discord
+    fail-soft) + rolls repeats. status='ok' (a Discord webhook fail is soft inside notify_scan,
+    not a routine error). Raises only on a true scan failure (caught by the wrapper → 'error')."""
+    summary = service.notify_scan()
+    detail = (f"reminders-notify: scanned={summary['scanned']} fired={summary['fired']}"
+              + (f" rolled={summary['rolled']}" if summary.get("rolled") else ""))
+    return "ok", detail
+
+
+def reminders_notify() -> None:
+    """Scheduler entry point — gated on the master automation switch, records a run_log row
+    (same unified wrapper as market-poll/held-history; S10A)."""
+    from modules.automation import service as auto
+    auto.run_scheduled(service.NOTIFY_ROUTINE_ID, _notify_work)
+
+
+_NOTIFY_ROUTINE = Routine(
+    id=service.NOTIFY_ROUTINE_ID,
+    func=reminders_notify,
+    trigger="interval",
+    trigger_args={"minutes": 1},
+    name="reminders-notify (fire due reminders → Discord, every 1 min)",
+    enabled=True,
+)
+
+
+# The registry discovers this MODULE. #29: the reminders-notify routine (1-min scan).
+MODULE = BaseModule(name="reminders", router=router, routines=[_NOTIFY_ROUTINE])

@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     repeat           TEXT    NOT NULL DEFAULT 'once',  -- once | daily | weekly
     re_notify_every  INTEGER,                          -- minutes (#29)
     max_times        INTEGER,                          -- (#29)
-    notified_count   INTEGER NOT NULL DEFAULT 0,       -- (#29)
+    notified_count   INTEGER NOT NULL DEFAULT 0,       -- (#29) times Discord-notified this period
+    last_notified    TEXT,                             -- (#29) ISO of the last notify, else NULL
     done_at          TEXT,                             -- ISO-8601 when ticked, else NULL
     created          TEXT    NOT NULL                  -- ISO-8601 created
 );
@@ -40,16 +41,24 @@ CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
 """
 
 # The columns selected for a Reminder row (stable order; reader maps these to the model).
+# REMINDERS-3 (#29): +last_notified.
 _COLS = ("id, title, note, due_at, repeat, re_notify_every, max_times, "
-         "notified_count, done_at, created")
+         "notified_count, last_notified, done_at, created")
 
 
 def init_reminders_tables() -> sqlite3.Connection:
     """Register the reminders table on the shared connection. Idempotent; safe to call
-    repeatedly and after a test rebinds ``db.DB_PATH``."""
+    repeatedly and after a test rebinds ``db.DB_PATH``.
+
+    REMINDERS-3 (#29) migration: CREATE TABLE IF NOT EXISTS won't add ``last_notified`` to a
+    pre-#29 table, so ALTER it in when missing (idempotent — only adds if absent). Keeps an
+    existing live store working after the field landed."""
     conn = db.get_conn()
     with _lock:
         conn.executescript(REMINDERS_SCHEMA)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()}
+        if "last_notified" not in cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN last_notified TEXT")
         conn.commit()
     return conn
 
@@ -158,3 +167,40 @@ def canonical_filter(filter_key: str | None) -> str:
     The reader echoes this so a caller sees which filter actually ran."""
     key = (filter_key or "all").strip().lower()
     return key if key in ("today", "week", "undone", "all") else "all"
+
+
+# --------------------------------------------------------------------------- #
+# REMINDERS-3 (#29) — the notify-engine store helpers                            #
+# --------------------------------------------------------------------------- #
+def undone_reminders() -> list[sqlite3.Row]:
+    """All UN-DONE reminders (done_at IS NULL) — the notify routine's scan set. A ticked reminder
+    is excluded (tick-ends-series, SEMANTIC 1). Returns raw rows (the service decides per-row)."""
+    init_reminders_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_COLS} FROM reminders WHERE done_at IS NULL ORDER BY due_at ASC, id ASC"
+        ).fetchall()
+
+
+def mark_notified(reminder_id: int, *, notified_count: int, last_notified: str) -> None:
+    """Record a fire: set notified_count + last_notified for the reminder (#29)."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE reminders SET notified_count = ?, last_notified = ? WHERE id = ?",
+            (int(notified_count), last_notified, int(reminder_id)),
+        )
+        conn.commit()
+
+
+def roll_repeat(reminder_id: int, *, new_due_at: str) -> None:
+    """SEMANTIC 1 (roll-on-fire): a repeat reminder fired → roll due_at forward (+period) + RESET
+    notified_count=0 + last_notified=NULL so the next period fires fresh. ``once`` never calls this."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE reminders SET due_at = ?, notified_count = 0, last_notified = NULL WHERE id = ?",
+            (new_due_at, int(reminder_id)),
+        )
+        conn.commit()

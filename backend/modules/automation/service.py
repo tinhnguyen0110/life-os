@@ -273,6 +273,11 @@ _CATALOG: list[dict] = [
     {"id": "news-capture", "name": "News Capture", "trigger": "cron",
      "triggerLabel": "định kỳ", "desc": "Capture RSS headlines → grounded digest",
      "action": "capture news", "enabled": True, "func": None},
+    # REMINDERS-3 (#29): the báo-thức notify routine (fires due reminders → Discord, every 1 min).
+    # func owned by the reminders module → None here (runs via its MODULE.routines, like market-poll).
+    {"id": "reminders-notify", "name": "Reminders Notify", "trigger": "interval",
+     "triggerLabel": "mỗi 1 phút", "desc": "Fire due reminders → Discord (báo thức)",
+     "action": "fire reminders", "enabled": True, "func": None},
 ]
 _CATALOG_BY_ID = {c["id"]: c for c in _CATALOG}
 

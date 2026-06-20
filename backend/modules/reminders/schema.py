@@ -90,9 +90,14 @@ class Reminder(BaseModel):
     repeat: Repeat = Field(default="once")
     re_notify_every: int | None = Field(default=None, ge=1, description="minutes between re-notifies (#29)")
     max_times: int | None = Field(default=None, ge=1, description="max notify count (#29)")
-    notified_count: int = Field(default=0, ge=0, description="times notified so far (#29)")
+    notified_count: int = Field(default=0, ge=0, description="times notified so far this period (#29)")
+    last_notified: str | None = Field(default=None, description="ISO of the last notify, else None (#29)")
     done_at: str | None = Field(default=None, description="ISO-8601 when ticked done, else None")
     created: str = Field(..., description="ISO-8601 created timestamp")
+    # REMINDERS-3 (#29) SEMANTIC 2: overdue = un-done AND past-due, INDEPENDENT of notified_count.
+    # A reminder is overdue the moment it's past-due + un-done (FE/brief show RED); the notify cap
+    # only gates Discord-spam, it does NOT define overdue. Derived by the reader (not stored).
+    overdue: bool = Field(default=False, description="un-done AND due_at < now (NOT cap-gated) (#29)")
 
 
 class ReminderList(BaseModel):

@@ -45,12 +45,12 @@ def test_get_routines_shape(app_client):
     assert body["success"] is True
     d = body["data"]
     assert set(d) == {"routines", "activeCount", "total", "runsToday", "lastRunAt"}
-    # JOURNAL-NUDGE (#14) Part 3: +macro-poll +news-capture (routine attribution). Was 8 (#62).
-    assert d["total"] == 10
+    # JOURNAL-NUDGE (#14) Part 3: +macro-poll +news-capture. REMINDERS-3 (#29): +reminders-notify.
+    assert d["total"] == 11
     ids = {r["id"] for r in d["routines"]}
     assert ids == {"market-poll", "wiki-refresh", "idle-hunter", "pattern-check",
                    "journal-nudge", "morning-pull", "macro-snapshot", "held-history",
-                   "macro-poll", "news-capture"}
+                   "macro-poll", "news-capture", "reminders-notify"}
     # each routine has the full RoutineInfo shape
     r0 = d["routines"][0]
     assert set(r0) >= {"id", "name", "trigger", "triggerLabel", "desc", "action", "enabled", "lastRun", "lastResult", "runs"}
@@ -68,7 +68,7 @@ def test_patch_toggle(app_client):
     # persisted: GET reflects it
     routines = {x["id"]: x for x in app_client.get("/routines").json()["data"]["routines"]}
     assert routines["idle-hunter"]["enabled"] is False
-    assert app_client.get("/routines").json()["data"]["activeCount"] == 9  # 10 total, one off
+    assert app_client.get("/routines").json()["data"]["activeCount"] == 10  # 11 total, one off
 
 
 def test_patch_unknown_404(app_client):
@@ -112,7 +112,7 @@ def test_toggle_disable_enable_cycle_observable(app_client):
     assert r.json()["data"]["enabled"] is False
 
     d = app_client.get("/routines").json()["data"]
-    assert d["activeCount"] == 9  # 10 total, one off
+    assert d["activeCount"] == 10  # 11 total, one off
     routines = {x["id"]: x for x in d["routines"]}
     assert routines["pattern-check"]["enabled"] is False
 
@@ -122,17 +122,17 @@ def test_toggle_disable_enable_cycle_observable(app_client):
     assert r2.json()["data"]["enabled"] is True
 
     d2 = app_client.get("/routines").json()["data"]
-    assert d2["activeCount"] == 10  # restored (10 total)
+    assert d2["activeCount"] == 11  # restored (11 total)
     routines2 = {x["id"]: x for x in d2["routines"]}
     assert routines2["pattern-check"]["enabled"] is True
 
 
 def test_toggle_two_off_active_count_drops_by_two(app_client):
-    """Disable two separate routines → activeCount drops by 2 (10 total → 8)."""
+    """Disable two separate routines → activeCount drops by 2 (11 total → 9)."""
     app_client.patch("/routines/idle-hunter", json={"enabled": False})
     app_client.patch("/routines/journal-nudge", json={"enabled": False})
     d = app_client.get("/routines").json()["data"]
-    assert d["activeCount"] == 8  # 10 total, two off
+    assert d["activeCount"] == 9  # 11 total, two off
     routines = {x["id"]: x for x in d["routines"]}
     assert routines["idle-hunter"]["enabled"] is False
     assert routines["journal-nudge"]["enabled"] is False
