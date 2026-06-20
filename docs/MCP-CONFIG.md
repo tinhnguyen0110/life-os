@@ -15,23 +15,32 @@
 life-os exposes MCP as **separate stdio processes** — read and write are split into
 distinct processes with distinct capability sets (structural least-privilege, proven by
 `test_mcp_read.py` / `test_mcp_write.py`, not by a flag). There are two read/write **pairs** — a
-**whole-app** pair and a deeper **wiki-only** pair — plus **per-domain narrow read servers** (an
+**whole-app** pair and a deeper **wiki-only** pair — plus **per-domain narrow servers** (an
 agent that should only see one domain connects to its domain server, not the 40-tool whole-app
-read). The first such domain server is **`lifeos-finance`** (Sprint MCP-DOMAINS).
+read). The per-domain servers are **`lifeos-finance`** (Sprint MCP-DOMAINS, read-only) and
+**`lifeos-reminders`** (Sprint REMINDERS-2, read + direct write-through).
 
 | Server | Module | Tools | Capability |
 |---|---|---|---|
 | **whole-app read** | `mcp_servers.read_server` | **40** | reads ALL modules — writes nothing |
 | **whole-app write** | `mcp_servers.write_server` | **4** | `propose_*` only — ENQUEUE pending, applies nothing |
-| **wiki read** | `modules.wiki.mcp.read_server` | **11** | ALL vault reads (search/get/overview/backlinks/inbox/graph/clusters/verify_citations) + wiki proposal read-back |
+| **wiki read** | `modules.wiki.mcp.read_server` | **11** | ALL vault reads (search / get_note all-modes / overview / **context** [graph+backlinks 1-call, #23] / inbox / tree / clusters / verify_citations / proposal read-back) |
 | **wiki write** | `modules.wiki.mcp.write_server` | **6** | `propose_*` wiki only — ENQUEUE pending |
 | **finance read** (domain) | `mcp_servers.finance_server` | **15** | a NARROW finance-only view — a 15-tool SUBSET of the whole-app read (same fn objects, zero dup); writes nothing |
+| **reminders** (domain) | `mcp_servers.reminders_server` | **3** | a NARROW reminders agenda surface: `reminders_list` (reference-imported from the whole-app read → is-identity) + `reminder_create` / `reminder_tick` (DIRECT write-through CRUD — NOT proposal-gated, single-user agenda) |
 
-**Totals: whole-app = 44 tools (40 read + 4 write); wiki pair = 17 (11 read + 6 write); 61 total
-on the full surface.** The `lifeos-finance` server adds NO new tools — its 15 are the SAME fn
-objects the whole-app read already exposes (a reference-subset, not a copy), so a finance call via
-`/mcp/finance` is byte-identical to via `/mcp/read`. It exists to give a finance/investment agent
-a focused 15-tool surface instead of the noisy 40.
+**Totals: whole-app = 44 tools (40 read + 4 write); wiki pair = 17 (11 read + 6 write); per-domain
+= 18 (finance 15 + reminders 3).** The `lifeos-finance` server adds NO new tools — its 15 are the
+SAME fn objects the whole-app read already exposes (a reference-subset, not a copy), so a finance
+call via `/mcp/finance` is byte-identical to via `/mcp/read`. It exists to give a finance/investment
+agent a focused 15-tool surface instead of the noisy 40. `lifeos-reminders` likewise reference-imports
+`reminders_list` (is-identity, zero dup) and adds the 2 direct-write CRUD tools its agenda agent needs.
+
+> **#23 wiki retrieval consolidation:** the granular `wiki_graph` + `wiki_backlinks` MCP tools were
+> REMOVED — `wiki_context(note_id)` SUPERSETS both (graph + backlinks in one call). The graph /
+> backlinks REST endpoints (`/wiki/graph`, `/wiki/notes/{id}/backlinks`) STAY. A standing test-gate
+> (`test_wiki_rest_mcp_parity_gate.py`, #24) asserts every wiki MCP tool's payload == its REST
+> endpoint byte-identical, so REST≡MCP can't drift silently.
 
 **The 15 finance tools:** `finance_overview`, `finance_channel`, `finance_analytics`,
 `finance_simulate`, `finance_guardian`, `allocation_target`, `decision_weight`, `macro_cycle`,
@@ -127,11 +136,26 @@ at the transport layer — no cross-import), each mounted at a distinct path:
 | `/mcp/wiki-read`  | wiki read       | `http://<host>:8686/mcp/wiki-read/mcp` |
 | `/mcp/wiki-write` | wiki write      | `http://<host>:8686/mcp/wiki-write/mcp` |
 | `/mcp/finance`    | finance read (domain) | `http://<host>:8686/mcp/finance/mcp` |
+| `/mcp/reminders`  | reminders (domain) | `http://<host>:8686/mcp/reminders/mcp` |
 
-> **The URL has `/mcp` TWICE.** A FastMCP streamable-http app serves its tool endpoint at its
-> own internal `streamable_http_path` (default `/mcp`); mounted at `/mcp/read`, the real client
-> URL is therefore `/mcp/read/mcp`. This is SDK behaviour, not a typo — point the client at the
-> full `<mount>/mcp`.
+> **The URL has `/mcp` TWICE — CANONICAL, do NOT de-double.** A FastMCP streamable-http app serves
+> its tool endpoint at its own internal `streamable_http_path` (default `/mcp`); mounted at
+> `/mcp/read`, the real client URL is therefore `/mcp/read/mcp`. This is SDK behaviour, not a typo
+> — point the client at the full `<mount>/mcp`. (A "de-double to a single `/mcp/read`" change was
+> evaluated and ABORTED — the doubled path is the canonical clean-200 form; keep it.)
+
+> **`<host>` — localhost vs Tailscale.** On THIS machine use `localhost` / `127.0.0.1`. From
+> ANOTHER device on the Tailscale net (e.g. a phone/laptop running an MCP client), use this host's
+> **Tailscale IP `100.113.13.30`** (the same `LIFEOS_API_BASE` the FE uses) — e.g.
+> `http://100.113.13.30:8686/mcp/read/mcp`. No auth (single-user LAN) + DNS-rebinding protection is
+> OFF, so a non-localhost `Host` connects (that's why it's off — see below).
+
+> **Client caches the tool SCHEMA at connect.** An MCP client fetches each server's tool list on
+> `initialize` and caches it for the session. So if life-os ADDS / RENAMES / REMOVES a tool (e.g.
+> the #23 wiki_graph→wiki_context swap, or a new per-domain server), an already-connected client
+> won't see the change until it **reconnects** (restart the client / re-run `initialize`). After a
+> tool-surface change, reconnect to pick up the new schema — a "tool not found" / "stale tool" on a
+> long-lived session is usually this, not a server bug.
 
 **No auth (single-user, no-auth, LAN — north-star).** The HTTP mounts are open on localhost /
 the LAN, exactly like the REST API. FastMCP's DNS-rebinding protection is turned **OFF**
@@ -234,6 +258,13 @@ a `command`, its `args`, and the `cwd` it runs from.
       "args": ["-m", "mcp_servers.finance_server"],
       "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
       "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
+    },
+    "lifeos-reminders": {
+      "type": "stdio",
+      "command": "/home/watercry/anaconda3/envs/tinhnv/bin/python",
+      "args": ["-m", "mcp_servers.reminders_server"],
+      "cwd": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend",
+      "env": { "PYTHONPATH": "/home/watercry/Disk_C/Data/Tinhdev/life-os/backend" }
     }
   }
 }
@@ -244,6 +275,33 @@ a `command`, its `args`, and the `cwd` it runs from.
 > the others if you want both surfaces (the tools overlap; pick the narrow one per agent). It's
 > read-only; pair with `lifeos-write` if that agent also proposes. Or use streamable-http:
 > `{"type":"http","url":"http://localhost:8686/mcp/finance/mcp"}`.
+
+> `lifeos-reminders` is the NARROW reminders agenda server (3 tools): `reminders_list` (read) +
+> `reminder_create` / `reminder_tick` (DIRECT write-through — these CRUD reminders immediately, NOT
+> via the proposal queue, because a personal agenda is the one place a single-user agent writes
+> directly). Register it for an "agenda / what's on my plate" agent. http:
+> `{"type":"http","url":"http://localhost:8686/mcp/reminders/mcp"}`.
+
+### Ready-to-copy: a finance-only agent (`.mcp.json`)
+
+Drop this in a project as `.mcp.json` (or merge into `~/.claude.json`) for an agent that sees ONLY
+the 15 finance tools — nothing else. http transport (container up), no interpreter/cwd needed:
+
+```json
+{
+  "mcpServers": {
+    "lifeos-finance": {
+      "type": "http",
+      "url": "http://localhost:8686/mcp/finance/mcp"
+    }
+  }
+}
+```
+
+From another Tailscale device, swap `localhost` → `100.113.13.30`. Add a `lifeos-reminders` entry
+(`http://localhost:8686/mcp/reminders/mcp`) if the same agent should also manage the agenda; add
+`lifeos-write` if it should `propose_*` into the whole-app queue. Keep it to the narrow server(s)
+the agent actually needs — fewer tools = a sharper agent (the whole point of the per-domain split).
 
 > ⚠️ Three things make stdio connect reliably (the all-four-`✘ failed` fix):
 > 1. **ABSOLUTE interpreter path**, not bare `"python"` — the client spawns with its own PATH,
@@ -270,6 +328,7 @@ claude mcp add lifeos-write      -- $PY -m mcp_servers.write_server
 claude mcp add lifeos-wiki-read  -- $PY -m modules.wiki.mcp.read_server
 claude mcp add lifeos-wiki-write -- $PY -m modules.wiki.mcp.write_server
 claude mcp add lifeos-finance    -- $PY -m mcp_servers.finance_server   # narrow finance-only read (15 tools)
+claude mcp add lifeos-reminders  -- $PY -m mcp_servers.reminders_server # narrow reminders agenda (3 tools, read + write-through)
 ```
 
 ---
@@ -290,6 +349,7 @@ cd /home/watercry/Disk_C/Data/Tinhdev/life-os/backend
 /tmp/los-venv/bin/python -c "import mcp_servers.read_server as s; print(len(s.TOOLS), 'read tools')"
 /tmp/los-venv/bin/python -c "import mcp_servers.write_server as s; print(len(s.TOOLS), 'write tools')"
 /tmp/los-venv/bin/python -c "import mcp_servers.finance_server as s; print(len(s.TOOLS), 'finance tools')"  # 15
+/tmp/los-venv/bin/python -c "import mcp_servers.reminders_server as s; print(len(s.TOOLS), 'reminders tools')"  # 3
 ```
 
 > `FastMCP` introspects real parameter annotations at registration, so the servers deliberately
