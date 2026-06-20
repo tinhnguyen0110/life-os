@@ -423,11 +423,52 @@ def graveyard_overview() -> dict[str, Any]:
     return {"graveyard": _jsonable(_grave_get())}
 
 
-def claude_usage(window: str = "5h") -> dict[str, Any]:
-    """Claude token-usage view: per-day burn series, by-model / by-project split,
-    today's total, quota %, cost. ``{usage}``. Fail-open to manual/stub if no local
-    stats. ``window`` accepted for the API contract."""
-    return {"usage": _jsonable(_claude_usage(window=window))}
+def claude_usage(window: str = "5h", verbose: bool = False) -> dict[str, Any]:
+    """Claude token-usage view. LEAN by DEFAULT (CLAUDE-USAGE-LEAN #18, agent-first): the few
+    numbers an agent usually wants — leading with the LIVE quota signal (pct5h / resetIn / weekly)
+    + today's tokens + costUSD ($.01) + provenance. ``verbose=true`` returns the FULL shape (the
+    per-day series + by-model + by-project splits + the context-window fields).
+
+    Why lean leads with pct5h/resetIn, NOT remaining: ``remaining`` is cap − used, but ``cap`` is
+    a PLACEHOLDER (200k, NOT from disk — there's no rate-limit ceiling readable). With used ≫ cap,
+    remaining is honest-null. The REAL quota answer is the live ``pct5h``/``resetIn``/``weekly``
+    (the statusline snapshot). remaining STAYS honest-null (never faked from the placeholder cap);
+    when it's null-due-to-placeholder, the lean view carries a ``remainingNote`` saying so + where
+    the real signal is (the same honest-null-WITH-reason pattern as dxy.warning).
+
+    ``window`` accepted for the API contract. Fail-open to manual/stub if no local stats. The REST
+    GET /claude-usage + the FE consume the FULL model unchanged — this lean projection is the MCP
+    tool's presentation only (service.get_usage returns the full shape)."""
+    u = _jsonable(_claude_usage(window=window))
+
+    # costUSD → 2 decimals (cumulative magnitude is a KNOWN item; just format). Underlying precise.
+    cost_raw = u.get("costUSD")
+    cost_fmt = round(float(cost_raw), 2) if isinstance(cost_raw, (int, float)) else cost_raw
+
+    if verbose:
+        # FULL shape — keep everything; only normalize costUSD to 2 decimals for consistency.
+        u["costUSD"] = cost_fmt
+        return {"usage": u, "verbose": True}
+
+    # LEAN (default): the agent-readable ~8-field slice. Lead with the LIVE quota signal.
+    lean: dict[str, Any] = {
+        "pct5h": u.get("pct5h"),
+        "resetIn": u.get("resetIn"),
+        "weekly": u.get("weekly"),
+        "today": u.get("today"),
+        "costUSD": cost_fmt,
+        "remaining": u.get("remaining"),       # honest-null when cap is a placeholder (see note)
+        "quotaSource": u.get("quotaSource"),
+        "tokenSource": u.get("tokenSource"),
+    }
+    # honest-null-WITH-reason (the dxy.warning pattern): remaining is null because the cap is a
+    # placeholder (used > cap), NOT because quota is exhausted. Tell the agent where the real
+    # signal is. Only when null-due-to-placeholder; a real manual-override cap (used ≤ cap) →
+    # remaining computes → no note.
+    if lean["remaining"] is None:
+        lean["remainingNote"] = ("cap is a placeholder (not from disk); use pct5h/resetIn for "
+                                 "the live quota signal")
+    return {"usage": lean, "verbose": False}
 
 
 def daily_brief() -> dict[str, Any]:
@@ -785,15 +826,46 @@ def _brief_claude() -> dict[str, Any]:
 
 def _brief_decisions() -> dict[str, Any]:
     """Neutral decision snapshot: the OPEN (status=open) decisions awaiting an outcome
-    + calibration counts. From modules/decision_journal (list_entries). No advice."""
+    + calibration counts. From modules/decision_journal (list_entries). No advice.
+
+    JOURNAL-NUDGE (#14, SPEC §172): closes the dark journal loop for an MCP agent reading
+    life_brief —
+      - ``note`` when ZERO decisions are logged at all (calibration/brier idle = CORRECT for 0
+        resolved, not a bug; the loop just has no data yet — honest, not alarming).
+      - ``pendingNudges``: the OPEN rung-triggered nudges (a buy-ladder rung was entered → log a
+        decision). So the agent sees rung-hit + pending nudge + 0-logged and prompts the user.
+        Honest-empty (never fabricated); the nudges themselves NEVER wrote a journal entry."""
     stats, warnings = _decision_list(status="open")
-    return {
+    out: dict[str, Any] = {
         "openCount": len(stats.entries),
         "open": [{"id": e.id, "decision": e.decision, "domain": e.domain,
                   "date": e.date, "confidence": getattr(e, "confidence", None)}
                  for e in stats.entries],
         "warnings": list(warnings or []),
     }
+    # the TOTAL logged (across all statuses) — 0 → flag the dark loop honestly.
+    try:
+        all_stats, _ = _decision_list()
+        total_logged = len(all_stats.entries)
+        out["totalLogged"] = total_logged
+        if total_logged == 0:
+            out["note"] = ("0 decisions logged — calibration/brier idle; the journal loop has no "
+                           "data yet (log a decision to start tracking)")
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the brief section
+        out.setdefault("warnings", []).append(f"decision total read failed: {exc}")
+    # ALWAYS surface the open rung-triggered nudges (honest-empty when none).
+    try:
+        from store import db as _db
+        out["pendingNudges"] = [
+            {"id": r["id"], "channel": r["channel"], "rung": r["rung"],
+             "triggerPrice": r["trigger_price"], "observedPrice": r["observed_price"],
+             "ts": r["ts"], "status": r["status"]}
+            for r in _db.pending_journal_nudges(limit=20)
+        ]
+    except Exception as exc:  # noqa: BLE001
+        out["pendingNudges"] = []
+        out.setdefault("warnings", []).append(f"pending nudges read failed: {exc}")
+    return out
 
 
 def _brief_macro() -> dict[str, Any]:

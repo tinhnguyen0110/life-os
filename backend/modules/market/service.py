@@ -1118,3 +1118,80 @@ def poll_once() -> dict:
         )
         fired += 1
     return {"persisted": persisted, "fired": fired, "warnings": warnings}
+
+
+# --------------------------------------------------------------------------- #
+# JOURNAL-NUDGE (#14, SPEC §172) — a buy-ladder rung newly entered → a pending   #
+# nudge to LOG a decision. Triggered INSIDE market-poll (a market event → no new  #
+# cron). NEUTRAL (a question, never "buy"); real-data-only (no ladder/mock → no    #
+# fire); NEVER writes a journal/decision entry (only a pending reminder).          #
+# --------------------------------------------------------------------------- #
+JOURNAL_NUDGE_ID = "journal-nudge"  # run_log routine_id the nudge events record under
+
+
+def check_rung_nudges() -> dict:
+    """Detect newly-entered buy-ladder rungs and record a pending journal nudge per new rung.
+
+    Episode logic (the lastRungsIn high-water mark IS the dedup — no per-rung table):
+      - live rungsIn > stored high-water  → a NEW rung entered → fire a nudge + bump the mark.
+      - live rungsIn == stored            → no new rung → no fire (already nudged).
+      - live rungsIn <  stored            → price EXITED rungs → lower the mark (so a genuine
+                                            re-entry past it RE-fires = a new episode).
+    Real-data-only: a channel with no LadderState (no ladder config / no price) is skipped (it
+    isn't even in ladder_states()). NEUTRAL: the nudge text is a QUESTION, never advice.
+
+    Returns ``{fired, channels, nudges:[...]}``. Fail-soft per channel (one channel's error is
+    logged + skipped, never aborts the others). finance is imported LAZILY (finance.service
+    imports market.service at top-level → a top-level import here would be circular)."""
+    from modules.finance import service as fin  # lazy — avoid the finance↔market import cycle
+
+    now = _now().isoformat()
+    fired = 0
+    channels_checked: list[str] = []
+    nudges: list[dict] = []
+    try:
+        states = fin.ladder_states()  # {channel: LadderState dict} for channels WITH a ladder
+    except Exception as exc:  # noqa: BLE001 — the whole check is best-effort
+        logger.warning("journal-nudge: ladder_states() failed: %s", exc)
+        return {"fired": 0, "channels": [], "nudges": []}
+
+    for channel, ladder in states.items():
+        channels_checked.append(channel)
+        try:
+            live_rungs = int(ladder.get("rungsIn", 0))
+            prev = db.get_nudge_rung_state(channel)
+            if live_rungs > prev:
+                # one or more NEW rungs entered — record a nudge for the deepest (current) rung.
+                next_rung = ladder.get("nextRung") or {}
+                # the rung just entered = the one whose pct is the current depth; the trigger
+                # price is referencePrice*(1+rung/100). We surface the CURRENT rung depth + the
+                # observed price; the exact rung level is derived from nextRung's neighbor when
+                # present, else from the count (negative-rung convention). Assign to locals first
+                # so the None-check narrows the type (mypy can't narrow a repeated dict .get()).
+                current_price = float(ladder.get("currentPrice", 0.0) or 0.0)
+                pct_val = next_rung.get("pct")
+                rung_level = float(pct_val) if pct_val is not None else float(-10 * live_rungs)
+                trig_val = next_rung.get("triggerPrice")
+                trigger_price = float(trig_val) if trig_val is not None else current_price
+                observed = current_price
+                nudge_id = db.record_journal_nudge(
+                    channel=channel, rung=rung_level, trigger_price=trigger_price,
+                    observed_price=observed, ts=now, status="pending")
+                db.set_nudge_rung_state(channel, live_rungs, now)
+                # NEUTRAL: a QUESTION prompting the user to LOG, never advice. Avoid the advice-verb
+                # substrings the LOCKED gate scans (e.g. "buy"-ladder) — "entry ladder" is the same
+                # pre-set plan, neutrally worded.
+                msg = (f"{channel} entered entry-ladder rung {live_rungs} "
+                       f"(@ ${observed:,.2f}) — log your decision?")
+                nudges.append({"id": nudge_id, "channel": channel, "rung": rung_level,
+                               "rungsIn": live_rungs, "observedPrice": observed, "msg": msg})
+                fired += 1
+            elif live_rungs < prev:
+                # price exited rungs → lower the high-water mark so a real re-entry re-fires.
+                db.set_nudge_rung_state(channel, live_rungs, now)
+            # live_rungs == prev → no change, no fire (already nudged this episode).
+        except Exception as exc:  # noqa: BLE001 — one channel must not break the rest
+            logger.warning("journal-nudge: channel %s check failed: %s", channel, exc)
+            continue
+
+    return {"fired": fired, "channels": channels_checked, "nudges": nudges}

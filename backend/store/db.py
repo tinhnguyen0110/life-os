@@ -71,6 +71,31 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshot (
     by_channel   TEXT    NOT NULL DEFAULT '{}'  -- JSON {channel: value}
 );
 CREATE INDEX IF NOT EXISTS idx_snapshot_day ON portfolio_snapshot(day);
+
+-- JOURNAL-NUDGE (#14, SPEC §172): a pending nudge fired when a buy-ladder rung is newly
+-- entered (rungsIn↑) → reminds the user to LOG a decision (the journal loop's prompt). The
+-- nudge itself NEVER writes a journal/decision entry — only this pending reminder. Episode
+-- dedup is the lastRungsIn comparison upstream (a new rung past the high-water mark fires;
+-- unchanged doesn't; exit-then-re-enter re-fires) — this table just records the open nudges.
+CREATE TABLE IF NOT EXISTS journal_nudges (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel        TEXT    NOT NULL,
+    rung           REAL    NOT NULL,          -- the rung level entered (e.g. -20.0)
+    trigger_price  REAL    NOT NULL,          -- the rung's trigger price (reference*(1+rung/100))
+    observed_price REAL    NOT NULL,          -- the channel's current price when the rung fired
+    ts             TEXT    NOT NULL,          -- ISO-8601 UTC of the nudge
+    status         TEXT    NOT NULL DEFAULT 'pending'  -- 'pending' (open) for now
+);
+CREATE INDEX IF NOT EXISTS idx_nudge_status ON journal_nudges(status, ts);
+
+-- JOURNAL-NUDGE: per-channel high-water mark of rungsIn (the episode-dedup state). A nudge
+-- fires only when the live rungsIn EXCEEDS this; then this is bumped. A drop (price exited)
+-- lowers it so a genuine re-entry past it re-fires. One row per channel (channel = PK).
+CREATE TABLE IF NOT EXISTS nudge_rung_state (
+    channel    TEXT    PRIMARY KEY,
+    rungs_in   INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT    NOT NULL
+);
 """
 
 
@@ -370,3 +395,56 @@ def snapshots(since: str | None = None, limit: int | None = None) -> list[sqlite
                + ("WHERE day >= ? " if since else "")
                + "ORDER BY day ASC")
         return conn.execute(sql, ((since[:10],) if since else ())).fetchall()
+
+
+# --------------------------------------------------------------------------- #
+# JOURNAL-NUDGE (#14) — rung-triggered nudge state + the open-nudge queue        #
+# --------------------------------------------------------------------------- #
+def get_nudge_rung_state(channel: str) -> int:
+    """The stored high-water-mark rungsIn for ``channel`` (0 if never recorded). The nudge
+    fires only when the LIVE rungsIn exceeds this; a drop lowers it so a re-entry re-fires."""
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT rungs_in FROM nudge_rung_state WHERE channel = ?", (channel,)
+        ).fetchone()
+    return int(row["rungs_in"]) if row else 0
+
+
+def set_nudge_rung_state(channel: str, rungs_in: int, ts: str) -> None:
+    """Upsert the per-channel rungsIn high-water mark (after evaluating a nudge episode)."""
+    conn = get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO nudge_rung_state(channel, rungs_in, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(channel) DO UPDATE SET rungs_in=excluded.rungs_in, updated_at=excluded.updated_at",
+            (channel, int(rungs_in), ts),
+        )
+        conn.commit()
+
+
+def record_journal_nudge(channel: str, rung: float, trigger_price: float,
+                         observed_price: float, ts: str, status: str = "pending") -> int:
+    """Insert a pending journal nudge (a rung was newly entered). Returns the new row id.
+    NEVER writes a journal/decision entry — only this reminder (the user logs the decision)."""
+    conn = get_conn()
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO journal_nudges(channel, rung, trigger_price, observed_price, ts, status) "
+            "VALUES (?,?,?,?,?,?)",
+            (channel, float(rung), float(trigger_price), float(observed_price), ts, status),
+        )
+        conn.commit()
+        return _last_id(cur)
+
+
+def pending_journal_nudges(limit: int = 50) -> list[sqlite3.Row]:
+    """The open (status='pending') journal nudges, newest-first. life_brief surfaces these so
+    an agent prompts the user to log the decision."""
+    conn = get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT id, channel, rung, trigger_price, observed_price, ts, status FROM journal_nudges "
+            "WHERE status = 'pending' ORDER BY ts DESC, id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()

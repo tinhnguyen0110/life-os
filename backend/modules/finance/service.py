@@ -882,6 +882,25 @@ def get_channel(channel: str) -> tuple[dict | None, list[str]]:
     return detail, warnings
 
 
+def ladder_states() -> dict[str, dict]:
+    """JOURNAL-NUDGE (#14): per-channel current LadderState (as dicts), for the channels that
+    HAVE a buy-ladder config (reference + rungs). Reuses get_channel (which already builds the
+    LadderState with the OKX-override-aware current price) — NO duplicated ladder math. A channel
+    with no ladder config / no current price → omitted (honest — can't compute a rung state).
+    Read-only; the rung-nudge engine reads this to detect a newly-entered rung. Fail-soft per
+    channel (a channel that errors is skipped, never aborts the others)."""
+    out: dict[str, dict] = {}
+    for ch in CHANNELS:
+        try:
+            detail, _warnings = get_channel(ch)
+        except Exception as exc:  # noqa: BLE001 — one channel must not break the others
+            logger.warning("ladder_states: get_channel(%s) failed: %s", ch, exc)
+            continue
+        if detail and detail.get("ladder"):
+            out[ch] = detail["ladder"]
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Portfolio analytics — rebalance + risk + return (NEUTRAL numbers, NO advice)   #
 # --------------------------------------------------------------------------- #

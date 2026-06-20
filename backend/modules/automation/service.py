@@ -263,6 +263,16 @@ _CATALOG: list[dict] = [
     {"id": "held-history", "name": "Held History", "trigger": "cron",
      "triggerLabel": "00:10 hằng ngày", "desc": "Capture OHLC for held coins → RSI/s_asset",
      "action": "capture held OHLC", "enabled": True, "func": None},
+    # JOURNAL-NUDGE (#14) Part 3 — routine attribution: these run_log routine_ids existed
+    # (records were written) but were NOT in the catalog → the activity feed showed the raw id
+    # instead of a friendly name. Register them so they attribute (func owned by their own module;
+    # they run via their module's routine, NOT triggered from here → func None, like market-poll).
+    {"id": "macro-poll", "name": "Macro Poll", "trigger": "interval",
+     "triggerLabel": "định kỳ", "desc": "Refresh FRED macro indicators",
+     "action": "fetch macro", "enabled": True, "func": None},
+    {"id": "news-capture", "name": "News Capture", "trigger": "cron",
+     "triggerLabel": "định kỳ", "desc": "Capture RSS headlines → grounded digest",
+     "action": "capture news", "enabled": True, "func": None},
 ]
 _CATALOG_BY_ID = {c["id"]: c for c in _CATALOG}
 

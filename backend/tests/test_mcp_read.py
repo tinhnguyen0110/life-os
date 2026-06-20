@@ -1005,3 +1005,102 @@ def test_build_server_registers_all_tools():
     server = rs.build_server()
     assert server is not None
     assert len(rs.TOOLS) == 40  # MCP-DEDUP #70: −6 wiki tools (canonical=standalone); was 46
+
+
+# =========================================================================== #
+# CLAUDE-USAGE-LEAN (#18) — the claude_usage MCP tool is LEAN by default,        #
+# verbose=true for the full splits. Lead with the live quota signal; costUSD     #
+# $.01; remaining stays honest-null WITH a reason note (the dxy.warning pattern). #
+# =========================================================================== #
+_FULL_USAGE = {
+    "model": "opus-4-8", "used": 3_000_000, "cap": 200_000, "pct": None,
+    "remaining": None, "resetIn": "3h 18m", "weekly": 12, "pct5h": 17.0,
+    "resetWeek": "5d", "ctxPct": 40.0, "ctxUsed": 80_000, "ctxMax": 200_000,
+    "ctxModel": "opus", "quotaSource": "snapshot",
+    "series": [{"date": "2026-06-21", "label": "T7", "tokens": 3_000_000}],
+    "today": 3_000_000, "avgPerDay": 2_500_000,
+    "peak": {"date": "2026-06-20", "label": "T6", "tokens": 4_000_000},
+    "byModel": [{"model": "opus-4-8", "inputTokens": 1, "outputTokens": 2, "cacheReadTokens": 0,
+                 "cacheCreateTokens": 0, "total": 3, "costUSD": 53627.535}],
+    "costUSD": 53627.535,
+    "byProject": [{"project": "life-os", "inputTokens": 1, "outputTokens": 2, "cacheReadTokens": 0,
+                   "cacheCreateTokens": 0, "total": 3, "costUSD": 100.0, "msgs": 5}],
+    "tokenSource": "stats-cache", "asOf": "2026-06-21", "stale": False, "source": "stats-cache",
+}
+
+
+def _patch_usage(monkeypatch, overrides=None):
+    """Patch rs._claude_usage to return a controlled full-usage dict (passes through _jsonable)."""
+    data = dict(_FULL_USAGE)
+    if overrides:
+        data.update(overrides)
+    monkeypatch.setattr(rs, "_claude_usage", lambda window="5h": data)
+
+
+def test_claude_usage_lean_by_default(monkeypatch):
+    """DEFAULT → LEAN: has the live quota signal (pct5h/resetIn/weekly/today/costUSD); does NOT
+    have the heavy splits (series/byModel/byProject/ctx*). Materially smaller than the 4325-char
+    full dump."""
+    import json as _json
+    _patch_usage(monkeypatch)
+    out = rs.claude_usage()
+    assert out["verbose"] is False
+    u = out["usage"]
+    # the live quota signal + the few numbers an agent wants
+    for k in ("pct5h", "resetIn", "weekly", "today", "costUSD"):
+        assert k in u, f"lean must keep {k}"
+    assert u["pct5h"] == 17.0 and u["resetIn"] == "3h 18m"  # leads with the live signal
+    # the heavy splits are DROPPED from the default
+    for k in ("series", "byModel", "byProject", "ctxPct", "ctxUsed", "ctxMax"):
+        assert k not in u, f"lean must DROP {k}"
+    # materially smaller
+    assert len(_json.dumps(out)) < 800, "lean must be far smaller than the ~4325-char full dump"
+
+
+def test_claude_usage_verbose_is_full(monkeypatch):
+    """verbose=true → FULL: the per-day series + by-model + by-project splits are present."""
+    _patch_usage(monkeypatch)
+    out = rs.claude_usage(verbose=True)
+    assert out["verbose"] is True
+    u = out["usage"]
+    for k in ("series", "byModel", "byProject", "ctxPct", "used", "cap", "asOf"):
+        assert k in u, f"verbose must keep {k}"
+
+
+def test_claude_usage_cost_formatted_two_decimals(monkeypatch):
+    """costUSD is formatted to 2 decimals (the cumulative magnitude is a known item — just
+    format). Both lean and verbose."""
+    _patch_usage(monkeypatch, {"costUSD": 53627.53499})
+    lean = rs.claude_usage()["usage"]
+    verbose = rs.claude_usage(verbose=True)["usage"]
+    assert lean["costUSD"] == 53627.53
+    assert verbose["costUSD"] == 53627.53
+
+
+def test_claude_usage_remaining_null_has_reason_note(monkeypatch):
+    """AMENDMENT (the dxy.warning pattern): remaining is null because cap is a PLACEHOLDER
+    (used > cap), NOT because quota is exhausted → a remainingNote names the real signal
+    (pct5h/resetIn) so the agent isn't confused by the bare null."""
+    _patch_usage(monkeypatch, {"remaining": None, "cap": 200_000, "used": 3_000_000})
+    u = rs.claude_usage()["usage"]
+    assert u["remaining"] is None, "remaining stays honest-null (never faked from a placeholder cap)"
+    assert "remainingNote" in u and u["remainingNote"], "a null remaining must carry its reason"
+    low = u["remainingNote"].lower()
+    assert "pct5h" in low and "resetin" in low, "the note must point to the real live signal"
+
+
+def test_claude_usage_real_cap_computes_remaining_no_note(monkeypatch):
+    """The distinguishing other side: a real manual-override cap with used ≤ cap → remaining
+    COMPUTES (non-null) → NO spurious note (the note is ONLY for the placeholder-cap null case)."""
+    _patch_usage(monkeypatch, {"remaining": 50_000, "cap": 200_000, "used": 150_000})
+    u = rs.claude_usage()["usage"]
+    assert u["remaining"] == 50_000, "a real remaining is surfaced"
+    assert "remainingNote" not in u, "no note when remaining genuinely computes"
+
+
+def test_claude_usage_envelope_key_unchanged(monkeypatch):
+    """Both lean + verbose keep the documented ``usage`` envelope key (the nullary-tool parity
+    test + life_brief's section contract depend on it)."""
+    _patch_usage(monkeypatch)
+    assert "usage" in rs.claude_usage()
+    assert "usage" in rs.claude_usage(verbose=True)

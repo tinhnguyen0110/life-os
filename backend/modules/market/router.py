@@ -271,11 +271,38 @@ def _market_poll_work() -> tuple[str, str]:
     """The poll work — returns (status, detail). Raises are caught by the wrapper.
 
     Fail-open per asset (service.poll_once handles it). warn if any per-asset warning.
+
+    JOURNAL-NUDGE (#14): after the PRIMARY poll work, a fail-SOFT add-on checks the buy-ladder
+    for newly-entered rungs → records pending journal nudges (SPEC §172). The primary status +
+    detail are computed FIRST (a nudge failure can NEVER downgrade a poll that succeeded —
+    fail-closed-write / fail-soft-add-on rule). A nudge that fires records its own 'journal-nudge'
+    run_log row so the activity feed attributes it; this add-on only appends a note to the detail.
     """
     summary = service.poll_once()
-    status = "warn" if summary.get("warnings") else "ok"
+    status = "warn" if summary.get("warnings") else "ok"   # PRIMARY status — set BEFORE the add-on
     detail = (f"polled: persisted={summary['persisted']} fired={summary['fired']}"
               + (f" warnings={len(summary['warnings'])}" if summary.get("warnings") else ""))
+
+    # --- fail-SOFT add-on: rung-triggered journal nudges -----------------------
+    try:
+        nudge_summary = service.check_rung_nudges()
+        n_fired = nudge_summary.get("fired", 0)
+        if n_fired:
+            import json as _json
+            from datetime import datetime, timezone
+            # attribute the nudge to its OWN routine_id so the activity feed shows it.
+            db.record_run(
+                service.JOURNAL_NUDGE_ID, "warn",
+                datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                detail=_json.dumps({"kind": "nudge", "fired": n_fired,
+                                    "channels": [n["channel"] for n in nudge_summary.get("nudges", [])]}),
+            )
+            detail += f" | journal-nudge: {n_fired} rung(s) entered"
+    except Exception as exc:  # noqa: BLE001 — a nudge failure must NOT fail the poll (add-on)
+        logger.warning("market-poll: journal-nudge add-on failed (poll unaffected): %s", exc)
+        detail += " | journal-nudge ERR"
+
     return status, detail
 
 

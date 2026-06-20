@@ -236,10 +236,13 @@ def test_list_routines_shape_and_stats(isolated_paths):
     # run one routine so it has a run_log row
     auto.record_routine_run("idle-hunter", lambda: ("ok", "none idle"))
     view = auto.list_routines()
-    assert view.total == 8  # +held-history (#62 FINANCE-AUDIT-S3); was 7 (#52 macro-snapshot)
+    # JOURNAL-NUDGE (#14) Part 3: +macro-poll +news-capture (routine-attribution catalog entries
+    # for run_log ids that existed but weren't catalogued). Was 8 (#62 +held-history).
+    assert view.total == 10
     ids = {r.id for r in view.routines}
     assert ids == {"market-poll", "wiki-refresh", "idle-hunter", "pattern-check",
-                   "journal-nudge", "morning-pull", "macro-snapshot", "held-history"}
+                   "journal-nudge", "morning-pull", "macro-snapshot", "held-history",
+                   "macro-poll", "news-capture"}
     idle = next(r for r in view.routines if r.id == "idle-hunter")
     assert idle.runs >= 1 and idle.lastResult == "ok" and idle.lastRun is not None
     assert view.runsToday >= 1 and view.lastRunAt is not None
