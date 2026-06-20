@@ -72,11 +72,15 @@ services:
       args:
         # Client-side (browser) base URL → MUST be the host-published BE port,
         # NOT http://backend:8686 (service name resolves only inside the network).
-        API_BASE: http://localhost:8686
+        # Tailscale multi-device (PA1): this is the HOST's Tailscale IP so a client
+        # browser on another Tailnet device calls the BE on the HOST, not its own
+        # localhost. For host-only dev, localhost also works (the IP just routes via
+        # Tailscale). Override per-host via API_BASE / NEXT_PUBLIC_API_BASE.
+        API_BASE: ${LIFEOS_API_BASE:-http://100.113.13.30:8686}
     ports:
       - "3010:3010"
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8686
+      NEXT_PUBLIC_API_BASE: ${LIFEOS_API_BASE:-http://100.113.13.30:8686}
     volumes:
       - ./frontend:/app
       # Anonymous volumes so the host's (empty/platform-mismatched) dirs don't
