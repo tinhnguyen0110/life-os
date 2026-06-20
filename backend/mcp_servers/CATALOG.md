@@ -1,15 +1,20 @@
 # life-os MCP Tool Catalog
 
 > **The canonical, always-current catalog is the MCP tool `list_tools_catalog()`** on the
-> read-server — it is DERIVED from the live tool registries, so it never drifts. This doc is a
-> human-readable snapshot generated from that tool; if it disagrees with `list_tools_catalog()`,
-> the tool is right. (Regenerate: see the generator at the bottom.)
+> read-server — it is DERIVED from the live tool registries, so it never drifts. As of #32 it walks
+> EVERY mount (read · write · wiki-read · wiki-write · finance · reminders), not just the shared
+> read+write servers — so this doc's wiki/finance/reminders sections are now generator-covered too.
+> This doc is a human-readable snapshot; if it disagrees with `list_tools_catalog()`, the tool is
+> right. (Regenerate: see the generator at the bottom.)
 
-Totals: **61 tools** across 4 servers (MCP-DEDUP #70), + 1 per-domain narrow read view (MCP-DOMAINS):
-- whole-app shared: **40 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+Mounts (every server `list_tools_catalog()` enumerates — #32):
+- whole-app shared: **41 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **11 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
-  (the SAME 15 fn objects, zero dup), for a finance-only agent. Adds NO new tools to the 61 total.
+  (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
+  `read` in the catalog (the honest "what THIS agent sees" view) — adds no NEW tool fns.
+- reminders domain (writable): **3 reminders** — `/mcp/reminders` — reminders_list (read) +
+  reminder_create/reminder_tick (reversible single-user direct write, no proposal gate).
 
 The wiki tools were CONSOLIDATED onto the standalone wiki servers (no longer duplicated on the
 shared servers). The shared write-server's `propose_note` was renamed `propose_quicknote` (the
@@ -67,7 +72,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
 | `proposal_stats` |  | Counts of the agent's proposals by status (pending/accepted/rejected) so the |
-| `list_tools_catalog` | ✓ | The agent's self-discovery index: every MCP tool across BOTH servers as |
+| `list_tools_catalog` | ✓ | The agent's self-discovery index: every MCP tool across ALL MOUNTS (read/write/wiki/finance/reminders) as |
 
 ## Write tools (write-server — ENQUEUE proposals only; human applies)
 
@@ -88,9 +93,8 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | `wiki_search` | wiki-read | Full-text search the vault → ranked results [{id, title, snippet, status}] |
 | `wiki_overview` | wiki-read | Vault overview: {stats, inbox, orphans, recentActivity, proposalCount} + warning |
 | `wiki_inbox` | wiki-read | Fleeting notes awaiting triage (oldest→newest) |
-| `wiki_graph` | wiki-read | Ego-graph (1–2 hop) around a note: {center, nodes, edges, clusters} |
 | `wiki_get_note` | wiki-read | One note by its INTEGER id (the citation key); missing → {found: False} |
-| `wiki_backlinks` | wiki-read | Backlinks for a note: {linked, unlinked, outbound} |
+| `wiki_context` | wiki-read | A note's full neighborhood in ONE call: {found, note_id, graph, backlinks}. Supersedes wiki_graph + wiki_backlinks (#23). |
 | `wiki_recent_ops` | wiki-read | Recent wiki mutations (op-log activity feed), newest first |
 | `wiki_clusters` | wiki-read | MOC candidates: graph-detected clusters of linked notes (W5a) |
 | `wiki_verify_citations` | wiki-read | Post-verify citations (anti-fabrication gate): verified/rejected/ungrounded/weakly_grounded |
@@ -102,6 +106,14 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | `propose_unlink` | wiki-write | Propose REMOVING a [[target]] link from a wiki note → wiki_proposals queue |
 | `propose_merge` | wiki-write | Propose MERGING wiki note source_id INTO target_id → wiki_proposals queue |
 | `propose_moc` | wiki-write | Propose a wiki Map-of-Content note → wiki_proposals queue |
+
+## Reminders tools (reminders domain — `/mcp/reminders`; reversible single-user direct write)
+
+| Tool | Server | Description |
+|---|---|---|
+| `reminders_list` | reminders | What's on the user's plate: reminders by `filter` (today\|week\|undone\|all) |
+| `reminder_create` | reminders | Create a reminder — DIRECT write-through (no proposal gate; reversible single-user CRUD) |
+| `reminder_tick` | reminders | Mark a reminder done — DIRECT write-through, IDEMPOTENT (re-ticking keeps the first done_at) |
 
 ## Regenerate this doc
 

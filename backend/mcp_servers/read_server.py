@@ -682,48 +682,84 @@ def _is_neutral(fn: Callable[..., Any]) -> bool:
     return "neutral" in (fn.__doc__ or "").lower()
 
 
-def list_tools_catalog() -> dict[str, Any]:
-    """The agent's self-discovery index: every MCP tool across BOTH servers as
-    machine-readable metadata so a future agent can enumerate its own capabilities
-    instead of hard-coding tool names. Each entry: {name, server (read|write),
-    capability (read|propose), neutral (bool), description (1-line)}.
+# ALL mounted MCP servers (#32) — mirrors main.py's _MCP_MOUNTS so the catalog walks EVERY mount,
+# not just the shared read+write. Each entry: (server-label, module-path, capability). The label is
+# the agent-facing server name (matches the /mcp/<label> mount); capability is "read" (read-only
+# servers) or "propose" (write/proposal servers). A test asserts this list stays in sync with
+# main._MCP_MOUNTS so a new mount can't be silently missed. Modules are imported LAZILY inside
+# list_tools_catalog() (NEVER at module top-level) for metadata only — keeps this read-server's
+# no-write-gate namespace pristine (test_catalog_does_not_grant_write_capability).
+_CATALOG_MOUNTS: list[tuple[str, str, str]] = [
+    ("read", "mcp_servers.read_server", "read"),
+    ("write", "mcp_servers.write_server", "propose"),
+    ("wiki-read", "modules.wiki.mcp.read_server", "read"),
+    ("wiki-write", "modules.wiki.mcp.write_server", "propose"),
+    ("finance", "mcp_servers.finance_server", "read"),
+    ("reminders", "mcp_servers.reminders_server", "read"),
+]
 
-    DERIVED from the live tool registries (this read-server's TOOLS + the write-
-    server's TOOLS, imported lazily for metadata only — the propose fns are never
-    called here), so the catalog can never drift from what the servers actually expose.
+
+def list_tools_catalog() -> dict[str, Any]:
+    """The agent's self-discovery index: every MCP tool across ALL MOUNTED SERVERS as
+    machine-readable metadata so an agent can enumerate its own capabilities instead of
+    hard-coding tool names. Each entry: {name, server (the mount label), capability
+    (read|propose), neutral (bool), description (1-line)}.
+
+    #32: walks EVERY mount in _CATALOG_MOUNTS (read, write, wiki-read, wiki-write, finance,
+    reminders) — mirroring main.py's _MCP_MOUNTS — not just the shared read+write. Each
+    module is DERIVED from its live TOOLS registry, imported LAZILY for metadata only (name +
+    docstring; the propose/write fns are NEVER called here), so the catalog can never drift
+    from what the servers actually mount, and building it binds NO write symbol into this
+    read-server's namespace (the no-write gate stays pristine).
+
+    NOTE on per-mount counts (the honest "what THIS agent sees" view): a tool can appear under
+    MORE THAN ONE mount — e.g. the 15 finance tools are reference-imported by the /mcp/finance
+    domain server AND already in /mcp/read, so they're listed under BOTH ("finance" and "read").
+    That is CORRECT: a finance-scoped agent on /mcp/finance sees 15; a general agent on /mcp/read
+    sees the full read set. ``counts`` carries a per-mount breakdown; ``counts.read``/``write``/
+    ``total`` are KEPT for backward-compat (read = the shared read-server, write = the shared
+    write-server, total = read+write — the historical meaning consumers rely on).
 
     CAPABILITY BOUNDARY (stated explicitly so the agent reasons within it):
-      - READ tools (this server) only read; they write NOTHING.
-      - WRITE tools (write-server) only ENQUEUE proposals (status=pending) — the agent
-        PROPOSES; it can NEVER apply/accept its own proposal. Applying is HUMAN-ONLY,
-        via the /agent-proposals REST surface (human disposes). The agent can READ the
-        verdict back (check_proposal_status / list_my_proposals / proposal_stats) to
-        learn, but cannot ratify.
+      - READ servers (read, wiki-read, finance, reminders-read) only read; they write NOTHING.
+      - WRITE/PROPOSE servers (write, wiki-write) only ENQUEUE proposals (status=pending) — the
+        agent PROPOSES; it can NEVER apply/accept its own proposal. Applying is HUMAN-ONLY, via
+        the /agent-proposals REST surface (human disposes). The agent can READ the verdict back
+        (check_proposal_status / list_my_proposals / proposal_stats) to learn, but cannot ratify.
+        (reminders is a reversible single-user direct-write domain — labelled capability "read"
+        for its read tool; its write tools, if surfaced, propose nothing — out of the proposal gate.)
       - Analysis tools are NEUTRAL data (no buy/sell advice); the agent does the reasoning.
     READ-ONLY: this tool lists capabilities; it does not grant any."""
+    import importlib
+
     tools: list[dict[str, Any]] = []
-    # read-server tools (this module's live registry)
-    for name, fn in TOOLS.items():
-        tools.append({
-            "name": name, "server": "read", "capability": "read",
-            "neutral": _is_neutral(fn), "description": _one_line(fn),
-        })
-    # write-server tools — lazy import for METADATA only (name + docstring). Importing
-    # inside the fn keeps this module's import-time namespace free of the write server
-    # (the no-write gate stays pristine); the propose fns are read for description, never
-    # invoked.
-    from mcp_servers import write_server as _write_server
-    for name, fn in _write_server.TOOLS.items():
-        tools.append({
-            "name": name, "server": "write", "capability": "propose",
-            "neutral": _is_neutral(fn), "description": _one_line(fn),
-        })
+    per_mount: dict[str, int] = {}
+    for label, mod_path, capability in _CATALOG_MOUNTS:
+        # lazy import for METADATA only — never bound at module level, never invoked.
+        mod = importlib.import_module(mod_path)
+        mount_tools = getattr(mod, "TOOLS", {})
+        per_mount[label] = len(mount_tools)
+        for name, fn in mount_tools.items():
+            tools.append({
+                "name": name, "server": label, "capability": capability,
+                "neutral": _is_neutral(fn), "description": _one_line(fn),
+            })
     return {
         "tools": tools,
         "counts": {
-            "read": sum(1 for t in tools if t["server"] == "read"),
-            "write": sum(1 for t in tools if t["server"] == "write"),
-            "total": len(tools),
+            # backward-compat: read = shared read-server, write = shared write-server, total = both.
+            "read": per_mount.get("read", 0),
+            "write": per_mount.get("write", 0),
+            "total": per_mount.get("read", 0) + per_mount.get("write", 0),
+            # #32: the full per-mount breakdown (every mount, incl. wiki/finance/reminders).
+            "byMount": per_mount,
+            "allMounts": len(tools),
+            # per-mount counts can OVERLAP where a domain server reference-imports shared fns
+            # (e.g. /mcp/finance's 15 are the SAME fn objects as 15 of /mcp/read's; reminders_list
+            # is on both /mcp/read and /mcp/reminders). So sum(byMount) > distinct tool count — that
+            # is the honest "what THIS agent sees per mount" view, NOT inflation of distinct tools.
+            "note": "per-mount counts overlap where a domain server reference-imports shared fns; "
+                    "allMounts is the listing length (with overlaps), not the distinct-fn total.",
         },
         "capabilityBoundary": {
             "read": "reads only — writes nothing",

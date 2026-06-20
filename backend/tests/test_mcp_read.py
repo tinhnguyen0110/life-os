@@ -862,28 +862,86 @@ def test_feedback_loop_rejected_visible_to_agent(app_db):
 # --------------------------------------------------------------------------- #
 def test_catalog_count_matches_real_servers(app_db):
     """The catalog must list EXACTLY the tools the servers expose — no more, no less.
-    Derived from the live registries, so it cannot drift (the anti-hardcode guard)."""
+    Derived from the live registries, so it cannot drift (the anti-hardcode guard).
+    #32: backward-compat counts.read/write/total still mean the SHARED read/write servers."""
     from mcp_servers import write_server as ws
 
     cat = rs.list_tools_catalog()
+    # backward-compat: read = shared read-server, write = shared write-server, total = both.
     assert cat["counts"]["read"] == len(rs.TOOLS)
     assert cat["counts"]["write"] == len(ws.TOOLS)
     assert cat["counts"]["total"] == len(rs.TOOLS) + len(ws.TOOLS)
-    # the SET of names matches too (not just the count)
+    # the shared-server tools are present with the right labels (subset of the full all-mount list)
     listed = {(t["server"], t["name"]) for t in cat["tools"]}
-    expected = {("read", n) for n in rs.TOOLS} | {("write", n) for n in ws.TOOLS}
-    assert listed == expected, f"catalog drift: {listed ^ expected}"
+    shared = {("read", n) for n in rs.TOOLS} | {("write", n) for n in ws.TOOLS}
+    assert shared <= listed, f"catalog dropped shared-server tools: {shared - listed}"
 
 
 def test_catalog_every_tool_has_description_and_fields(app_db):
     cat = rs.list_tools_catalog()
+    valid_servers = {"read", "write", "wiki-read", "wiki-write", "finance", "reminders"}
     for t in cat["tools"]:
         assert set(t) >= {"name", "server", "capability", "neutral", "description"}
         assert t["description"], f"{t['name']} has no description"
-        assert t["server"] in ("read", "write")
+        assert t["server"] in valid_servers, f"{t['name']} on unknown server {t['server']}"
         assert t["capability"] in ("read", "propose")
         assert isinstance(t["neutral"], bool)
     json.dumps(cat)
+
+
+# --------------------------------------------------------------------------- #
+# #32 — catalog walks ALL mounts (read/write/wiki-read/wiki-write/finance/reminders) #
+# --------------------------------------------------------------------------- #
+def test_catalog_walks_all_mounts(app_db):
+    """#32: the catalog enumerates EVERY mounted server, not just shared read+write. Each mount's
+    live TOOLS appear under its server label — so an agent can discover the wiki/finance/reminders
+    capabilities that the old (shared-only) catalog hid."""
+    import importlib
+
+    cat = rs.list_tools_catalog()
+    listed = {(t["server"], t["name"]) for t in cat["tools"]}
+    by_mount = cat["counts"]["byMount"]
+    # every mount in the registry is represented with its FULL live tool set
+    for label, mod_path, _cap in rs._CATALOG_MOUNTS:
+        mod = importlib.import_module(mod_path)
+        for name in mod.TOOLS:
+            assert (label, name) in listed, f"catalog missing {label}/{name}"
+        assert by_mount[label] == len(mod.TOOLS), f"byMount[{label}] != live TOOLS count"
+    # the specific tools team-lead's verify names: wiki_context + the 11 wiki-read, finance, reminders
+    assert ("wiki-read", "wiki_context") in listed
+    assert by_mount["wiki-read"] == 11
+    assert by_mount["wiki-write"] == 6
+    assert by_mount["finance"] == 15
+    assert by_mount["reminders"] == 3
+
+
+def test_catalog_mounts_in_sync_with_main(app_db):
+    """The catalog's mount registry MUST mirror main._MCP_MOUNTS — so a NEW mount added to the app
+    can't be silently missed by the catalog (it'd fail here until added to _CATALOG_MOUNTS too)."""
+    import main
+    catalog_modpaths = {mod_path for _label, mod_path, _cap in rs._CATALOG_MOUNTS}
+    app_modpaths = {mod_path for _path, mod_path in main._MCP_MOUNTS}
+    assert catalog_modpaths == app_modpaths, (
+        f"catalog mount registry out of sync with main._MCP_MOUNTS: "
+        f"only-in-catalog={catalog_modpaths - app_modpaths}, "
+        f"only-in-app={app_modpaths - catalog_modpaths}"
+    )
+
+
+def test_catalog_finance_double_listed_under_read_and_finance(app_db):
+    """The documented per-mount truth: a finance tool reference-imported by /mcp/finance appears
+    under BOTH 'read' (the shared server has it) AND 'finance' (the domain server) — the honest
+    'what THIS agent sees' view, NOT a bug. Assert at least one such tool is double-listed."""
+    from mcp_servers import finance_server as fs
+
+    cat = rs.list_tools_catalog()
+    listed = {(t["server"], t["name"]) for t in cat["tools"]}
+    # finance tools that are ALSO in the shared read server → must appear under both labels
+    shared_finance = [n for n in fs.TOOLS if n in rs.TOOLS]
+    assert shared_finance, "expected finance tools shared with the read server"
+    for n in shared_finance:
+        assert ("finance", n) in listed and ("read", n) in listed, \
+            f"{n} should be listed under both 'finance' and 'read'"
 
 
 def test_catalog_states_capability_boundary(app_db):
