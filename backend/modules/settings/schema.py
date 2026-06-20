@@ -31,10 +31,13 @@ class AppConfig(BaseModel):
     displayName: str = Field(default="", max_length=80, description="owner display name (stored-only this sprint; may be empty)")
     # W4d (USER-ORDERED, reverses D8 proposals-only). ON = agent/MCP writes apply to
     # the vault DIRECTLY (auto-accepted via the proposal chokepoint, decidedBy=
-    # "agent:auto", still fully audited + visible in P1 history). OFF (default) =
-    # proposals-only, human ratifies in P1 (the north-star). Defaults OFF so the safe
-    # behavior holds for a fresh/absent config.
-    wikiAgentAutonomous: bool = Field(default=False, description="ON = agent writes apply directly (bypass the human-ratify queue); OFF (default) = proposals-only")
+    # "agent:auto", still fully audited + visible in P1 history). WIKI-WRITE-THROUGH (#25,
+    # USER-CHỐT + team-lead-approved): the DEFAULT is now ON — wiki is agent-centric and every
+    # mutation is memory-reversible (op-log + note CRUD), so the agent writes THROUGH and the
+    # human traces/overrides; only IRREVERSIBLE ops would gate, and wiki has none. OFF restores
+    # proposals-only (the escape hatch — agent writes land pending for human ratify). Still flows
+    # through the ONE create_proposal→accept chokepoint either way (audited, rollback-able).
+    wikiAgentAutonomous: bool = Field(default=True, description="ON (default, #25 write-through) = agent writes apply directly, fully audited + reversible; OFF = proposals-only (human ratifies in P1)")
     # FINANCE-ASSISTANT P3 (#55): the capital-size risk thresholds allocation_target reads —
     # USER-CONFIGURABLE (the user owns their risk appetite; we default, they override). Capital
     # < small → may tilt aggressive; ≥ large → fractional-Kelly conservative; smooth between.

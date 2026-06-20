@@ -167,3 +167,45 @@ class TestMdStoreEdgeCases:
         """Passing message=None should work (defaults gracefully)."""
         sha = md_store.write("default_msg.md", "hi", None)
         assert isinstance(sha, str) and len(sha) == 40
+
+
+# ---------------------------------------------------------------------------
+# #25 hardening — a STALE leftover .<name>.tmp must not block the next write
+# ---------------------------------------------------------------------------
+class TestStaleTmpCleanup:
+    def test_stale_tmp_does_not_block_write(self, tmp_path):
+        """A prior crashed/interrupted write can leave a stale ``.<name>.tmp``. The next write
+        must SUCCEED (clear the stale tmp + write the note) — the Permission/conflict the live
+        arc hit on .22.md.tmp. Pre-seed a stale tmp, then write the real file → it lands."""
+        # first write so the repo + dir exist
+        md_store.write("notes/n.md", "v1", "init")
+        # simulate a stale leftover tmp from a crashed prior write
+        stale = tmp_path / "notes" / ".n.md.tmp"
+        stale.write_text("garbage from a crashed write")
+        assert stale.exists()
+        # the next write must succeed (clears the stale tmp, writes the fresh content)
+        sha = md_store.write("notes/n.md", "v2", "second write over a stale tmp")
+        assert isinstance(sha, str) and len(sha) == 40
+        assert md_store.read("notes/n.md") == "v2", "the fresh content landed"
+        # the stale tmp is gone (consumed by the atomic write→rename)
+        assert not stale.exists(), "the stale tmp must be cleared, not left behind"
+
+    def test_atomicity_preserved_no_tmp_after_write(self, tmp_path):
+        """After a successful write, NO .tmp lingers (the os.replace consumed it) — a concurrent
+        reader of the note never sees a partial file (the rename is what's visible)."""
+        md_store.write("notes/atomic.md", "final content", "atomic write")
+        tmp = tmp_path / "notes" / ".atomic.md.tmp"
+        assert not tmp.exists(), "no .tmp may linger after a successful atomic write"
+        assert md_store.read("notes/atomic.md") == "final content"
+
+    def test_stale_tmp_for_a_brand_new_file(self, tmp_path):
+        """A stale tmp for a file that doesn't exist yet (a crashed FIRST write) → the create
+        still succeeds (clears the stale tmp + creates the note)."""
+        md_store.write("seed.md", "x", "seed")  # init the repo
+        stale = tmp_path / "notes" / ".brand_new.md.tmp"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale from a crashed create")
+        sha = md_store.write("notes/brand_new.md", "created", "create over stale tmp")
+        assert isinstance(sha, str) and len(sha) == 40
+        assert md_store.read("notes/brand_new.md") == "created"
+        assert not stale.exists()

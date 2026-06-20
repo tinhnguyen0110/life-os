@@ -29,7 +29,7 @@ def test_defaults_match_current_behavior(isolated_paths):
     assert c.errorChannel == "inapp"
     assert c.timezone == "Asia/Ho_Chi_Minh"  # dispatch default
     assert c.displayName == ""                # dispatch default (stored-only, may be empty)
-    assert c.wikiAgentAutonomous is False     # W4d: SAFE default OFF (proposals-only north-star)
+    assert c.wikiAgentAutonomous is True      # WIKI-WRITE-THROUGH #25: default ON (write-through, audited+reversible); was OFF (W4d)
 
 
 def test_wiki_agent_autonomous_patch_round_trips(isolated_paths):

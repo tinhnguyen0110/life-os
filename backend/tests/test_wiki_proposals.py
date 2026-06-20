@@ -443,14 +443,30 @@ def _set_autonomous(on: bool) -> None:
     cfg.set_config(AppConfigPatch(wikiAgentAutonomous=on))
 
 
-def test_autonomy_off_default_proposal_stays_pending(wiki_db):
-    # default OFF (fresh config) — even an eligible caller's propose stays pending.
+def test_autonomy_off_proposal_stays_pending(wiki_db):
+    # WIKI-WRITE-THROUGH (#25): default is now ON, so EXPLICITLY set OFF (the escape hatch) →
+    # even an eligible caller's propose stays pending (proposals-only restored). Was the default-
+    # OFF test; #25 flipped the default, so OFF is now the opt-in path tested here.
+    _set_autonomous(False)
     before = wiki_store.count_notes()
     p = psvc.create_proposal(ProposalCreateInput(
         kind="note_create", payload={"title": "x"}, actor="mcp:writer",
     ), auto_apply_eligible=True)
     assert p["status"] == "pending"
     assert wiki_store.count_notes() == before
+
+
+def test_autonomy_default_is_on_eligible_caller_auto_applies(wiki_db):
+    # #25: the DEFAULT (fresh config, no toggle set) is now write-through — an eligible caller's
+    # propose AUTO-APPLIES with no explicit toggle. (Was: default OFF → pending; #25 inverts it.)
+    before = wiki_store.count_notes()
+    p = psvc.create_proposal(ProposalCreateInput(
+        kind="note_create", payload={"title": "default-on", "content": "body"},
+        actor="mcp:writer",
+    ), auto_apply_eligible=True)
+    assert p["status"] == "accepted" and p["decidedBy"] == "agent:auto"
+    assert p["appliedNoteId"] is not None
+    assert wiki_store.count_notes() == before + 1
 
 
 def test_autonomy_on_eligible_caller_auto_applies(wiki_db):

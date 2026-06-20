@@ -47,7 +47,7 @@ def test_get_settings_defaults(app_client):
                       # #72 SIDEBAR-UX: backend-persisted pinned sidebar routes (multi-device)
                       "pinnedRoutes"}
     assert d["briefHour"] == 8 and d["idleThresholdDays"] == 7 and d["automationEnabled"] is True
-    assert d["wikiAgentAutonomous"] is False  # W4d safe default OFF
+    assert d["wikiAgentAutonomous"] is True  # WIKI-WRITE-THROUGH #25: default ON (was OFF, W4d)
     assert d["riskCapitalSmallUsd"] == 50000.0 and d["riskCapitalLargeUsd"] == 500000.0  # #55 defaults
     assert d["pinnedRoutes"] == []  # #72 default: no pins → empty list (not missing/null)
 
@@ -154,10 +154,12 @@ def test_wiki_agent_autonomous_toggle_on_persists(app_client):
     assert g["wikiAgentAutonomous"] is True
 
 
-def test_wiki_agent_autonomous_off_is_default(app_client):
-    """wikiAgentAutonomous default is False (safe proposals-only mode). W4d trust boundary."""
+def test_wiki_agent_autonomous_on_is_default(app_client):
+    """WIKI-WRITE-THROUGH #25: wikiAgentAutonomous default is now True (write-through — agent
+    writes apply directly, audited + reversible). Was False (W4d proposals-only). The escape
+    hatch (OFF → proposals-only) is the round-trip test below."""
     d = app_client.get("/settings").json()["data"]
-    assert d["wikiAgentAutonomous"] is False
+    assert d["wikiAgentAutonomous"] is True
 
 
 def test_wiki_agent_autonomous_round_trip_on_then_off(app_client):

@@ -27,6 +27,13 @@ from modules.wiki.mcp import read_server
 def wiki_db(isolated_paths):
     wiki_store.init_wiki_tables()
     pstore.init_proposal_tables()
+    # WIKI-WRITE-THROUGH (#25): the DEFAULT is now write-through (writes auto-apply, no pending
+    # row). These proposal-READBACK tests need PENDING proposals in the queue to read back, so set
+    # the toggle OFF (proposals-only) for this file — the readback tools are exercised against the
+    # pending queue exactly as before the default flip.
+    from modules.settings import service as _ssvc
+    from modules.settings.schema import AppConfigPatch as _Patch
+    _ssvc.set_config(_Patch(wikiAgentAutonomous=False))
     return isolated_paths
 
 
@@ -211,7 +218,7 @@ def test_wiki_proposal_status_reads_wiki_queue(wiki_db):
     """wiki_proposal_status reads back a wiki proposal's disposition — found + pending,
     with kind/rationale. Created via the canonical wiki write server's propose_note."""
     from modules.wiki.mcp import write_server as wws
-    pid = wws.propose_note("NB3 note", "body", rationale="because NB3 read-back")["id"]
+    pid = wws.propose_note("NB3 note", "body", rationale="because NB3 read-back")["proposalId"]
     out = read_server.wiki_proposal_status(pid)
     assert out["found"] is True
     assert out["proposalId"] == pid
@@ -232,8 +239,8 @@ def test_wiki_list_proposals_and_counts(wiki_db):
     from modules.wiki.mcp import write_server as wws
     empty = read_server.wiki_list_proposals()
     assert empty["proposals"] == [] and empty["counts"].get("pending", 0) == 0
-    p1 = wws.propose_note("first", "b", rationale="r1")["id"]
-    p2 = wws.propose_note("second", "b", rationale="r2")["id"]
+    p1 = wws.propose_note("first", "b", rationale="r1")["proposalId"]
+    p2 = wws.propose_note("second", "b", rationale="r2")["proposalId"]
     out = read_server.wiki_list_proposals()
     ids = [p["id"] for p in out["proposals"]]
     assert ids == [p2, p1]  # newest-first
@@ -245,7 +252,7 @@ def test_wiki_proposal_readback_byte_identical_to_old_embedded(wiki_db):
     """PORT INVARIANT (#70): the ported tools' payload == what the OLD embedded shared
     tools produced. Pin the exact shape so the move didn't drift a field."""
     from modules.wiki.mcp import write_server as wws
-    pid = wws.propose_note("Pin shape", "b", rationale="exact-shape pin")["id"]
+    pid = wws.propose_note("Pin shape", "b", rationale="exact-shape pin")["proposalId"]
     status = read_server.wiki_proposal_status(pid)
     assert set(status) == {"found", "proposalId", "kind", "status", "targetId",
                            "appliedNoteId", "decidedBy", "decided", "rationale"}
@@ -257,7 +264,7 @@ def test_wiki_proposal_readback_tools_audit(wiki_db):
     """The ported reads audit too (the standalone convention — every call appends one
     wiki_mcp_audit row). Fail-soft: an audit failure never breaks the read."""
     from modules.wiki.mcp import write_server as wws
-    pid = wws.propose_note("audited", "b", rationale="audit me")["id"]
+    pid = wws.propose_note("audited", "b", rationale="audit me")["proposalId"]
     read_server.wiki_proposal_status(pid)
     read_server.wiki_list_proposals()
     rows = pstore.recent_audit(limit=50)

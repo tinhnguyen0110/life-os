@@ -312,6 +312,25 @@ def reject_proposal(proposal_id: int, decided_by: str = "human") -> dict[str, An
     return result
 
 
+def supersede_pending() -> int:
+    """WIKI-WRITE-THROUGH (#25): one-shot — close out the legacy PENDING proposal queue (the
+    dogfood artifacts left from the proposals-only era). With write-through the default, those
+    pending rows will never be human-ratified; reject each with decided_by='superseded:write-
+    through' so the AUDIT HISTORY is KEPT (no hard-delete — the trace survives) and they leave the
+    open queue. Returns the count superseded. Idempotent — once none are pending, re-run does 0.
+    A re-runnable helper (NOT a startup hook); invoked once against the live store after #25 lands."""
+    superseded = 0
+    for p in pstore.list_proposals(status="pending"):
+        try:
+            reject_proposal(int(p["id"]), decided_by="superseded:write-through")
+            superseded += 1
+        except (ProposalNotFound, AlreadyDecided):  # raced/already decided → skip
+            continue
+    if superseded:
+        logger.info("wiki: superseded %d legacy pending proposal(s) (write-through default)", superseded)
+    return superseded
+
+
 def batch_accept(ids: list[int], decided_by: str = "human") -> dict[str, Any]:
     """Accept many proposals (the P1 batch action). Each is applied independently;
     one failure NEVER aborts the rest (one bad proposal can't block the batch).

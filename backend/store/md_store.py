@@ -59,9 +59,22 @@ def _ensure_repo(root: Path) -> None:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write content to path atomically via temp-file + os.replace."""
+    """Write content to path atomically via temp-file + os.replace.
+
+    #25 hardening: clear any STALE leftover ``.<name>.tmp`` before the fresh write. A prior
+    crashed/interrupted/cross-process write can leave a stale tmp behind that conflicts the next
+    write (the Permission-denied seen on ``.22.md.tmp``). Removing it first is fail-SOFT (an
+    unlink error must NOT break the write) and does NOT touch the atomicity contract — we still
+    write the fresh tmp → fsync → os.replace (atomic on POSIX); a concurrent reader of ``path``
+    never sees a partial file (the rename is what's visible, never the tmp)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / f".{path.name}.tmp"
+    # clear a stale pre-existing tmp (best-effort — a failed unlink shouldn't abort the write;
+    # the open(..., "w") below truncates anyway, this just rescues an un-writable stale tmp).
+    try:
+        tmp.unlink(missing_ok=True)
+    except OSError as exc:  # e.g. a perms-locked stale tmp — log + continue (open "w" may still win)
+        logger.warning("stale tmp %s could not be removed (continuing): %s", tmp, exc)
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(content)
         fh.flush()
