@@ -26,6 +26,7 @@ class Sources:
     finance: object | None = None         # FinanceOverview
     market: dict | None = None            # {quotes, triggers, macro}
     claude: object | None = None          # ClaudeUsage
+    reminders: list | None = None         # REMINDERS-4 (#30): list[Reminder] un-done (week+overdue)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -66,5 +67,17 @@ def pull() -> Sources:
     except Exception as exc:
         logger.error("brief: claude_usage read failed: %s", exc)
         src.warnings.append(f"claude nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        # REMINDERS-4 (#30): un-done reminders for the priority rule. 'undone' gives all un-done
+        # (the rule filters overdue/due-today via the reader's overdue field + due_at) — reuse the
+        # #29 reader, no new read path.
+        from modules.reminders import service as rem
+        view, w = rem.list_reminders("undone")
+        src.reminders = view.reminders
+        src.warnings.extend(w or [])
+    except Exception as exc:
+        logger.error("brief: reminders read failed: %s", exc)
+        src.warnings.append(f"reminders nguồn lỗi ({type(exc).__name__})")
 
     return src

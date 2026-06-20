@@ -16,7 +16,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Severity = Literal["info", "warn", "urgent"]
-PrioritySource = Literal["market", "projects", "claude", "finance", "alerts"]
+# REMINDERS-4 (#30): +reminders (the priority rule's source).
+PrioritySource = Literal["market", "projects", "claude", "finance", "alerts", "reminders"]
 
 
 class Priority(BaseModel):

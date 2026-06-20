@@ -33,14 +33,14 @@ HISTORY_DIR = "brief"  # md_store brief/<date>.md (T2 owns the write side)
 # Severity rank for the display sort (higher = shown first).
 _SEV_RANK = {"urgent": 3, "warn": 2, "info": 1}
 # Rule order = generation order = stable tiebreak within a severity (architect Logic).
-_RULE_ORDER = {"market": 1, "projects": 2, "claude": 3, "finance": 4, "alerts": 5}
+_RULE_ORDER = {"market": 1, "projects": 2, "claude": 3, "finance": 4, "alerts": 5, "reminders": 6}
 
 LADDER_NEAR_PCT = 2.0   # next rung within ≤2% → info ("sắp chạm rung")
 CLAUDE_URGENT_PCT = 90.0
 CLAUDE_WARN_PCT = 75.0
 IDLE_DAYS = 7
 BUILD90_PROGRESS = 90
-PRIORITY_CAP = 5
+PRIORITY_CAP = 6  # REMINDERS-4 (#30): +reminders rule → 6 rules, cap 6 so none is silently dropped
 
 
 def _now_iso() -> str:
@@ -91,6 +91,26 @@ def _project_priority(projects: list | None) -> Priority | None:
         p = max(idle, key=lambda x: x.lastDays or 0)
         return Priority(n=0, source="projects", severity="warn",
                         text=f"{p.name} đứng {p.lastDays} ngày — xem lại hay bỏ?")
+    return None
+
+
+def _reminders_priority(reminders: list | None) -> Priority | None:
+    """REMINDERS-4 (#30) — any OVERDUE un-done reminder → URGENT; else any DUE-TODAY un-done →
+    WARN; none → nothing (0-1 priority, like the sibling rules). Uses the reader's ``overdue``
+    field (#29 = un-done AND past-due); due-today = un-done, not overdue, due ≤ end-of-today UTC."""
+    if not reminders:
+        return None
+    overdue = [r for r in reminders if getattr(r, "overdue", False)]
+    if overdue:
+        return Priority(n=0, source="reminders", severity="urgent",
+                        text=f"{len(overdue)} nhắc nhở quá hạn — xử lý hoặc đánh dấu xong.")
+    today_end = (datetime.now(timezone.utc)
+                 .replace(hour=23, minute=59, second=59, microsecond=999999).isoformat())
+    due_today = [r for r in reminders
+                 if r.done_at is None and not getattr(r, "overdue", False) and r.due_at <= today_end]
+    if due_today:
+        return Priority(n=0, source="reminders", severity="warn",
+                        text=f"{len(due_today)} nhắc nhở đến hạn hôm nay.")
     return None
 
 
@@ -230,6 +250,7 @@ def generate_brief() -> Brief:
         ("claude", lambda: _claude_priority(src.claude)),
         ("finance", lambda: _finance_priority(src.finance)),
         ("alerts", lambda: _alerts_priority(src.market)),
+        ("reminders", lambda: _reminders_priority(src.reminders)),  # REMINDERS-4 (#30)
     ]
     candidates: list[Priority] = []
     for name, thunk in rules:

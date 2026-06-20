@@ -578,6 +578,8 @@ BRIEF_SECTIONS = {
     "wiki": "wiki",
     # FINANCE-FINISH G1: the decision tower (W/verdict/binding/phase/top-alert).
     "decision": "decision",
+    # REMINDERS-4 (#30): what's on the user's plate (overdue+today+week un-done).
+    "reminders": "reminders",
 }
 
 

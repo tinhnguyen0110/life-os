@@ -889,6 +889,44 @@ def _brief_decisions() -> dict[str, Any]:
     return out
 
 
+def _brief_reminders() -> dict[str, Any]:
+    """REMINDERS-4 (#30): what's on the user's plate — the un-done reminders that are OVERDUE or
+    due-today or due-this-week (the GAP-4 'what's on my plate this week' question). Reuses the #29
+    reminders reader (overdue field + today/week filters); LEAN per item {id,title,due_at,overdue}
+    (the #18/reminders_list precedent — NOT the full 10-field reminder). SORTED overdue→today→week,
+    due_at asc within each band. Honest-empty → {reminders:[], count:0, overdueCount:0} (never
+    omitted/fabricated). De-duped by id (overdue overlaps today/week). source added by _section."""
+    # the 'week' filter (due ≤ now+7d AND un-done) is the superset of today+overdue-within-a-week;
+    # but an OVERDUE reminder can be MORE than a week past due, so union 'week' with 'undone'-overdue.
+    week_view, _w = _reminders_list("week")        # un-done, due ≤ now+7d
+    undone_view, _u = _reminders_list("undone")    # all un-done (to catch overdue >1wk past)
+    by_id: dict[int, Any] = {}
+    for r in week_view.reminders:
+        by_id[r.id] = r
+    for r in undone_view.reminders:
+        if r.overdue and r.id not in by_id:        # include overdue even if >1 week past due
+            by_id[r.id] = r
+    items = list(by_id.values())
+
+    # band: overdue (0) → due-today (1) → this-week (2); within band by due_at asc.
+    today_end = (datetime.now(timezone.utc)
+                 .replace(hour=23, minute=59, second=59, microsecond=999999).isoformat())
+
+    def _band(r) -> int:
+        if r.overdue:
+            return 0
+        return 1 if r.due_at <= today_end else 2
+
+    items.sort(key=lambda r: (_band(r), r.due_at))
+    lean = [{"id": str(r.id), "title": r.title, "due_at": r.due_at, "overdue": r.overdue}
+            for r in items]
+    return {
+        "reminders": lean,
+        "count": len(lean),
+        "overdueCount": sum(1 for r in items if r.overdue),
+    }
+
+
 def _brief_macro() -> dict[str, Any]:
     """Neutral macro snapshot (R2-G1): latest Fed funds rate / US CPI / DXY + a
     DESCRIPTIVE trend. From modules/macro (get_overview → (data, warnings)). NEUTRAL —
@@ -969,6 +1007,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
             "wiki": _section("wiki", _brief_wiki),
             # FINANCE-FINISH G1: the decision tower (W/verdict/binding/phase/top-alert), fail-soft.
             "decision": _section("decision", _brief_decision),
+            # REMINDERS-4 (#30): what's on the user's plate (overdue+today+week un-done), fail-soft.
+            "reminders": _section("reminders", _brief_reminders),
         }
     }
 
