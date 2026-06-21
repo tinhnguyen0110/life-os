@@ -768,6 +768,21 @@ class TestMarketAPI:
             c = _make_client(tmp_path, monkeypatch)
             r = c.get("/market/history/BOGUS_ASSET_XYZ_UNKNOWN")
         assert r.status_code == 404
+        # AGENT-ERROR-P3 (#46): flat agent_error, NOT raw {detail}
+        j = r.json()
+        assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
+
+    @_api
+    def test_correlation_too_few_symbols_is_agent_error(self, tmp_path, monkeypatch):
+        """AGENT-ERROR-P3 (#46): the _parse_symbols sentinel path → flat {error:INVALID_INPUT} (422),
+        NOT raw {detail}. This is the raise-in-helper site converted to a sentinel return (the key
+        conversion — a raise there would've surfaced raw {detail}, breaking REST≡MCP parity)."""
+        with patch("modules.market.reader.httpx.get", return_value=_fake_resp(FAKE_CG)):
+            c = _make_client(tmp_path, monkeypatch)
+            r = c.get("/market/correlation", params={"symbols": "BTC"})  # <2 → 422
+        assert r.status_code == 422
+        j = r.json()
+        assert "detail" not in j and j["error"]["code"] == "INVALID_INPUT" and j["error"]["hint"]
 
     @_api
     def test_post_alert_upsert_one_rule(self, tmp_path, monkeypatch):

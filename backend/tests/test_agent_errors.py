@@ -99,3 +99,30 @@ def test_ambiguous_defaults_not_retryable():
 def test_no_code_is_both_in_never_retryable_and_transient():
     """Sanity: the deterministic (never-retryable) set and the transient set are disjoint."""
     assert DETERMINISTIC.isdisjoint(TRANSIENT)
+
+
+# --------------------------------------------------------------------------- #
+# AGENT-ERROR-P3 (#46): agent_error_response — the REST JSONResponse helper      #
+# --------------------------------------------------------------------------- #
+def test_agent_error_response_status_map():
+    """The REST helper maps each code to its HTTP status + a flat agent_error body."""
+    import json
+    from core.agent_errors import agent_error_response
+    cases = {"NOT_FOUND": 404, "INVALID_INPUT": 422, "AMBIGUOUS": 409,
+             "UPSTREAM_DOWN": 502, "RATE_LIMITED": 429, "CONFLICT": 409}
+    for code, status in cases.items():
+        # AMBIGUOUS/UPSTREAM_DOWN/RATE_LIMITED default retryable per agent_error; deterministic→False.
+        resp = agent_error_response(code, "msg", hint="h")  # type: ignore[arg-type]
+        assert resp.status_code == status
+        body = json.loads(bytes(resp.body))
+        assert body["error"]["code"] == code and body["error"]["message"] == "msg"
+        assert body["error"]["hint"] == "h" and "detail" not in body
+
+
+def test_agent_error_response_is_flat_not_nested_under_detail():
+    """The body is the flat {error:{...}} (a JSONResponse content), NOT nested under 'detail'
+    (which is what HTTPException(detail=agent_error(...)) would wrongly produce)."""
+    import json
+    from core.agent_errors import agent_error_response
+    body = json.loads(bytes(agent_error_response("NOT_FOUND", "x").body))
+    assert set(body) == {"error"} and body["error"]["retryable"] is False

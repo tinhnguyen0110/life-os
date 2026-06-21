@@ -92,7 +92,24 @@ def test_holdings_crud(app_client):
 
 
 def test_holding_delete_404(app_client):
-    assert app_client.delete("/finance/holdings/NOPE").status_code == 404
+    r = app_client.delete("/finance/holdings/NOPE")
+    assert r.status_code == 404
+    # AGENT-ERROR-P3 (#46): flat agent_error body, NOT raw {detail}
+    j = r.json()
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
+
+
+def test_simulate_errors_are_agent_error_shape(app_client):
+    """AGENT-ERROR-P3 (#46): finance/simulate bad-input → flat {error:{code:INVALID_INPUT,...}}
+    (422), matching the MCP finance_simulate twin — NOT raw {detail}."""
+    for bad in ({"allocation": {}}, {"allocation": {"bogus": 50}}, {"allocation": {"crypto": -10}}):
+        r = app_client.post("/finance/simulate", json=bad)
+        assert r.status_code == 422
+        e = r.json()["error"]
+        assert e["code"] == "INVALID_INPUT" and e["retryable"] is False and e["hint"]
+    # the unknown-channel hint names the valid set (the distinguishing)
+    unk = app_client.post("/finance/simulate", json={"allocation": {"bogus": 50}}).json()["error"]
+    assert "crypto" in unk["hint"]
 
 
 def test_holding_422_bad_body(app_client):
@@ -127,7 +144,10 @@ def test_channel_detail(app_client):
 
 
 def test_channel_detail_404(app_client):
-    assert app_client.get("/finance/NoSuchChannel").status_code == 404
+    r = app_client.get("/finance/NoSuchChannel")
+    assert r.status_code == 404
+    j = r.json()  # #46: flat agent_error, not {detail}
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND"
 
 
 def test_static_routes_win_over_channel_param(app_client):

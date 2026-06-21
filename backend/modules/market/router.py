@@ -13,8 +13,10 @@ from __future__ import annotations
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P3 (#46): flat REST error parity w/ MCP twins
 from core.base import BaseModule, Routine
 from core.responses import ok
 from store import db
@@ -46,7 +48,8 @@ def get_history(symbol: str, hours: int = 24):
     """
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if symbol not in tracked:
-        raise HTTPException(status_code=404, detail=f"asset {symbol!r} is not tracked")
+        return agent_error_response("NOT_FOUND", f"asset {symbol!r} is not tracked",
+                                    hint="GET /market for the tracked assets")
     points = service.history(symbol, hours=hours)
     return ok(data={"points": [p.model_dump() for p in points]})
 
@@ -65,7 +68,8 @@ def get_indicators(symbol: str, indicators: str = "summary", hours: int = 720,
     """
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if symbol not in tracked:
-        raise HTTPException(status_code=404, detail=f"asset {symbol!r} is not tracked")
+        return agent_error_response("NOT_FOUND", f"asset {symbol!r} is not tracked",
+                                    hint="GET /market for the tracked assets")
     names = indicators.split(",")
     data, warnings = service.compute_indicators(symbol, names, hours=hours, full=full)
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
@@ -83,16 +87,20 @@ def get_ohlc(symbol: str, hours: int = 168, interval: int = 60):
     """
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if symbol not in tracked:
-        raise HTTPException(status_code=404, detail=f"asset {symbol!r} is not tracked")
+        return agent_error_response("NOT_FOUND", f"asset {symbol!r} is not tracked",
+                                    hint="GET /market for the tracked assets")
     bars, warnings = service.candles(symbol, hours=hours, interval_minutes=interval)
     return ok(data={"symbol": symbol, "interval": interval, "candles": bars},
               warning="; ".join(warnings) if warnings else None)
 
 
 # --- multi-symbol analytics: correlation / comparison / relative strength ----
-def _parse_symbols(symbols: str, *, min_n: int) -> list[str]:
-    """Parse + validate the comma-separated ``symbols`` query. De-duped (order kept),
-    uppercased. <``min_n`` → 422; >10 → 422 (bounded request, N² for correlation)."""
+def _parse_symbols(symbols: str, *, min_n: int) -> tuple[list[str], JSONResponse | None]:
+    """Parse + validate the comma-separated ``symbols`` query. De-duped (order kept), uppercased.
+    Returns ``(parsed, error)`` — error is an agent_error_response (422 INVALID_INPUT) when invalid
+    (<``min_n`` or >max), else None. AGENT-ERROR-P3 (#46): returns the error (caller returns it) rather
+    than raising — a raise from this helper would surface as a raw {detail}, NOT the flat agent_error
+    shape; the sentinel-return mirrors the MCP _parse_symbols_mcp pattern → REST≡MCP error parity."""
     parsed: list[str] = []
     seen: set[str] = set()
     for s in symbols.split(","):
@@ -101,11 +109,14 @@ def _parse_symbols(symbols: str, *, min_n: int) -> list[str]:
             seen.add(sym)
             parsed.append(sym)
     if len(parsed) < min_n:
-        raise HTTPException(status_code=422, detail=f"need ≥{min_n} distinct symbols (got {len(parsed)})")
+        return parsed, agent_error_response(
+            "INVALID_INPUT", f"need ≥{min_n} distinct symbols (got {len(parsed)})",
+            hint=f"pass {min_n}-{service.MAX_COMPARE_SYMBOLS} distinct comma-separated symbols (e.g. 'BTC,ETH')")
     if len(parsed) > service.MAX_COMPARE_SYMBOLS:
-        raise HTTPException(status_code=422,
-                            detail=f"too many symbols ({len(parsed)}); max {service.MAX_COMPARE_SYMBOLS}")
-    return parsed
+        return parsed, agent_error_response(
+            "INVALID_INPUT", f"too many symbols ({len(parsed)}); max {service.MAX_COMPARE_SYMBOLS}",
+            hint=f"pass at most {service.MAX_COMPARE_SYMBOLS} symbols")
+    return parsed, None
 
 
 @router.get("/correlation")
@@ -113,7 +124,9 @@ def get_correlation(symbols: str, hours: int = 720):
     """Pairwise Pearson correlation matrix for ≥2 comma-separated symbols (≤10) over
     the close series. Each cell ∈ [-1, 1] or None (no overlap / flat series — honest,
     not fabricated). Needs ≥2 symbols → 422 otherwise. NEUTRAL numbers, no advice."""
-    syms = _parse_symbols(symbols, min_n=2)
+    syms, err = _parse_symbols(symbols, min_n=2)
+    if err is not None:
+        return err
     data, warnings = service.correlation(syms, hours=hours)
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
@@ -123,7 +136,9 @@ def get_compare(symbols: str, hours: int = 720):
     """Side-by-side comparison table for 1..10 comma-separated symbols: each
     {changePct, volatility, rsi, trend} over the window, for relative ranking.
     Short/absent series → honest None fields. NEUTRAL numbers, no advice."""
-    syms = _parse_symbols(symbols, min_n=1)
+    syms, err = _parse_symbols(symbols, min_n=1)
+    if err is not None:
+        return err
     data, warnings = service.compare(syms, hours=hours)
     return ok(data=data, warning="; ".join(warnings) if warnings else None)
 
@@ -147,7 +162,8 @@ def get_price_at(asset: str, ts: str):
     sym = asset.strip().upper()
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if sym not in tracked:
-        raise HTTPException(status_code=404, detail=f"asset {sym!r} is not tracked")
+        return agent_error_response("NOT_FOUND", f"asset {sym!r} is not tracked",
+                                    hint="GET /market for the tracked assets")
     # A literal '+' in an unencoded query value decodes to a space ('+00:00' → ' 00:00').
     # Repair the ISO-8601 tz offset so a caller that forgot to %2B-encode still works.
     ts_norm = re.sub(r"(\d{2}:\d{2}:\d{2}(?:\.\d+)?) (\d{2}:\d{2})$", r"\1+\2", ts.strip())
@@ -173,7 +189,8 @@ def post_backfill(asset: str | None = None,
     if asset is not None:
         sym = asset.strip().upper()
         if not sym:
-            raise HTTPException(status_code=422, detail="asset, if given, must be non-empty")
+            return agent_error_response("INVALID_INPUT", "asset, if given, must be non-empty",
+                                        hint="omit 'asset' to backfill all, or pass a non-empty symbol")
         syms = [sym]
     summary = service.backfill(syms, days=days)
     return ok(data={"backfill": summary, "days": days})
@@ -196,7 +213,8 @@ def set_alert(body: AlertRuleInput):
 def delete_alert(rule_id: str):
     """Delete the alert rule by id. 404 if no such rule."""
     if not service.delete_rule(rule_id):
-        raise HTTPException(status_code=404, detail=f"no alert rule {rule_id!r}")
+        return agent_error_response("NOT_FOUND", f"no alert rule {rule_id!r}",
+                                    hint="GET /market/alerts for the existing rule ids")
     return ok(data={"deleted": rule_id})
 
 
@@ -222,7 +240,8 @@ def set_indicator_alert(body: IndicatorAlertRuleInput):
     (symbol, kind, period). 404 if the symbol is not tracked. Returns the rule."""
     tracked = {a.get("symbol") for a in service.tracked_assets()}
     if body.symbol not in tracked:
-        raise HTTPException(status_code=404, detail=f"asset {body.symbol!r} is not tracked")
+        return agent_error_response("NOT_FOUND", f"asset {body.symbol!r} is not tracked",
+                                    hint="GET /market for the tracked assets")
     rule = service.add_indicator_rule(body.symbol, body.kind, body.value, body.period, body.enabled)
     return ok(data=rule.model_dump())
 
@@ -231,7 +250,8 @@ def set_indicator_alert(body: IndicatorAlertRuleInput):
 def delete_indicator_alert(rule_id: str):
     """Delete the indicator alert rule by id. 404 if no such rule."""
     if not service.delete_indicator_rule(rule_id):
-        raise HTTPException(status_code=404, detail=f"no indicator alert rule {rule_id!r}")
+        return agent_error_response("NOT_FOUND", f"no indicator alert rule {rule_id!r}",
+                                    hint="GET /market/indicator-alerts for the existing rule ids")
     return ok(data={"deleted": rule_id})
 
 
@@ -260,7 +280,8 @@ def add_to_watchlist(body: WatchlistInput):
 def remove_from_watchlist(symbol: str):
     """Remove a symbol from the watchlist. 404 if it wasn't watchlisted."""
     if not service.delete_watchlist(symbol):
-        raise HTTPException(status_code=404, detail=f"{symbol!r} not in watchlist")
+        return agent_error_response("NOT_FOUND", f"{symbol!r} not in watchlist",
+                                    hint="GET /market/watchlist for the current symbols")
     return ok(data={"deleted": symbol.strip().upper()})
 
 

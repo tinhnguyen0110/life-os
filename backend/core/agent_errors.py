@@ -25,7 +25,10 @@ id) is a normal answer, NOT an error; agent_error is for "the tool could not per
 
 from __future__ import annotations
 
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
+
+if TYPE_CHECKING:
+    from fastapi.responses import JSONResponse
 
 # The closed set the agent branches on. Keep SMALL — a new code is a deliberate addition, not a
 # free-for-all (a sprawling enum is as unreadable as free text).
@@ -87,3 +90,31 @@ def agent_error(
             "retryable": resolved,
         }
     }
+
+
+# AGENT-ERROR-P3 (#46): the REST status code each error code maps to. NOT_FOUND→404, bad-input→422,
+# AMBIGUOUS/CONFLICT→409, upstream→502, throttle→429. (No auth → no 401/403 — single-user.)
+_CODE_STATUS: dict[str, int] = {
+    "NOT_FOUND": 404,
+    "INVALID_INPUT": 422,
+    "AMBIGUOUS": 409,
+    "UPSTREAM_DOWN": 502,
+    "RATE_LIMITED": 429,
+    "CONFLICT": 409,
+}
+
+
+def agent_error_response(
+    code: ErrorCode,
+    message: str,
+    hint: str = "",
+    retryable: bool | None = None,
+) -> "JSONResponse":
+    """AGENT-ERROR-P3 (#46): the agent_error body as a flat-body REST JSONResponse with the HTTP
+    status mapped from the code (the canonical REST error helper — generalizes wiki's _note_not_found).
+    RETURN it from a route (it's a Response, NOT an exception — do not raise). The body is the flat
+    ``{error:{code,message,hint,retryable}}`` (not nested under "detail"), byte-identical to the MCP
+    twins' agent_error → REST≡MCP error parity. Reuses agent_error (incl. its retryable invariant +
+    unknown-code guard)."""
+    from fastapi.responses import JSONResponse  # local import: core shouldn't hard-depend on fastapi at import
+    return JSONResponse(status_code=_CODE_STATUS[code], content=agent_error(code, message, hint, retryable))

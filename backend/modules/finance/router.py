@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P3 (#46): flat REST error parity w/ MCP twins
 from core.base import BaseModule
 from core.responses import ok
 
@@ -47,7 +48,8 @@ def upsert_holding(body: HoldingInput):
 def delete_holding(symbol: str):
     """Delete a holding by symbol. 404 if no such holding."""
     if not service.delete_holding(symbol):
-        raise HTTPException(status_code=404, detail=f"no holding {symbol!r}")
+        return agent_error_response("NOT_FOUND", f"no holding {symbol!r}",
+                                    hint="GET /finance/holdings for the tracked symbols")
     return ok(data={"deleted": symbol})
 
 
@@ -111,17 +113,18 @@ def simulate(body: SimulateInput):
     (must be one of crypto/etf/vn/dry). A zero-sum allocation is accepted but yields a
     None HHI + warning (can't normalize), never a 500."""
     alloc = body.allocation
-    if not alloc:
-        raise HTTPException(status_code=422, detail="allocation must have at least one channel")
     valid = {"crypto", "etf", "vn", "dry"}
+    if not alloc:
+        return agent_error_response("INVALID_INPUT", "allocation must have at least one channel",
+                                    hint=f"pass a non-empty allocation dict; valid channels: {sorted(valid)}")
     unknown = [ch for ch in alloc if ch not in valid]
     if unknown:
-        raise HTTPException(status_code=422,
-                            detail=f"unknown channel(s) {unknown}; valid: {sorted(valid)}")
+        return agent_error_response("INVALID_INPUT", f"unknown channel(s) {unknown}",
+                                    hint=f"valid channels: {sorted(valid)}")
     negative = [ch for ch, w in alloc.items() if w < 0]
     if negative:
-        raise HTTPException(status_code=422,
-                            detail=f"negative weight(s) for {negative} — weights must be ≥0")
+        return agent_error_response("INVALID_INPUT", f"negative weight(s) for {negative}",
+                                    hint="weights must be ≥ 0")
     result, warnings = service.simulate(alloc)
     return ok(data=result.model_dump(), warning="; ".join(warnings) if warnings else None)
 
@@ -152,7 +155,8 @@ def get_channel(channel: str):
     """S6 detail for one channel: alloc + holdings (priced, P&L) + ladder. 404 if unknown."""
     detail, warnings = service.get_channel(channel)
     if detail is None:
-        raise HTTPException(status_code=404, detail=f"channel {channel!r} not found")
+        return agent_error_response("NOT_FOUND", f"channel {channel!r} not found",
+                                    hint="valid channels: ['crypto', 'dry', 'etf', 'vn']")
     return ok(data=detail, warning="; ".join(warnings) if warnings else None)
 
 
