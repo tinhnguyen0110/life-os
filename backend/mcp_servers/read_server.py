@@ -143,6 +143,9 @@ from modules.tracing.reader import get_overview as _tracing_overview
 # DEV-TRACING-P1 (#63): the agent reads "my dev activity" — get_overview is a READ fn (no mutation;
 # the scan/upsert lives in service + the routine, NOT imported here). Read-gate-safe.
 from modules.dev_activity.reader import get_overview as _dev_activity_overview
+# REPO-MEMORY-P1 (#64): the agent reads a repo cold (structure/readme/git-log/stack) on demand —
+# get_insight is a READ fn (live read, no write/index). Read-gate-safe.
+from modules.code_insight.reader import get_insight as _code_insight
 # WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
@@ -556,6 +559,16 @@ def dev_activity(days: int = 90) -> dict[str, Any]:
     'no work'). BYTE-IDENTICAL to REST GET /dev_activity (#24 parity). Read-only (the scan/upsert
     lives on POST /dev_activity/scan + the daily routine)."""
     return _dev_activity_overview(days).model_dump()
+
+
+def code_insight(repo: str) -> dict[str, Any]:
+    """ON-DEMAND fresh read of a local repo so a cold session-agent gets instant "what's here NOW"
+    context (REPO-MEMORY #64): top-level structure + README excerpt + recent git-log + detected stack
+    + asOf (the live read timestamp — always-current, never indexed/stale). ``repo`` = a repo name
+    (matched under the configured roots) or a path under them. honest: missing repo → found:false +
+    honest-empty + warning. Each sub-read fail-soft; everything bounded (caps noted in warnings).
+    BYTE-IDENTICAL to REST GET /code_insight (#24 parity). Read-only (the projects git whitelist)."""
+    return _code_insight(repo).model_dump()
 
 
 def daily_brief() -> dict[str, Any]:
@@ -1345,6 +1358,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
     "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
     "dev_activity": dev_activity,  # DEV-TRACING-P1 #63: local git dev-activity on lifeos-read (read-only)
+    "code_insight": code_insight,  # REPO-MEMORY-P1 #64: on-demand repo read on lifeos-read (read-only)
     "daily_brief": daily_brief,
     "brief_history": brief_history,
     "journal_entries": journal_entries,
