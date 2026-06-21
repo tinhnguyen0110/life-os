@@ -50,9 +50,13 @@ def _init_body():
 
 
 @pytest.fixture
-def client(isolated_paths):
+def client(isolated_paths, monkeypatch):
     """A TestClient over a fresh app, entered as a context manager so the lifespan runs
-    (DB + scheduler + the 4 MCP session managers). isolated_paths keeps the store tmp."""
+    (DB + scheduler + the MCP session managers). isolated_paths keeps the store tmp.
+
+    SUITE-REFACTOR (#73): conftest sets LIFEOS_SKIP_MCP_MOUNTS=1 suite-wide (the REST tests don't
+    need MCP). THIS file DOES test the MCP mounts → delete the flag so create_app builds them."""
+    monkeypatch.delenv("LIFEOS_SKIP_MCP_MOUNTS", raising=False)
     importlib.reload(main)
     app = main.create_app()
     with TestClient(app) as c:   # __enter__ runs the lifespan startup

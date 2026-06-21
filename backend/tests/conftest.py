@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 
 import pytest
+
+# SUITE-REFACTOR (#73): skip the ~80ms MCP-server build in create_app() suite-wide — the REST/unit
+# tests rebuild the app per-test but never exercise the MCP HTTP mounts (~125ms→~39ms per app, the
+# suite speedup). Set at COLLECTION time (before any app builds). test_mcp_http (which tests the
+# mounts) deletes this in its own fixture so it gets the real MCP build. PROD never sets it.
+os.environ.setdefault("LIFEOS_SKIP_MCP_MOUNTS", "1")
 
 
 @pytest.fixture

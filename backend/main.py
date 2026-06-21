@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -67,8 +68,18 @@ def _build_mcp_servers() -> list:
     notification/subscribe), so stateless loses nothing. session_manager.run() is STILL
     required in the lifespan (the SDK's streamable_http_app threads json_response +
     stateless through to the StreamableHTTPSessionManager; run() starts its task group
-    regardless of stateful/stateless — removing it would 500 every call)."""
+    regardless of stateful/stateless — removing it would 500 every call).
+
+    SUITE-REFACTOR (#73): building the 7 FastMCP servers is ~80ms of the ~125ms create_app() cost.
+    The REST/unit test suite rebuilds the app per-test but never exercises the MCP HTTP mounts (only
+    test_mcp_http does) — so an opt-in env flag ``LIFEOS_SKIP_MCP_MOUNTS=1`` skips the MCP build in
+    those tests → ~125ms→~39ms per app, the suite-wide speedup. PROD/uvicorn NEVER sets it (full MCP
+    always built); test_mcp_http does NOT set it (it tests the mounts). Test-only, no prod behavior
+    change — the app is identical at runtime; only the test harness opts out of the unused MCP build."""
     import importlib
+
+    if os.environ.get("LIFEOS_SKIP_MCP_MOUNTS") == "1":  # #73 test-only fast path — never set in prod
+        return []
 
     from mcp.server.transport_security import TransportSecuritySettings
 
