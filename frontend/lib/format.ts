@@ -109,3 +109,37 @@ export function fmtRate(v: number | null | undefined, fallback = "—"): string 
   if (v == null || !Number.isFinite(v)) return fallback;
   return `${v.toFixed(1)}%`;
 }
+
+/** ISO-8601 due instant → Vietnamese FUTURE-OR-PAST relative phrase, e.g.
+ *  "trong 3 giờ" (future) / "2 ngày trước" (past) / "vừa tới hạn" (within a min).
+ *  Display-only — does NOT decide overdue (the backend `overdue` boolean does).
+ *  null/invalid → fallback. */
+export function fmtDueAt(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return fallback;
+  const diffMs = t - Date.now(); // >0 = future (due later), <0 = past (overdue-ish)
+  const future = diffMs >= 0;
+  const sec = Math.floor(Math.abs(diffMs) / 1000);
+  if (sec < 60) return "vừa tới hạn";
+  const min = Math.floor(sec / 60);
+  const unit =
+    min < 60 ? `${min} phút`
+    : min < 1440 ? `${Math.floor(min / 60)} giờ`
+    : min < 43200 ? `${Math.floor(min / 1440)} ngày`
+    : `${Math.floor(min / 43200)} tháng`;
+  return future ? `trong ${unit}` : `${unit} trước`;
+}
+
+/** ISO-8601 → absolute "DD/MM HH:MM" stamp (local) for a precise due time. null → fallback. */
+export function fmtDateTime(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return fallback;
+  const d = new Date(t);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm} ${hh}:${mi}`;
+}

@@ -64,6 +64,9 @@ import type {
   DecisionAllocation,
   DecisionGuardian,
   NavHistory,
+  Reminder,
+  ReminderInput,
+  ReminderList,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -663,6 +666,35 @@ export function getNavHistory(from?: string, to?: string): Promise<ApiResponse<N
   if (to) qs.set("to", to);
   const q = qs.toString();
   return apiGet<NavHistory>(`/decision/nav-history${q ? `?${q}` : ""}`);
+}
+
+/* ---- Reminders (#27–#31 · GAP-4) — the user-facing tick screen ----
+   Backend REST is shipped + FROZEN; FE consumes only (no backend change). */
+
+/** List reminders by filter. SERVER filters: today|week|undone|all (unknown →
+ *  lenient all). The UI "Done" view fetches `all` + client-filters done_at!=null —
+ *  there is NO server `done` filter. Empty → {reminders:[], count:0, …}. */
+export function getReminders(
+  filter: "today" | "week" | "undone" | "all" = "all",
+): Promise<ApiResponse<ReminderList>> {
+  return apiGet<ReminderList>(`/reminders?filter=${encodeURIComponent(filter)}`);
+}
+
+/** Create a reminder. 201 + the created reminder. Blank title / unparseable due_at
+ *  → ApiError(422) with .fieldErrors() per-field (surface it; no optimistic add). */
+export function createReminder(body: ReminderInput): Promise<ApiResponse<Reminder>> {
+  return apiPost<Reminder>("/reminders", body);
+}
+
+/** Tick a reminder done (PUT /reminders/{id}/tick). IDEMPOTENT — re-tick keeps the
+ *  first done_at. 200 + the reminder (done_at set, overdue→false). 404 if absent. */
+export function tickReminder(id: number): Promise<ApiResponse<Reminder>> {
+  return apiPut<Reminder>(`/reminders/${id}/tick`);
+}
+
+/** Delete a reminder (DELETE /reminders/{id}). 200 + {deleted:id}. 404 if absent. */
+export function deleteReminder(id: number): Promise<ApiResponse<{ deleted: number }>> {
+  return apiDelete<{ deleted: number }>(`/reminders/${id}`);
 }
 
 export const apiBase = BASE;

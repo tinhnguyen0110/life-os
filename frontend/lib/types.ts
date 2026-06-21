@@ -1578,3 +1578,58 @@ export interface NavHistory {
   /** short-series caveat (null when the series is long enough). */
   warning: string | null;
 }
+
+/* ---- Reminders (#27–#31 · GAP-4) — the single-user alarm/agenda module ----
+   Mirrors the FROZEN backend reminders/schema.py (#28/#31 schema-freeze-gate).
+   The UI is RENDER-ONLY: the backend computes `overdue` (un-done AND past-due),
+   notified_count, done_at — the FE never date-compares to derive state. */
+
+/** repeat policy — STORED on the reminder; only the #29 notify routine acts on it. */
+export type ReminderRepeat = "once" | "daily" | "weekly";
+
+/** The stored reminder (GET /reminders[].* and POST/PUT/tick response data). */
+export interface Reminder {
+  id: number;
+  title: string;
+  note: string | null;
+  /** ISO-8601 UTC the reminder is due (echoed +00:00, UTC-normalized at write). */
+  due_at: string;
+  repeat: ReminderRepeat;
+  /** minutes between re-notifies (#29), null = single notify. */
+  re_notify_every: number | null;
+  /** max notify count (#29), null = uncapped. */
+  max_times: number | null;
+  /** times notified so far this period (#29). */
+  notified_count: number;
+  /** ISO of the last notify, else null (#29). */
+  last_notified: string | null;
+  /** ISO when ticked done, else null. done_at != null = the reminder is resolved. */
+  done_at: string | null;
+  /** ISO-8601 created timestamp. */
+  created: string;
+  /** un-done AND due_at < now (NOT cap-gated, reader-derived #29). Drives RED. */
+  overdue: boolean;
+}
+
+/** POST /reminders body. due_at unparseable / blank title → 422 (no row stored). */
+export interface ReminderInput {
+  title: string;
+  note?: string | null;
+  /** ISO-8601 datetime the reminder is due (required). */
+  due_at: string;
+  repeat?: ReminderRepeat;
+  re_notify_every?: number | null;
+  max_times?: number | null;
+}
+
+/** GET /reminders?filter=… response data. The 4 SERVER filters are
+ *  today|week|undone|all (NO server `done` filter — the UI's "Done" view is a
+ *  render-only client filter over `all` where done_at != null). */
+export interface ReminderList {
+  reminders: Reminder[];
+  count: number;
+  /** how many in this list are un-done (done_at null). */
+  undoneCount: number;
+  /** the filter the server applied (today|week|undone|all). */
+  filter: string;
+}
