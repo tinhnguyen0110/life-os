@@ -218,14 +218,19 @@ def test_finance_simulate_shape_and_neutral(app_db):
 
 
 def test_finance_simulate_bad_input_is_honest_error_not_crash(app_db):
-    """Bad input → {error}, never a raised HTTPException/traceback to the agent
-    (the MCP layer replicates the router 422 guards as honest error strings)."""
-    assert "error" in rs.finance_simulate({})                       # empty
-    assert "error" in rs.finance_simulate({"bogus": 50})            # unknown channel
-    assert "error" in rs.finance_simulate({"crypto": -10})          # negative weight
+    """Bad input → a STRUCTURED agent_error (AGENT-ERROR #46-P2), never a raised HTTPException/
+    traceback. The agent branches on error.code + error.retryable instead of parsing free text."""
+    for bad in ({}, {"bogus": 50}, {"crypto": -10}):                # empty / unknown / negative
+        e = rs.finance_simulate(bad)["error"]
+        assert e["code"] == "INVALID_INPUT" and e["retryable"] is False
+        assert e["message"] and e["hint"]                          # both populated (the hint names the fix)
+    # THE distinguishing: the unknown-channel hint NAMES the valid set the agent should use
+    unk = rs.finance_simulate({"bogus": 50})["error"]
+    assert "crypto" in unk["hint"] and "etf" in unk["hint"], "hint must name the valid channels"
     # zero-sum is ACCEPTED (router contract) → a result with a warning, not an error
     zero = rs.finance_simulate({"crypto": 0, "etf": 0})
     assert "result" in zero and any("normalize" in w for w in zero["warnings"])
+    assert "error" not in zero  # a valid (if zero-sum) allocation is NOT an error
 
 
 def test_finance_simulate_zero_side_effect_on_holdings(app_db):
@@ -249,11 +254,14 @@ def test_finance_simulate_zero_side_effect_on_holdings(app_db):
 
 
 def test_market_correlation_shape_and_bounds(app_db):
-    """market_correlation → {correlation, warnings}; <2 or >10 symbols → {error}."""
+    """market_correlation → {correlation, warnings}; <2 or >10 symbols → a STRUCTURED agent_error
+    (AGENT-ERROR #46-P2: code=INVALID_INPUT, retryable=False), not free text."""
     out = rs.market_correlation("BTC,ETH", hours=24)
     assert "correlation" in out and "matrix" in out["correlation"]
-    assert "error" in rs.market_correlation("BTC")              # <2
-    assert "error" in rs.market_correlation(",".join(f"S{i}" for i in range(11)))  # >10
+    for bad in ("BTC", ",".join(f"S{i}" for i in range(11))):   # <2, >10
+        e = rs.market_correlation(bad)["error"]
+        assert e["code"] == "INVALID_INPUT" and e["retryable"] is False
+        assert e["message"] and e["hint"]
 
 
 def test_market_relative_strength_shape(app_db):

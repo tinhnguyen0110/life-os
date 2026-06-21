@@ -67,6 +67,8 @@ wiki MCP servers document.)
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from core.agent_errors import agent_error  # AGENT-ERROR #46-P2: structured agent-readable errors (pure formatter, no write)
+
 # READ-ONLY imports only (the capability gate — see module docstring + the no-write
 # test). Each is aliased with a leading underscore: these are private read wrappers,
 # and the alias keeps the bound names unambiguous for the namespace-scan test.
@@ -280,16 +282,25 @@ def finance_simulate(allocation: dict[str, float]) -> dict[str, Any]:
     HHI delta + per-channel delta-vs-current. Weights normalize to 100% (pass %s or $s).
     PURE NUMBERS for the agent to judge — NOT advice, mutates NOTHING (read-only what-if).
     Channels ∈ {crypto,etf,vn,dry}. Bad input (empty / unknown channel / negative weight)
-    → ``{error: <reason>}`` (honest, no crash). A zero-sum allocation is accepted →
-    None HHI + warning. ``{result, warnings}``. (Wraps the POST /finance/simulate compute.)"""
+    → a structured ``agent_error("INVALID_INPUT", …, hint=<valid set>, retryable=False)`` (#46-P2,
+    honest, no crash — the hint names the fix). A zero-sum allocation is accepted → None HHI +
+    warning. ``{result, warnings}``. (Wraps the POST /finance/simulate compute; the REST twin 422s
+    on the same cases — the MCP form is the agent-readable structured error.)"""
     if not isinstance(allocation, dict) or not allocation:
-        return {"error": "allocation must have at least one channel {channel: weight}"}
+        return agent_error(
+            "INVALID_INPUT", "allocation must have at least one channel {channel: weight}",
+            hint=f"pass a non-empty allocation dict; valid channels: {sorted(_SIM_VALID_CHANNELS)}",
+            retryable=False)
     unknown = [ch for ch in allocation if ch not in _SIM_VALID_CHANNELS]
     if unknown:
-        return {"error": f"unknown channel(s) {unknown}; valid: {sorted(_SIM_VALID_CHANNELS)}"}
+        return agent_error(
+            "INVALID_INPUT", f"unknown channel(s) {unknown}",
+            hint=f"valid channels: {sorted(_SIM_VALID_CHANNELS)}", retryable=False)
     negative = [ch for ch, w in allocation.items() if w < 0]
     if negative:
-        return {"error": f"negative weight(s) for {negative} — weights must be ≥0"}
+        return agent_error(
+            "INVALID_INPUT", f"negative weight(s) for {negative}",
+            hint="weights must be ≥ 0", retryable=False)
     result, warnings = _fin_simulate(allocation)
     return {"result": _jsonable(result), "warnings": list(warnings or [])}
 
@@ -389,11 +400,13 @@ def market_correlation(symbols: str, hours: int = 720) -> dict[str, Any]:
     """Pairwise Pearson correlation matrix over the close series of ≥2 comma-separated
     symbols (≤10; N² so bounded). Each cell ∈ [-1, 1] or None (no overlap / flat series —
     honest, not fabricated 0). NEUTRAL numbers — no advice. <2 or >10 symbols →
-    ``{error}`` (honest, no crash). ``{correlation, warnings}``. (Wraps GET
-    /market/correlation — read-only.)"""
+    a structured ``agent_error("INVALID_INPUT", …, retryable=False)`` (#46-P2, honest, no crash).
+    ``{correlation, warnings}``. (Wraps GET /market/correlation — read-only.)"""
     syms, err = _parse_symbols_mcp(symbols, min_n=2)
     if err:
-        return {"error": err}
+        return agent_error(
+            "INVALID_INPUT", err,
+            hint="pass 2-10 distinct comma-separated symbols (e.g. 'BTC,ETH,SOL')", retryable=False)
     data, warnings = _mkt_correlation(syms, hours=int(hours))
     return {"correlation": _jsonable(data), "warnings": list(warnings or [])}
 
