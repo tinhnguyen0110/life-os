@@ -43,6 +43,10 @@ def _render(note: Note, capture_source: str = "quick_add") -> str:
         "created": note.created,
         "updated": note.updated,
     }
+    # #94 SOFT-delete: persist the tombstone in the frontmatter ONLY when set — so a live note's md
+    # is byte-unchanged (no churn), and a soft-deleted note's md carries deletedAt → survives reindex.
+    if note.deletedAt is not None:
+        fm["deletedAt"] = note.deletedAt
     block = yaml.safe_dump(fm, sort_keys=True, allow_unicode=True).strip()
     return f"---\n{block}\n---\n{note.content}"
 
@@ -124,6 +128,7 @@ def _parse(content: str, note_id: int) -> Note | None:
             created=fm["created"],
             updated=fm["updated"],
             contentHash=_body_hash(body),
+            deletedAt=fm.get("deletedAt"),  # #94: tombstone (absent → None = live)
         )
     except Exception:  # missing/invalid field → malformed
         return None

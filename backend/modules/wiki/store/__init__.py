@@ -55,6 +55,7 @@ from .notes import (
     delete_note_cache,
     get_note_cache,
     note_cache_exists,
+    set_deleted_at,
     upsert_note_cache,
 )
 
@@ -106,6 +107,7 @@ from .folder_meta import (
 # graph + overview aggregate queries (C3/C4/C5).
 from .queries import (
     all_notes,
+    trash_notes,
     all_resolved_edges,
     count_by_status,
     count_ghost_links,
@@ -130,6 +132,7 @@ __all__ = [
     "wiki_notes_dir", "_lock", "_migrate", "logger", "_sanitize_fts_query",
     # notes
     "upsert_note_cache", "get_note_cache", "note_cache_exists", "delete_note_cache",
+    "set_deleted_at",
     # oplog
     "append_op", "recent_ops", "latest_op_for_note", "feedback_ops",
     # files
@@ -143,7 +146,7 @@ __all__ = [
     # fts
     "fts_upsert", "fts_delete", "fts_search", "fts_phrase_search",
     # queries
-    "all_notes", "count_notes", "count_by_status", "count_resolved_links",
+    "all_notes", "trash_notes", "count_notes", "count_by_status", "count_resolved_links",
     "count_ghost_links", "note_ids_with_resolved_link", "degree",
     "resolved_neighbors", "edges_among", "all_resolved_edges", "fleeting_notes",
     "inbound_counts", "mutual_link_pairs",  # WIKI-STALE-DETECTOR #41

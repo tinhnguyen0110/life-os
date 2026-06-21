@@ -101,7 +101,9 @@ def _override_feedback_detail(note_id: int, op: Op, original_title: str) -> str 
     prior = wiki_store.latest_op_for_note(note_id)
     if prior is None or prior["actor"] == "human":
         return None  # no prior op, or the note was last touched by a human → not agent feedback
-    override_kind = "delete" if op.kind == "delete" else "edit"
+    # #94: a soft-delete is a DELETE from the feedback POV (the user removed the note) — both the
+    # hard "delete" and the "softdelete" op record overrideKind="delete".
+    override_kind = "delete" if op.kind in ("delete", "softdelete") else "edit"
     return _json({
         "feedback": {"reason": fb["reason"], "text": fb.get("text")},
         "originalTitle": original_title,
@@ -124,6 +126,10 @@ def _apply(op: Op) -> Note | None:
         return _apply_merge(op)
     if op.kind == "refine":
         return _apply_refine(op)
+    if op.kind == "softdelete":
+        return _apply_softdelete(op)
+    if op.kind == "restore":
+        return _apply_restore(op)
     raise ValueError(f"unknown op kind {op.kind!r}")  # pragma: no cover
 
 
@@ -254,6 +260,55 @@ def _apply_delete(op: Op) -> None:
     wiki_store.append_op(op_id=op.op_id, kind="delete", note_id=note_id,
                          actor=op.actor, ts=_now_iso(), commit_sha=sha,
                          detail=feedback_detail)
+
+
+def _apply_softdelete(op: Op) -> Note:
+    """#94 SOFT-delete (recoverable, reconcile-safe): set deletedAt=now → REWRITE the .md WITH the
+    tombstone (the file SURVIVES → reindex won't prune it as a phantom — the #61 constraint) → mark
+    the cache row deleted + DROP it from FTS (hides from search). KEEPS aliases/links/cache row so a
+    restore brings it ALL back. Idempotent: an already-deleted note → returns it unchanged (no-op)."""
+    note_id = op.note_id
+    assert note_id is not None
+    existing = _read_note(note_id)
+    if existing is None:
+        raise NoteNotFound(str(note_id))
+    if existing.deletedAt is not None:
+        return existing  # already soft-deleted → idempotent no-op
+    now = _now_iso()
+    tombstoned = existing.model_copy(update={"deletedAt": now})
+    cap = _parse_capture_source(wiki_store.read_note_file(note_id) or "")
+    # #35: capture override-feedback (a human soft-deleting an agent note) BEFORE append_op.
+    feedback_detail = _override_feedback_detail(note_id, op, existing.title)
+    # rewrite the .md WITH the tombstone (1 git commit) — the file is KEPT (reconcile-safe).
+    sha = wiki_store.write_note_file(note_id, _render(tombstoned, cap), f"soft-delete wiki note {note_id}")
+    wiki_store.set_deleted_at(note_id, now)   # mark the cache row (live queries now exclude it)
+    wiki_store.fts_delete(note_id)            # drop from search (restore re-adds); aliases/links KEPT
+    wiki_store.append_op(op_id=op.op_id, kind="softdelete", note_id=note_id, actor=op.actor,
+                         ts=now, commit_sha=sha, detail=feedback_detail)
+    return tombstoned
+
+
+def _apply_restore(op: Op) -> Note:
+    """#94 RESTORE (inverse of soft-delete): clear deletedAt → REWRITE the .md without the tombstone
+    → clear the cache row's deleted_at → re-add to FTS + refresh the resolver/edge indexes (so the
+    note is fully BACK in every view, links/aliases intact). Idempotent: an already-live note →
+    returns it unchanged (no-op)."""
+    note_id = op.note_id
+    assert note_id is not None
+    existing = _read_note(note_id)
+    if existing is None:
+        raise NoteNotFound(str(note_id))
+    if existing.deletedAt is None:
+        return existing  # already live → idempotent no-op
+    now = _now_iso()
+    restored = existing.model_copy(update={"deletedAt": None})
+    cap = _parse_capture_source(wiki_store.read_note_file(note_id) or "")
+    # _commit_note rewrites the .md (no tombstone now) + upserts cache + refreshes resolver/edges/FTS.
+    sha = _commit_note(restored, f"restore wiki note {note_id}", capture_source=cap)
+    wiki_store.set_deleted_at(note_id, None)  # clear the cache tombstone (live queries include it)
+    wiki_store.append_op(op_id=op.op_id, kind="restore", note_id=note_id, actor=op.actor,
+                         ts=now, commit_sha=sha)
+    return restored
 
 
 def _apply_merge(op: Op) -> Note:

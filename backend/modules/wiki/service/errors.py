@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-OpKind = Literal["create", "update", "delete", "merge", "refine"]
+OpKind = Literal["create", "update", "delete", "merge", "refine", "softdelete", "restore"]
 
 
 class NoteNotFound(Exception):

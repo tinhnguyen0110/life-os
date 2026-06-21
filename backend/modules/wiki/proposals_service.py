@@ -198,6 +198,18 @@ def _apply(proposal: dict[str, Any]) -> int | None:
             note = service.merge_notes(int(src), int(tgt), actor=actor)
             return note.id
 
+        if kind == "note_softdelete":  # #94 — SOFT-delete (recoverable) via the chokepoint
+            if target_id is None:
+                raise ApplyError("note_softdelete proposal has no targetId")
+            note = service.soft_delete_note(target_id, actor=actor)
+            return note.id
+
+        if kind == "note_restore":  # #94 — RESTORE a soft-deleted note via the chokepoint
+            if target_id is None:
+                raise ApplyError("note_restore proposal has no targetId")
+            note = service.restore_note(target_id, actor=actor)
+            return note.id
+
         raise ApplyError(f"unknown proposal kind {kind!r}")
     except ApplyError:
         raise

@@ -42,6 +42,20 @@ def upsert_note_cache(
         conn.commit()
 
 
+def set_deleted_at(note_id: int, deleted_at: str | None) -> bool:
+    """#94 SOFT-delete: set (or clear, on restore) the cache row's deleted_at tombstone for ONE note.
+    SCOPED to the single id (the #72 wipe lesson — never a blanket UPDATE). Returns True if a row was
+    updated (the note exists). The .md rewrite (the source of truth) is done by the caller; this keeps
+    the cache row in sync so the live queries can exclude/include it."""
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE wiki_notes SET deleted_at = ? WHERE id = ?", (deleted_at, int(note_id))
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def get_note_cache(note_id: int) -> sqlite3.Row | None:
     """The cache row for a note, or None if absent (hard-deleted / never created)."""
     conn = db.get_conn()

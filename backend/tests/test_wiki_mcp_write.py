@@ -363,6 +363,7 @@ def test_write_server_builds_with_all_tools():
     assert set(write_server.TOOLS.keys()) == {
         "propose_note", "propose_edit", "propose_link", "propose_unlink",
         "propose_merge", "propose_moc",
+        "wiki_delete_note", "wiki_restore_note",  # #94 soft-delete + restore
     }
 
 

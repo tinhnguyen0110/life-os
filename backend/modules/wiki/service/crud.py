@@ -41,7 +41,9 @@ def update_note(note_id: int, inp: NoteUpdateInput, actor: str = "human",
 
 def delete_note(note_id: int, actor: str = "human",
                 feedback: dict | None = None) -> None:
-    """Delete a note through the queue. Raises NoteNotFound if absent.
+    """HARD-delete a note through the queue (the .md + cache + aliases/links/fts gone forever).
+    Raises NoteNotFound if absent. #94: the ROUTER's DELETE now calls soft_delete_note (recoverable);
+    this hard path stays for merge/internal use that genuinely removes a note.
 
     #35: ``feedback={reason, text}`` (optional) is the override-feedback a HUMAN gives
     when deleting an AGENT-written note — captured into the op_log detail by the apply
@@ -51,6 +53,32 @@ def delete_note(note_id: int, actor: str = "human",
         payload["feedback"] = feedback
     op = Op(kind="delete", note_id=note_id, payload=payload, actor=actor)
     enqueue(op)
+
+
+def soft_delete_note(note_id: int, actor: str = "human",
+                     feedback: dict | None = None) -> Note:
+    """#94 SOFT-delete (recoverable): tombstone the note (deletedAt=now), KEEP the .md (reconcile-
+    safe) + cache row + aliases/links, hide from live views. Returns the tombstoned note. Raises
+    NoteNotFound if absent. Idempotent (already-deleted → returned unchanged).
+
+    #35: optional override-feedback (a human deleting an AGENT-written note) flows to the op_log,
+    same as the hard-delete path."""
+    payload: dict = {}
+    if feedback is not None:
+        payload["feedback"] = feedback
+    op = Op(kind="softdelete", note_id=note_id, payload=payload, actor=actor)
+    note = enqueue(op)
+    assert note is not None
+    return note
+
+
+def restore_note(note_id: int, actor: str = "human") -> Note:
+    """#94 RESTORE: clear the tombstone → the note is fully back in every view (links/aliases intact).
+    Returns the restored note. Raises NoteNotFound if absent. Idempotent (already-live → unchanged)."""
+    op = Op(kind="restore", note_id=note_id, payload={}, actor=actor)
+    note = enqueue(op)
+    assert note is not None
+    return note
 
 
 def merge_notes(source_id: int, target_id: int, actor: str = "human") -> Note:

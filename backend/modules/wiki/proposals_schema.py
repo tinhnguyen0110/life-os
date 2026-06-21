@@ -33,7 +33,8 @@ from pydantic import BaseModel, Field, field_validator
 
 # --- Enums (Literal-locked at the boundary) -------------------------------- #
 ProposalKind = Literal[
-    "note_create", "note_edit", "link_add", "link_remove", "merge", "moc"
+    "note_create", "note_edit", "link_add", "link_remove", "merge", "moc",
+    "note_softdelete", "note_restore",  # #94 soft-delete + restore via the proposal chokepoint
 ]
 ProposalStatus = Literal["pending", "accepted", "rejected"]
 

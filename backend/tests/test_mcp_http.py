@@ -19,7 +19,7 @@ Defensive cases (each a real assertion, per the dispatch):
     tools/list works with NO prior initialize-session (restart-survivable). (Was: distinct
     session ids — stateful; the agent-first switch removed sessions entirely.)
 (d) stdio unbroken → each build_server() still builds + the per-server tool counts hold (asserted
-    live below — shared read/write + standalone wiki-read 15 (#23/#34/#41/#53/#35) / wiki-write 6 /
+    live below — shared read/write + standalone wiki-read 15 (#23/#34/#41/#53/#35) / wiki-write 8 (#94) /
     finance subset 15). Historical: MCP-DEDUP #70 shared read 46→40, write 10→4, wiki-read 9→11.
 (e) no `from __future__ import annotations` added to the server modules.
 """
@@ -186,7 +186,7 @@ def test_stdio_build_servers_unchanged():
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
     assert len(wr._tool_manager.list_tools()) == 15
-    assert len(ww._tool_manager.list_tools()) == 6
+    assert len(ww._tool_manager.list_tools()) == 8  # #94: +wiki_delete_note +wiki_restore_note (was 6)
 
 
 def test_build_server_default_is_stdio_identical():

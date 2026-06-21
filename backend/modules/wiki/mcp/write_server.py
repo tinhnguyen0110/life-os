@@ -237,6 +237,23 @@ def propose_moc(title: str, content: str, rationale: str | None = None,
                     rationale=rationale, tool="propose_moc")
 
 
+def wiki_delete_note(note_id: int, rationale: str | None = None) -> dict[str, Any]:
+    """#94: SOFT-delete a note (kind=note_softdelete) — RECOVERABLE (sets a deletedAt tombstone,
+    KEEPS the .md + cache + links; hidden from live views). Restore via wiki_restore_note. WIKI-
+    WRITE-THROUGH: applies NOW (default) → returns ``noteId``; toggle OFF → pending. Subsumes the
+    #90-GAP2 delete tool. Mirrors REST DELETE /wiki/notes/{id} (which is also soft now)."""
+    return _enqueue("note_softdelete", target_id=int(note_id), payload={},
+                    rationale=rationale, tool="wiki_delete_note")
+
+
+def wiki_restore_note(note_id: int, rationale: str | None = None) -> dict[str, Any]:
+    """#94: RESTORE a soft-deleted note (kind=note_restore) — clears the tombstone, the note is fully
+    BACK in every view (links/aliases intact). WIKI-WRITE-THROUGH: applies NOW (default) → returns
+    ``noteId``; toggle OFF → pending. Mirrors REST POST /wiki/notes/{id}/restore."""
+    return _enqueue("note_restore", target_id=int(note_id), payload={},
+                    rationale=rationale, tool="wiki_restore_note")
+
+
 # Registry (name → logic fn) — single source of truth; tests + FastMCP iterate it.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_note": propose_note,
@@ -245,6 +262,8 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_unlink": propose_unlink,
     "propose_merge": propose_merge,
     "propose_moc": propose_moc,
+    "wiki_delete_note": wiki_delete_note,     # #94 soft-delete (subsumes #90-GAP2)
+    "wiki_restore_note": wiki_restore_note,   # #94 restore
 }
 
 
@@ -273,6 +292,8 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(propose_unlink, description=propose_unlink.__doc__)
     mcp.add_tool(propose_merge, description=propose_merge.__doc__)
     mcp.add_tool(propose_moc, description=propose_moc.__doc__)
+    mcp.add_tool(wiki_delete_note, description=wiki_delete_note.__doc__)    # #94
+    mcp.add_tool(wiki_restore_note, description=wiki_restore_note.__doc__)  # #94
     return mcp
 
 

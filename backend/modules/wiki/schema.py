@@ -72,6 +72,10 @@ class Note(BaseModel):
     created: str
     updated: str
     contentHash: str
+    # #94 SOFT-delete: ISO-8601 UTC tombstone — None = live; set = soft-deleted (recoverable via
+    # restore). Orthogonal to ``status`` (the workflow lifecycle); persisted in the .md frontmatter
+    # (survives a reindex/rebuild — the reconcile-safe constraint) + the cache row's deleted_at column.
+    deletedAt: str | None = None
 
 
 class NoteCreateInput(BaseModel):
@@ -225,6 +229,12 @@ class ImportResultRow(BaseModel):
     noteId: int | None = None
     title: str | None = None
     error: dict[str, Any] | None = None
+
+
+class BulkDeleteInput(BaseModel):
+    """``POST /wiki/notes/bulk-delete`` body (#94) — multi-select soft-delete by id."""
+
+    ids: list[int] = Field(..., min_length=1, description="note ids to soft-delete (≥1)")
 
 
 class FeedbackRow(BaseModel):

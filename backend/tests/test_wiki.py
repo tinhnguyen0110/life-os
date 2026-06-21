@@ -425,11 +425,18 @@ def test_api_create_get_update_delete_roundtrip(api):
     assert g2.json()["data"]["content"] == "edited body"
     assert g2.json()["data"]["status"] == "evergreen"
 
-    # DELETE + GET 404
+    # DELETE is now SOFT (#94): the note is tombstoned (recoverable) — gone from the live tree +
+    # search, listed in /trash, restorable. GET still returns it (200) WITH deletedAt set (the
+    # restore UI reads it); it's no longer in the live note list. (Was: hard-delete → GET 404.)
     d = api.delete(f"/wiki/notes/{nid}")
     assert d.status_code == 200
-    assert d.json()["data"]["deleted"] == nid
-    assert api.get(f"/wiki/notes/{nid}").status_code == 404
+    assert d.json()["data"]["deleted"] == nid and d.json()["data"]["deletedAt"]
+    g3 = api.get(f"/wiki/notes/{nid}")
+    assert g3.status_code == 200 and g3.json()["data"]["deletedAt"] is not None  # tombstoned, recoverable
+    assert nid in {t["id"] for t in api.get("/wiki/trash").json()["data"]["trash"]}  # in trash
+    # restore brings it back live (deletedAt cleared, out of trash)
+    r = api.post(f"/wiki/notes/{nid}/restore")
+    assert r.status_code == 200 and r.json()["data"]["deletedAt"] is None
 
 
 def test_api_get_missing_404(api):

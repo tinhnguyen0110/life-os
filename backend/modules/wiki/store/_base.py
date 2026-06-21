@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS wiki_notes (
     created       TEXT    NOT NULL,             -- ISO-8601 UTC
     updated       TEXT    NOT NULL,             -- ISO-8601 UTC
     capture_source TEXT   NOT NULL DEFAULT 'quick_add', -- C5 inbox (W1c)
-    folder        TEXT    NOT NULL DEFAULT ''   -- W-Explorer virtual path; ''=root
+    folder        TEXT    NOT NULL DEFAULT '',  -- W-Explorer virtual path; ''=root
+    deleted_at    TEXT                          -- #94 SOFT-delete tombstone (NULL=live, ISO ts=deleted)
 );
 -- title→id resolver path (W1b uses this for [[Title]]→id). title is mutable so
 -- this is a plain (non-unique) index — collisions are resolved by W1b's logic.
@@ -155,6 +156,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "folder" not in cols:  # W-Explorer — existing notes migrate to ''=root
         conn.execute(
             "ALTER TABLE wiki_notes ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
+        )
+    if "deleted_at" not in cols:  # #94 SOFT-delete — NULL = live; an ISO ts = soft-deleted (tombstone)
+        conn.execute(
+            "ALTER TABLE wiki_notes ADD COLUMN deleted_at TEXT"  # nullable; existing notes → NULL (live)
         )
 
 

@@ -74,6 +74,8 @@ from .crud import (
     get_note,
     merge_notes,
     refine_note,
+    restore_note,
+    soft_delete_note,
     update_note,
 )
 from .import_notes import import_files, import_one  # #93 wiki import (.md/.txt → note)
@@ -85,7 +87,7 @@ __all__ = [
     "Op", "enqueue",
     # public CRUD
     "create_note", "get_note", "update_note", "delete_note", "merge_notes",
-    "refine_note",
+    "refine_note", "soft_delete_note", "restore_note",
     # #93 import (.md/.txt → note)
     "import_files", "import_one",
     # read

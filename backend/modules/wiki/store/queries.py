@@ -14,27 +14,43 @@ from ._base import _lock
 
 
 def all_notes(order_by: str = "id") -> list[sqlite3.Row]:
-    """All live note cache rows. ``order_by`` ∈ {id, created} (validated)."""
+    """All LIVE note cache rows (#94: deleted_at IS NULL — soft-deleted notes are excluded from
+    every consumer that builds on all_notes: the tree, search seed, overview). ``order_by`` ∈
+    {id, created} (validated)."""
     col = "created" if order_by == "created" else "id"
     conn = db.get_conn()
     with _lock:
         return conn.execute(
-            f"SELECT * FROM wiki_notes ORDER BY {col} ASC"  # noqa: S608 (col whitelisted)
+            f"SELECT * FROM wiki_notes WHERE deleted_at IS NULL ORDER BY {col} ASC"  # noqa: S608 (col whitelisted)
+        ).fetchall()
+
+
+def trash_notes(order_by: str = "id") -> list[sqlite3.Row]:
+    """#94: the SOFT-DELETED note cache rows (deleted_at NOT NULL) — newest-deleted-first by default
+    for the restore/trash UI. The inverse of all_notes."""
+    col = "created" if order_by == "created" else "id"
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT * FROM wiki_notes WHERE deleted_at IS NOT NULL ORDER BY {col} ASC"  # noqa: S608
         ).fetchall()
 
 
 def count_notes() -> int:
+    """Count of LIVE notes (#94: excludes soft-deleted)."""
     conn = db.get_conn()
     with _lock:
-        return int(conn.execute("SELECT COUNT(*) AS c FROM wiki_notes").fetchone()["c"])
+        return int(conn.execute(
+            "SELECT COUNT(*) AS c FROM wiki_notes WHERE deleted_at IS NULL"
+        ).fetchone()["c"])
 
 
 def count_by_status() -> dict[str, int]:
-    """``{status: count}`` over live notes."""
+    """``{status: count}`` over LIVE notes (#94: excludes soft-deleted)."""
     conn = db.get_conn()
     with _lock:
         rows = conn.execute(
-            "SELECT status, COUNT(*) AS c FROM wiki_notes GROUP BY status"
+            "SELECT status, COUNT(*) AS c FROM wiki_notes WHERE deleted_at IS NULL GROUP BY status"
         ).fetchall()
     return {r["status"]: int(r["c"]) for r in rows}
 

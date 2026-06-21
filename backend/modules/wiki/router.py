@@ -52,6 +52,7 @@ from .schema import (
     ConflictResolveInput,
     DeviceRegisterInput,
     FolderMetaInput,
+    BulkDeleteInput,
     ImportInput,
     MergeInput,
     NoteCreateInput,
@@ -416,15 +417,55 @@ def delete_note(
     overrideText: str | None = Query(  # noqa: N803
         default=None, description="#35: optional free-text detail for the override reason."),
 ):
-    """Delete a note (1 git commit removes the file; cache row hard-deleted; op_log
-    keeps the delete record). 404 if absent. ``overrideReason``/``overrideText`` (#35)
-    record WHY when a human deletes an agent-written note → wiki_my_feedback."""
+    """#94: SOFT-delete a note (recoverable) — sets a deletedAt tombstone, KEEPS the .md
+    (reconcile-safe) + cache row + aliases/links, hides it from live views. Restore via
+    POST /notes/{id}/restore. 404 if absent. ``overrideReason``/``overrideText`` (#35) record WHY
+    when a human deletes an agent-written note → wiki_my_feedback."""
     try:
-        service.delete_note(
+        note = service.soft_delete_note(
             note_id, feedback=_override_feedback(overrideReason, overrideText))
     except service.NoteNotFound:
         return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
-    return ok(data={"deleted": note_id})
+    return ok(data={"deleted": note_id, "deletedAt": note.deletedAt})
+
+
+@router.post("/notes/{note_id}/restore")
+def restore_note(note_id: int):
+    """#94: RESTORE a soft-deleted note — clears the tombstone, the note is fully BACK in every view
+    (links/aliases intact). 404 if absent. Idempotent (already-live → returned unchanged)."""
+    try:
+        note = service.restore_note(note_id)
+    except service.NoteNotFound:
+        return _note_not_found(note_id)
+    return ok(data=note.model_dump())
+
+
+@router.post("/notes/bulk-delete")
+def bulk_delete(body: BulkDeleteInput):
+    """#94: BULK soft-delete by id — per-id results (fail-soft: a bad id yields its error row, the
+    rest still soft-delete). ``{results:[{id, ok, error?}], deletedCount}``."""
+    results = []
+    deleted = 0
+    for nid in body.ids:
+        try:
+            service.soft_delete_note(nid)
+            results.append({"id": nid, "ok": True, "error": None})
+            deleted += 1
+        except service.NoteNotFound:
+            results.append({"id": nid, "ok": False,
+                            "error": agent_error("NOT_FOUND", f"no wiki note #{nid}",
+                                                 hint="GET /wiki/notes for valid ids")["error"]})
+    return ok(data={"results": results, "deletedCount": deleted})
+
+
+@router.get("/trash")
+def list_trash():
+    """#94: the SOFT-DELETED notes (the restore/trash UI source) — lean rows {id, title, deletedAt,
+    folder} from the cache, newest-deleted state. Honest-empty → []."""
+    rows = wiki_store.trash_notes(order_by="id")
+    items = [{"id": r["id"], "title": r["title"], "deletedAt": r["deleted_at"],
+              "folder": r["folder"]} for r in rows]
+    return ok(data={"trash": items, "count": len(items)})
 
 
 @router.get("/feedback")
