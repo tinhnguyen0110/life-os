@@ -105,6 +105,8 @@ export const NAV: NavGroup[] = [
     items: [
       { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "—", cls: "g" } },
       { route: "/activity", label: "Activity Feed", icon: "i-pulse", screen: "S14" },
+      // #88 MCP keys (MCPKEYS) — per-key tool scoping: cấp key cho agent + audit tool catalog.
+      { route: "/mcp-keys", label: "MCP Keys", icon: "i-set", screen: "MCPKEYS" },
     ],
   },
   {
@@ -138,6 +140,7 @@ export const CRUMB: Record<string, string> = {
   "/settings": "Cài đặt",
   "/routines": "Automation / Routines",
   "/activity": "Activity Feed",
+  "/mcp-keys": "MCP Keys · tool scoping",
   "/dev-activity": "Dev Activity",
   "/repo-memory": "Repo Memory · Code Insight",
   "/career": "Sự nghiệp · CV / Blog / Demo",

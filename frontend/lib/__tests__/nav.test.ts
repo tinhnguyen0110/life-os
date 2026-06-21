@@ -41,7 +41,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("TRACE"); // Daily Tracing (#65-P3 G-HABIT) under "Hằng ngày"
     expect(screens).toContain("DEVACT"); // Dev Activity (#63 git contributions) under "Dự án" (user CHỐT nav-IA option A) — DISTINCT from S14 /activity feed
     expect(screens).toContain("REPOMEM"); // Repo Memory (#64-P3 code_insight + repo_memory) under "Dự án" — DISTINCT browse screen
-    expect(unique.size).toBe(29);
+    expect(screens).toContain("MCPKEYS"); // MCP Keys (#88 per-key tool scoping) under "Hệ thống"
+    expect(unique.size).toBe(30);
   });
 
   it("every nav route has a breadcrumb entry", () => {

@@ -1918,3 +1918,61 @@ export interface RepoMemory {
   note: RepoMemoryNote | null;
   found: boolean;
 }
+
+/* ============================================================================
+   #6 / #88 MCP key scoping — per-key tool visibility. A key sees the UNION of:
+   the tools of each whole DOMAIN (mount label) it's scoped to + each explicit TOOL
+   name. Mirrors the FROZEN #86 CRUD schema (Scope/KeyCreate/KeyUpdate + the row).
+   ============================================================================ */
+
+/** What a key can see. A key with `{domains:[],tools:[]}` (the default) sees NOTHING. */
+export interface McpScope {
+  /** mount labels (= catalog `server` values, e.g. "read","finance") the key sees IN FULL. */
+  domains: string[];
+  /** explicit tool names the key sees (on top of its domains). */
+  tools: string[];
+}
+
+/** A key row (GET /mcp_keys list item + POST /mcp_keys response). The POST response
+ *  is the ONLY place the full `key` token appears in a row — surface it once on create. */
+export interface McpKey {
+  /** the secret key token. */
+  key: string;
+  label: string;
+  scope: McpScope;
+  /** the RESOLVED count of tools this scope sees (domain tools ∪ explicit, deduped) —
+   *  computed by the backend, render-only. */
+  toolCount: number;
+  createdAt: string;
+}
+
+/** POST /mcp_keys body — label (1-80) + optional scope (defaults to sees-nothing). */
+export interface McpKeyCreate {
+  label: string;
+  scope?: McpScope;
+}
+
+/** PUT /mcp_keys/{key} body — partial; a field left undefined is unchanged. */
+export interface McpKeyUpdate {
+  label?: string;
+  scope?: McpScope;
+}
+
+/** One tool in the catalog (the audit surface). From `list_tools_catalog`. */
+export interface McpCatalogTool {
+  name: string;
+  /** the mount/domain this tool belongs to (e.g. "read","finance","wiki-read"). */
+  server: string;
+  /** "read" (safe) or "propose" (write-proposing). */
+  capability: string;
+  /** whether the tool is neutral (no side-class). */
+  neutral: boolean;
+  description: string;
+}
+
+/** GET /mcp_keys/catalog → the whole tool catalog (audit + scope-editor source).
+ *  NOTE (#88): this REST route may not exist yet — `list_tools_catalog` is MCP-only.
+ *  The scope-editor depends on it being exposed over REST. */
+export interface McpCatalog {
+  tools: McpCatalogTool[];
+}
