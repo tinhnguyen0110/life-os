@@ -131,12 +131,106 @@ describe("#63-P3 Dev Activity — populated 'you'", () => {
     expect(empty.getAttribute("style")).toContain("--bg-3");
   });
 
-  it("by-repo distribution renders YOUR repos (the primary signal)", async () => {
+  it("by-repo renders YOUR repos in a SORTABLE table (the primary signal)", async () => {
     getDevActivity.mockResolvedValue(POPULATED);
     render(<DevActivityPage />);
-    const row = await screen.findByTestId("repo-life-os");
-    expect(row).toHaveTextContent(/12 commit/);
-    expect(row).toHaveTextContent(/4 ngày/);
+    const row = await screen.findByTestId("repo-row-life-os");
+    expect(row).toHaveTextContent("12"); // commits
+    expect(row).toHaveTextContent("4"); // activeDays
+    expect(screen.getByTestId("dev-repo-table")).toBeInTheDocument();
+  });
+});
+
+/* ---- #97 analyst polish (render-only on existing data) ---- */
+describe("#97 Dev Activity — analyst polish", () => {
+  const MULTI = OV({
+    byDay: [
+      // newest-first; 'you' RepoDays carry firstTs/lastTs for peak-hours/span
+      DAY({ date: "2026-06-21", totalCommits: 6, repos: [REPODAY({ source: "you", commits: 6, firstTs: "00:10", lastTs: "02:30" })] }),
+      DAY({ date: "2026-06-20", totalCommits: 4, repos: [REPODAY({ source: "you", commits: 4, firstTs: "00:40", lastTs: "01:00" })] }),
+      DAY({ date: "2026-06-19", totalCommits: 2, repos: [REPODAY({ source: "you", commits: 2, firstTs: "11:00", lastTs: "12:00" })] }),
+      DAY({ date: "2026-06-18", totalCommits: 1, repos: [REPODAY({ source: "you", commits: 1, firstTs: "11:30", lastTs: "11:40" })] }),
+    ],
+    byRepo: [
+      { repo: "beta", commits: 5, locAdded: 100, locDeleted: 10, activeDays: 2, lastActive: "2026-06-19" },
+      { repo: "alpha", commits: 50, locAdded: 2000, locDeleted: 500, activeDays: 9, lastActive: "2026-06-21" },
+      { repo: "gamma", commits: 20, locAdded: 50, locDeleted: 5, activeDays: 1, lastActive: null },
+    ],
+    otherRepos: [REPODAY({ repo: "team-x", source: "other", commits: 25 })],
+    summary: { totalCommits: 75, activeDays: 4, activeRepos: 3, locAdded: 2150, locDeleted: 515, topRepos: [] },
+    warnings: [],
+  });
+
+  it("range filter offers 7/14/30/90 + switching calls setDays", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("range-7")).toBeInTheDocument());
+    expect(screen.getByTestId("range-14")).toBeInTheDocument();
+    expect(screen.getByTestId("range-30")).toBeInTheDocument();
+    expect(screen.getByTestId("range-90")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("range-7"));
+    // hook re-fetches with 7 (the existing setDays path)
+    await waitFor(() => expect(getDevActivity).toHaveBeenCalledWith(7));
+  });
+
+  it("analyst-stats render the real derived numbers (commit/day, net-LOC, span, peak-hour)", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("dev-analyst")).toBeInTheDocument());
+    // commit/day = 75/4 = 18.8
+    expect(screen.getByTestId("stat-cpd")).toHaveTextContent("18.8");
+    // net-LOC = 2150 − 515 = 1635 → "+1.6k"
+    expect(screen.getByTestId("stat-netloc")).toHaveTextContent(/\+1\.6k/);
+    // peak-hour: 00:xx appears twice (the night-owl peak) — surfaced HONESTLY
+    expect(screen.getByTestId("stat-peak")).toHaveTextContent("00:00");
+    // span renders (not "—", since 'you' has firstTs/lastTs)
+    expect(screen.getByTestId("stat-span")).not.toHaveTextContent("—");
+  });
+
+  it("velocity-trend uses the 3-way deltaGlyph (▲ up here; NOT green-on-flat)", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("dev-velocity")).toBeInTheDocument());
+    // velWin = max(3, round(90/4)) = 23 → recent=all 4 days' commits, prior=null
+    // (only 4 days of data) → deltaGlyph(null) → ▬ neutral (honest "no comparison")
+    const g = screen.getByTestId("vel-glyph");
+    expect(g.textContent).toBe("▬"); // null prior → neutral, NOT a fabricated ▲
+    expect(g.className).toContain("faint");
+    expect(g.className).not.toContain("pos");
+    expect(screen.getByTestId("vel-nums")).toHaveTextContent(/chưa đủ lịch sử/);
+  });
+
+  it("you-vs-other ratio renders honestly (you 75 vs team 25 → 75%)", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("dev-yvo")).toBeInTheDocument());
+    expect(screen.getByTestId("yvo-label")).toHaveTextContent("75% bạn");
+  });
+
+  it("per-repo table SORTS: default commits-desc, click name → repo asc", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("dev-repo-table")).toBeInTheDocument());
+    // default sort = commits desc → alpha(50), gamma(20), beta(5)
+    let rows = screen.getAllByTestId(/^repo-row-/).map((r) => r.getAttribute("data-testid"));
+    expect(rows).toEqual(["repo-row-alpha", "repo-row-gamma", "repo-row-beta"]);
+    // click "Repo" header → name asc
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("sort-repo"));
+    rows = screen.getAllByTestId(/^repo-row-/).map((r) => r.getAttribute("data-testid"));
+    expect(rows).toEqual(["repo-row-alpha", "repo-row-beta", "repo-row-gamma"]);
+  });
+
+  it("lastActive sort: null ('never') stays LAST (honest)", async () => {
+    getDevActivity.mockResolvedValue(MULTI);
+    render(<DevActivityPage />);
+    await waitFor(() => expect(screen.getByTestId("dev-repo-table")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("sort-lastActive")); // asc
+    const rows = screen.getAllByTestId(/^repo-row-/).map((r) => r.getAttribute("data-testid"));
+    // gamma has null lastActive → sorts last regardless of direction
+    expect(rows[rows.length - 1]).toBe("repo-row-gamma");
   });
 });
 

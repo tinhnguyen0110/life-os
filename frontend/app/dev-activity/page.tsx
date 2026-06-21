@@ -16,11 +16,16 @@
 import { useMemo, useState } from "react";
 import { useDevActivity } from "@/lib/useDevActivity";
 import { apiBase, ApiError } from "@/lib/api";
-import { fmtTokens } from "@/lib/format";
-import type { DayView, RepoDay, RepoSummary } from "@/lib/types";
+import { fmtTokens, fmtSign, deltaGlyph } from "@/lib/format";
+import {
+  netLoc, commitsPerDay, peakHours, peakHour, totalActiveMinutes, fmtMinutes,
+  velocityWindows, youVsOther, sortRepos, type RepoSortKey, type SortDir,
+} from "@/lib/devStats";
+import type { DayView, RepoDay } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
-const RANGES = [30, 90, 180];
+// #97 — analyst range filter (was [30,90,180]). 7/14/30/90 per the user ask.
+const RANGES = [7, 14, 30, 90];
 
 /** heatmap cell color by a day's commit COUNT, banded relative to the range max
  *  (0 = empty). Same approach as the /tracing heatmap. */
@@ -62,6 +67,27 @@ export default function DevActivityPage() {
   const otherByRepo = useMemo(() => aggregateByRepo(data.otherRepos), [data.otherRepos]);
   // recent days with ANY activity (you or other) for the per-day bars.
   const recentDays = useMemo(() => data.byDay.slice(0, 14), [data.byDay]);
+
+  /* ---- #97 analyst stats (render-only derivations; honest null when no "you") ---- */
+  const cpd = useMemo(() => commitsPerDay(sc.totalCommits, sc.activeDays), [sc.totalCommits, sc.activeDays]);
+  const net = useMemo(() => netLoc(sc.locAdded, sc.locDeleted), [sc.locAdded, sc.locDeleted]);
+  const activeMin = useMemo(() => totalActiveMinutes(data.byDay), [data.byDay]);
+  const hourDist = useMemo(() => peakHours(data.byDay), [data.byDay]);
+  const peak = useMemo(() => peakHour(hourDist), [hourDist]);
+  // velocity: a window sized to the range (¼ of the days, ≥3), recent vs prior.
+  const velWin = Math.max(3, Math.round(days / 4));
+  const vel = useMemo(() => velocityWindows(data.byDay, velWin), [data.byDay, velWin]);
+  const velGlyph = deltaGlyph(vel.prior == null ? null : vel.recent - vel.prior);
+  const yvo = useMemo(() => youVsOther(data.byRepo, data.otherRepos), [data.byRepo, data.otherRepos]);
+
+  // sortable per-repo table state + derived sorted rows.
+  const [sortKey, setSortKey] = useState<RepoSortKey>("commits");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const sortedRepos = useMemo(() => sortRepos(data.byRepo, sortKey, sortDir), [data.byRepo, sortKey, sortDir]);
+  function toggleSort(key: RepoSortKey) {
+    if (key === sortKey) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortKey(key); setSortDir(key === "repo" || key === "lastActive" ? "asc" : "desc"); }
+  }
 
   async function onScan() {
     setScanErr(""); setScanMsg("");
@@ -156,6 +182,62 @@ export default function DevActivityPage() {
             </div>
           </div>
 
+          {/* #97 analyst-stats row — derived from existing data, honest null when no "you" */}
+          {hasYou && (
+            <div className="panel" data-testid="dev-analyst" style={{ padding: "12px 16px" }}>
+              <div className="phead"><span className="kicker">Phân tích · {days} ngày</span></div>
+              <div className="grid g-4" style={{ marginTop: 8 }}>
+                <div className="stat">
+                  <span className="sl">Commit / ngày active</span>
+                  <span className="sv acc" data-testid="stat-cpd">{cpd != null ? cpd.toFixed(1) : "—"}</span>
+                  <span className="sd faint">{sc.totalCommits} commit · {sc.activeDays} ngày</span>
+                </div>
+                <div className="stat">
+                  <span className="sl">Net LOC</span>
+                  <span className={`sv ${net == null ? "faint" : net < 0 ? "neg" : "pos"}`} data-testid="stat-netloc">
+                    {net == null ? "—" : `${net >= 0 ? "+" : "−"}${fmtTokens(Math.abs(net))}`}
+                  </span>
+                  <span className="sd faint">+{fmtTokens(sc.locAdded)} / −{fmtTokens(sc.locDeleted)}</span>
+                </div>
+                <div className="stat">
+                  <span className="sl">Active span</span>
+                  <span className="sv" data-testid="stat-span">{fmtMinutes(activeMin)}</span>
+                  <span className="sd faint">tổng first→last mỗi ngày</span>
+                </div>
+                <div className="stat">
+                  <span className="sl">Giờ hay code</span>
+                  {/* HONEST — surface the real start-hour (incl a night-owl 0h), not smoothed */}
+                  <span className="sv" data-testid="stat-peak">{peak != null ? `${String(peak).padStart(2, "0")}:00` : "—"}</span>
+                  <span className="sd faint">{peak != null ? `${hourDist[peak]} lần bắt đầu giờ này` : "chưa có dữ liệu giờ"}</span>
+                </div>
+              </div>
+
+              {/* velocity-trend (3-way honest deltaGlyph) + you-vs-other ratio */}
+              <div style={{ display: "flex", gap: 20, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div data-testid="dev-velocity">
+                  <span className="sl">Velocity ({velWin}n gần / {velWin}n trước)</span>{" "}
+                  <span className={`num ${velGlyph.cls}`} data-testid="vel-glyph">{velGlyph.arrow}</span>{" "}
+                  <span className="num faint" data-testid="vel-nums">
+                    {vel.recent}{vel.prior != null ? ` vs ${vel.prior}` : " (chưa đủ lịch sử so sánh)"}
+                  </span>
+                </div>
+                <div style={{ flex: 1, minWidth: 220 }} data-testid="dev-yvo">
+                  <span className="sl">Bạn vs team</span>
+                  {yvo.youPct == null ? (
+                    <span className="hint faint" data-testid="yvo-empty"> — chưa có commit</span>
+                  ) : (
+                    <div className="barc" style={{ marginTop: 4, height: 9, position: "relative" }} title={`Bạn ${yvo.you} · team ${yvo.other}`}>
+                      <i style={{ width: `${yvo.youPct}%`, background: "var(--accent)" }} data-testid="yvo-bar" />
+                      <span className="num faint" style={{ marginLeft: 8, fontSize: 11 }} data-testid="yvo-label">
+                        {yvo.youPct.toFixed(0)}% bạn ({yvo.you}) · {yvo.other} team
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* honest empty-state for "you" (no attribution) — STILL show team context below */}
           {!hasYou && (
             <div className="panel" data-testid="dev-empty-you">
@@ -191,14 +273,45 @@ export default function DevActivityPage() {
             </div>
           </div>
 
-          {/* by-repo distribution — YOUR repos, the PRIMARY signal (commits-desc) */}
+          {/* by-repo — YOUR repos as a SORTABLE table (#97), the PRIMARY signal */}
           <div className="panel" data-testid="dev-byrepo">
-            <div className="phead"><span className="kicker">Phân bố theo repo · của bạn</span><span className="hint" style={{ marginLeft: "auto" }}>{data.byRepo.length} repo</span></div>
+            <div className="phead"><span className="kicker">Repo của bạn · bấm cột để sắp xếp</span><span className="hint" style={{ marginLeft: "auto" }}>{data.byRepo.length} repo</span></div>
             <div style={{ padding: "10px 16px 14px" }}>
               {data.byRepo.length === 0 ? (
                 <span className="hint faint" data-testid="dev-byrepo-empty">Chưa có repo nào của bạn (xem Team context bên dưới).</span>
               ) : (
-                data.byRepo.map((r) => <RepoBar key={r.repo} r={r} max={Math.max(1, ...data.byRepo.map((x) => x.commits))} />)
+                <table className="dev-repo-table" data-testid="dev-repo-table">
+                  <thead>
+                    <tr>
+                      {([
+                        ["repo", "Repo"], ["commits", "Commit"], ["locAdded", "+LOC"],
+                        ["locDeleted", "−LOC"], ["activeDays", "Ngày"], ["lastActive", "Gần nhất"],
+                      ] as [RepoSortKey, string][]).map(([key, label]) => (
+                        <th
+                          key={key}
+                          onClick={() => toggleSort(key)}
+                          data-testid={`sort-${key}`}
+                          aria-sort={sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                          className={`dev-th ${key === "repo" ? "" : "num-col"} ${sortKey === key ? "sorted" : ""}`}
+                        >
+                          {label}{sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedRepos.map((r) => (
+                      <tr key={r.repo} data-testid={`repo-row-${r.repo}`}>
+                        <td className="dev-repo-name">{r.repo}</td>
+                        <td className="num-col" data-testid={`repo-commits-${r.repo}`}>{r.commits}</td>
+                        <td className="num-col pos">+{fmtTokens(r.locAdded)}</td>
+                        <td className="num-col neg">−{fmtTokens(r.locDeleted)}</td>
+                        <td className="num-col">{r.activeDays}</td>
+                        <td className="num-col faint">{r.lastActive ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -249,19 +362,6 @@ export default function DevActivityPage() {
         </>
       )}
     </section>
-  );
-}
-
-/** one YOUR-repo distribution bar. */
-function RepoBar({ r, max }: { r: RepoSummary; max: number }) {
-  const w = Math.max(2, Math.min(100, Math.round((r.commits / max) * 100)));
-  return (
-    <div className="mrow" style={{ alignItems: "center", gap: 10, padding: "6px 0" }} data-testid={`repo-${r.repo}`}>
-      <span className="k" style={{ minWidth: 150 }}>{r.repo}</span>
-      <span className="barc" style={{ flex: 1, width: "auto" }}><i style={{ width: `${w}%`, background: "var(--accent)" }} /></span>
-      <span className="num" style={{ width: 70, textAlign: "right", fontWeight: 600 }}>{r.commits} commit</span>
-      <span className="faint num" style={{ width: 130, textAlign: "right", fontSize: 10.5 }}>{r.activeDays} ngày · +{fmtTokens(r.locAdded)}/−{fmtTokens(r.locDeleted)}</span>
-    </div>
   );
 }
 
