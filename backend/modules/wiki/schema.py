@@ -36,6 +36,17 @@ Status = Literal["fleeting", "developing", "evergreen"]
 NoteType = Literal["concept", "literature", "moc"]  # moc = Map-of-Content (W5, D-W5.2)
 TrustTier = Literal["verified", "candidate"]
 
+# WIKI-WRITE-FEEDBACK (#35): the CLOSED reason set a human picks when overriding an
+# AGENT-written note (edit or delete) — the structured signal an agent reads back to
+# write less junk. Small + fixed (Pydantic Literal → a bad value is a 422, not a free
+# string). Decided + logged to ## Assumptions.
+OverrideReason = Literal[
+    "off-scope", "wrong", "duplicate", "low-quality", "outdated", "other"
+]
+# the override kind = which mutation carried the feedback (an edit that overrode the
+# agent's note, or a delete that removed it).
+OverrideKind = Literal["edit", "delete"]
+
 
 class Note(BaseModel):
     """A stored wiki note (response model, ``GET /wiki/notes/{id}``).
@@ -180,3 +191,21 @@ class NoteUpdateInput(BaseModel):
     @classmethod
     def _norm_folder(cls, v: str | None) -> str | None:
         return normalize_folder(v) if v is not None else None
+
+
+# --------------------------------------------------------------------------- #
+# WIKI-WRITE-FEEDBACK (#35) — the read-back row a consumer-agent reads to learn  #
+# WHY a human overrode its note (so it writes less junk). Self-describing,       #
+# agent-readable: every field carries its meaning; reason is the CLOSED enum.    #
+# --------------------------------------------------------------------------- #
+class FeedbackRow(BaseModel):
+    """One override-feedback entry (#35): a human edited/deleted an AGENT-written note
+    and recorded why. Read-back lean shape for an agent to self-correct."""
+
+    noteId: int = Field(..., description="the note that was overridden")
+    reason: OverrideReason = Field(..., description="the CLOSED override reason enum")
+    text: str | None = Field(None, description="the human's free-text note (optional — may be null)")
+    overriddenAt: str = Field(..., description="ISO-8601 UTC ts of the override op")
+    originalTitle: str = Field(
+        ..., description="the note's title AT override time (snapshotted into the op — survives a delete)")
+    overrideKind: OverrideKind = Field(..., description="edit | delete — which mutation carried the feedback")

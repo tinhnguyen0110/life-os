@@ -372,6 +372,7 @@ def test_server_builds_with_all_tools():
         "wiki_suggest_links",  # WIKI-SUGGEST-LINK #34
         "wiki_stale",  # WIKI-STALE-DETECTOR #41
         "wiki_recent_ops",
+        "wiki_my_feedback",  # WIKI-WRITE-FEEDBACK #35: agent reads WHY a human overrode its notes
         "wiki_tree",  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
         "wiki_clusters", "wiki_verify_citations",
         # PORTED #70 — wiki-proposal read-back (was embedded in the shared read_server)

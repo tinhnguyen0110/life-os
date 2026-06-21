@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from core.agent_errors import agent_error, agent_error_response  # #61 item#3 + AGENT-ERROR-P6 (#46)
@@ -55,6 +55,7 @@ from .schema import (
     MergeInput,
     NoteCreateInput,
     NoteUpdateInput,
+    OverrideReason,
 )
 
 logger = logging.getLogger("life-os.wiki.router")
@@ -331,12 +332,33 @@ def refine_note(note_id: int, body: NoteUpdateInput):
     return ok(data=data, warning=warning)
 
 
+def _override_feedback(reason: OverrideReason | None, text: str | None) -> dict | None:
+    """#35: build the override-feedback dict from the optional query params, or None
+    (silent override). The Literal type on ``reason`` makes a bad value a 422 at the
+    FastAPI boundary. text is OPTIONAL (a reason with no text is fine)."""
+    if reason is None:
+        return None
+    return {"reason": reason, "text": text}
+
+
 @router.put("/notes/{note_id}")
-def update_note(note_id: int, body: NoteUpdateInput):
+def update_note(
+    note_id: int,
+    body: NoteUpdateInput,
+    overrideReason: OverrideReason | None = Query(  # noqa: N803 (camelCase = the API param)
+        default=None,
+        description="#35: WHY a human is overriding an AGENT-written note (off-scope|wrong|"
+                    "duplicate|low-quality|outdated|other). Captured as feedback ONLY when this "
+                    "edit overrides agent work; omit for a silent edit. Bad value → 422."),
+    overrideText: str | None = Query(  # noqa: N803
+        default=None, description="#35: optional free-text detail for the override reason."),
+):
     """Partial-update a note in place (preserve created+id; bump updated unless a
-    no-op touch). Goes through the queue. 404 if absent."""
+    no-op touch). Goes through the queue. 404 if absent. ``overrideReason``/``overrideText``
+    (#35) record WHY when a human overrides an agent-written note → wiki_my_feedback."""
     try:
-        note = service.update_note(note_id, body)
+        note = service.update_note(
+            note_id, body, feedback=_override_feedback(overrideReason, overrideText))
     except service.NoteNotFound:
         return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     data = note.model_dump()
@@ -345,14 +367,34 @@ def update_note(note_id: int, body: NoteUpdateInput):
 
 
 @router.delete("/notes/{note_id}")
-def delete_note(note_id: int):
+def delete_note(
+    note_id: int,
+    overrideReason: OverrideReason | None = Query(  # noqa: N803
+        default=None,
+        description="#35: WHY a human is deleting an AGENT-written note (off-scope|wrong|"
+                    "duplicate|low-quality|outdated|other). Captured as feedback ONLY when this "
+                    "delete overrides agent work; omit for a silent delete. Bad value → 422."),
+    overrideText: str | None = Query(  # noqa: N803
+        default=None, description="#35: optional free-text detail for the override reason."),
+):
     """Delete a note (1 git commit removes the file; cache row hard-deleted; op_log
-    keeps the delete record). 404 if absent."""
+    keeps the delete record). 404 if absent. ``overrideReason``/``overrideText`` (#35)
+    record WHY when a human deletes an agent-written note → wiki_my_feedback."""
     try:
-        service.delete_note(note_id)
+        service.delete_note(
+            note_id, feedback=_override_feedback(overrideReason, overrideText))
     except service.NoteNotFound:
         return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     return ok(data={"deleted": note_id})
+
+
+@router.get("/feedback")
+def wiki_feedback(limit: int = 50):
+    """WIKI-WRITE-FEEDBACK (#35): the override-feedback the agent reads to learn WHY a
+    human overrode its notes — newest-first ``{feedback: [{noteId, reason, text,
+    overriddenAt, originalTitle, overrideKind}], count}``. Honest-empty → {feedback:[],
+    count:0}. REST mirror of the wiki_my_feedback MCP tool (byte-identical data, #24)."""
+    return ok(data=reader.my_feedback(limit=int(limit)))
 
 
 # --------------------------------------------------------------------------- #

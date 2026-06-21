@@ -26,7 +26,12 @@ original single-file module did.
 from __future__ import annotations
 
 # op_log feed.
-from .oplog import recent_ops
+from .oplog import _recent_activity, my_feedback, recent_ops
+
+# #36: a PUBLIC alias for the titled recent-activity feed (the brief's wikiContext reuses
+# it — {ts, op, actor, noteId, noteTitle, detail}). Same fn overview() composes; the public
+# name avoids the brief reaching into a `_`-prefixed internal.
+recent_activity = _recent_activity
 
 # reindex seam + bulk reconcile (#53).
 from .reindex import reindex_all, reindex_note
@@ -59,7 +64,7 @@ from .tree import folder_tree, mocs
 from .note_view import note_view
 
 __all__ = [
-    "recent_ops",
+    "recent_ops", "my_feedback", "recent_activity",
     "reindex_note", "reindex_all",
     "backlinks", "search", "unlinked_mentions",
     "ego_graph", "global_graph", "detect_clusters",

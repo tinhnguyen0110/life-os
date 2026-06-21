@@ -72,6 +72,44 @@ def _commit_note(note: Note, message: str, capture_source: str = "quick_add") ->
 
 
 # --------------------------------------------------------------------------- #
+# WIKI-WRITE-FEEDBACK (#35) — capture WHY a human overrode an AGENT-written note #
+# --------------------------------------------------------------------------- #
+def _override_feedback_detail(note_id: int, op: Op, original_title: str) -> str | None:
+    """Return an op_log ``detail`` JSON string carrying the override feedback, IFF this
+    op is a human override of an AGENT-written note AND the human supplied feedback.
+    Else None (→ a normal op_log row with no detail).
+
+    Gate (the "agent learns" point):
+      - op.actor must be 'human' (a human is doing the override). An agent edit/delete
+        is not feedback-to-an-agent.
+      - the note's MOST-RECENT PRIOR op actor must be != 'human' (mcp:writer / mcp:reader
+        / agent) — i.e. the thing being overridden was agent-written. A human overriding
+        their own note is NOT feedback. (Decided: the FIRST human override of agent work
+        is the signal; a 2nd human edit's prior op is human → not captured — logged to
+        ## Assumptions.)
+      - feedback must be present in the payload (reason set). A silent override (no reason)
+        → None (honest: no feedback row).
+
+    detail shape: ``{"feedback": {"reason", "text"}, "originalTitle", "overrideKind"}``
+    — originalTitle snapshotted here so it survives a delete (the note row is gone after).
+    """
+    if op.actor != "human":
+        return None
+    fb = op.payload.get("feedback")
+    if not fb or not fb.get("reason"):
+        return None
+    prior = wiki_store.latest_op_for_note(note_id)
+    if prior is None or prior["actor"] == "human":
+        return None  # no prior op, or the note was last touched by a human → not agent feedback
+    override_kind = "delete" if op.kind == "delete" else "edit"
+    return _json({
+        "feedback": {"reason": fb["reason"], "text": fb.get("text")},
+        "originalTitle": original_title,
+        "overrideKind": override_kind,
+    })
+
+
+# --------------------------------------------------------------------------- #
 # Worker apply (runs ONLY on the single writer thread)                          #
 # --------------------------------------------------------------------------- #
 def _apply(op: Op) -> Note | None:
@@ -146,9 +184,12 @@ def _apply_update(op: Op) -> Note:
     # note was last written with). A refine/edit never changes where it was captured.
     cap = _parse_capture_source(wiki_store.read_note_file(note_id) or "")
     op_kind = op.payload.get("op_kind", "edit")  # refine reuses this path (C6)
+    # #35: capture override-feedback BEFORE _commit_note appends this op (latest_op_for_note
+    # must read the PRIOR op). original_title = the title BEFORE the edit (override-time).
+    feedback_detail = _override_feedback_detail(note_id, op, existing.title)
     sha = _commit_note(note, f"{op_kind} wiki note {note_id}", capture_source=cap)
     wiki_store.append_op(op_id=op.op_id, kind=op_kind, note_id=note_id,
-                         actor=op.actor, ts=now, commit_sha=sha)
+                         actor=op.actor, ts=now, commit_sha=sha, detail=feedback_detail)
     return note
 
 
@@ -197,6 +238,9 @@ def _apply_delete(op: Op) -> None:
     existing = _read_note(note_id)
     if existing is None:
         raise NoteNotFound(str(note_id))
+    # #35: capture override-feedback BEFORE the delete (latest_op_for_note reads the
+    # PRIOR op; original_title snapshotted from `existing` so it survives the delete).
+    feedback_detail = _override_feedback_detail(note_id, op, existing.title)
     sha = wiki_store.delete_note_file(note_id, f"delete wiki note {note_id}")
     wiki_store.delete_note_cache(note_id)  # A4: hard-delete cache; op_log keeps record
     # Clean this note's resolver rows + outbound edges (disposable cache).
@@ -208,7 +252,8 @@ def _apply_delete(op: Op) -> None:
     wiki_store.ghostify_inbound(note_id, existing.title)
     wiki_store.fts_delete(note_id)  # C1: drop the FTS row for the deleted note
     wiki_store.append_op(op_id=op.op_id, kind="delete", note_id=note_id,
-                         actor=op.actor, ts=_now_iso(), commit_sha=sha)
+                         actor=op.actor, ts=_now_iso(), commit_sha=sha,
+                         detail=feedback_detail)
 
 
 def _apply_merge(op: Op) -> Note:

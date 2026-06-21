@@ -182,6 +182,12 @@ def _pairs(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         dict(id="list_proposals", mcp=lambda: mcp.wiki_list_proposals(status="pending"),
              method="GET", path="/wiki/proposals", params={"status": "pending"},
              norm_mcp=n_identity, norm_rest=n_identity),
+        # wiki_my_feedback (#35): both return reader.my_feedback() verbatim ({feedback,count});
+        # MCP adds the `found` existence-wrapper → strip it. On this fixture no override was
+        # captured → both honest-empty {feedback:[], count:0} → byte-identical after the strip.
+        dict(id="my_feedback", mcp=lambda: mcp.wiki_my_feedback(),
+             method="GET", path="/wiki/feedback", params={},
+             norm_mcp=n_strip_found, norm_rest=n_identity),
         # POST pair (the one non-GET): citations verify — pure fn, identical both sides.
         dict(id="verify_citations", mcp=lambda: mcp.wiki_verify_citations(claims=[{"noteId": b, "span": "target"}]),
              method="POST", path="/wiki/citations/verify", json_body={"claims": [{"noteId": b, "span": "target"}]},
@@ -253,7 +259,7 @@ def test_tree_stays_bare_no_wrapper(api):
 # COVERAGE-COMPLETENESS — every MCP tool is paired OR explicitly exempt          #
 # --------------------------------------------------------------------------- #
 def test_every_mcp_tool_is_paired_or_exempt():
-    """The gate cannot be silently bypassed: each of the 11 wiki-read MCP tools is EITHER in the
+    """The gate cannot be silently bypassed: each wiki-read MCP tool is EITHER in the
     pairing map OR in EXEMPT_MCP_ONLY (with a reason). A new wiki tool added without a pair/exempt
     → this fails RED, forcing a deliberate decision (pair it or document why it's MCP-only)."""
     paired = {p["id"] for p in _pairs({"a": 0, "b": 0, "heading": "h"})}
@@ -262,6 +268,7 @@ def test_every_mcp_tool_is_paired_or_exempt():
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_tree", "wiki_clusters",
         "wiki_get_note", "wiki_context", "wiki_suggest_links", "wiki_stale",
         "wiki_list_proposals", "wiki_verify_citations", "wiki_reindex",
+        "wiki_my_feedback",  # WIKI-WRITE-FEEDBACK #35 — paired with GET /wiki/feedback
     }
     covered = paired_tools | set(EXEMPT_MCP_ONLY)
     tools = set(mcp.TOOLS)

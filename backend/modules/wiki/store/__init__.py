@@ -58,8 +58,8 @@ from .notes import (
     upsert_note_cache,
 )
 
-# op_log (A3).
-from .oplog import append_op, recent_ops
+# op_log (A3). #35: + latest_op_for_note (agent-actor detection) + feedback_ops (read-back).
+from .oplog import append_op, feedback_ops, latest_op_for_note, recent_ops
 
 # md file pass-through.
 from .files import delete_note_file, read_note_file, write_note_file
@@ -131,7 +131,7 @@ __all__ = [
     # notes
     "upsert_note_cache", "get_note_cache", "note_cache_exists", "delete_note_cache",
     # oplog
-    "append_op", "recent_ops",
+    "append_op", "recent_ops", "latest_op_for_note", "feedback_ops",
     # files
     "write_note_file", "read_note_file", "delete_note_file",
     # aliases

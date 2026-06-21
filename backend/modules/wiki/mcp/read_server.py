@@ -167,6 +167,20 @@ def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     return {"ops": reader.recent_ops(limit=int(limit))}
 
 
+def wiki_my_feedback(limit: int = 50) -> dict[str, Any]:
+    """WIKI-WRITE-FEEDBACK (#35): the structured feedback an agent reads to learn WHY a
+    HUMAN overrode (edited/deleted) its notes — so it writes less junk. Newest-first rows
+    ``{noteId, reason, text, overriddenAt, originalTitle, overrideKind}`` where ``reason`` is
+    a CLOSED enum (off-scope|wrong|duplicate|low-quality|outdated|other) and ``overrideKind``
+    is edit|delete. Only HUMAN-overrides-of-AGENT-notes appear (a human editing their own
+    note is not feedback). Honest-empty → ``{feedback: [], count: 0, found: false}``. READ-
+    ONLY. Byte-identical data to REST ``GET /wiki/feedback``'s ``data`` (#24) + the MCP
+    ``found`` existence-wrapper (found = there is ≥1 feedback row)."""
+    _audit("wiki_my_feedback", {"limit": limit})
+    data = reader.my_feedback(limit=int(limit))  # {feedback: [...], count}
+    return {**data, "found": data["count"] > 0}
+
+
 def wiki_tree(folder: str | None = None, depth: int | None = None) -> dict[str, Any]:
     """The vault's virtual folder-tree (W-Explorer) for ls-style navigation WITHOUT reading bodies.
     Each folder node: {name, path, meta:{desc}|null, counts:{notes:N}, folders:[...], notes:[...]};
@@ -278,6 +292,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "wiki_suggest_links": wiki_suggest_links,  # WIKI-SUGGEST-LINK #34: top NEW link candidates
     "wiki_stale": wiki_stale,  # WIKI-STALE-DETECTOR #41: staleness + contradiction candidates
     "wiki_recent_ops": wiki_recent_ops,
+    "wiki_my_feedback": wiki_my_feedback,  # WIKI-WRITE-FEEDBACK #35: agent reads WHY a human overrode its notes
     "wiki_tree": wiki_tree,  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
     "wiki_clusters": wiki_clusters,
     "wiki_verify_citations": wiki_verify_citations,
@@ -321,6 +336,7 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(wiki_suggest_links, description=wiki_suggest_links.__doc__)
     mcp.add_tool(wiki_stale, description=wiki_stale.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
+    mcp.add_tool(wiki_my_feedback, description=wiki_my_feedback.__doc__)  # WIKI-WRITE-FEEDBACK #35
     mcp.add_tool(wiki_tree, description=wiki_tree.__doc__)  # #19: MCP mirror of REST /wiki/tree
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
     mcp.add_tool(wiki_verify_citations, description=wiki_verify_citations.__doc__)

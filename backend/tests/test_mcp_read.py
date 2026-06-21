@@ -1007,7 +1007,7 @@ def test_catalog_walks_all_mounts(app_db):
         assert by_mount[label] == len(mod.TOOLS), f"byMount[{label}] != live TOOLS count"
     # the specific tools team-lead's verify names: wiki_context + the 11 wiki-read, finance, reminders
     assert ("wiki-read", "wiki_context") in listed
-    assert by_mount["wiki-read"] == 14  # #34 +suggest_links #41 +stale #53 +reindex (was 11)
+    assert by_mount["wiki-read"] == 15  # #34 +suggest_links #41 +stale #53 +reindex #35 +my_feedback (was 11)
     assert by_mount["wiki-write"] == 6
     assert by_mount["finance"] == 15
     assert by_mount["reminders"] == 3

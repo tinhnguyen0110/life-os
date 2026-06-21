@@ -23,17 +23,33 @@ def get_note(note_id: int) -> Note | None:
     return _read_note(note_id)
 
 
-def update_note(note_id: int, inp: NoteUpdateInput, actor: str = "human") -> Note:
-    """Partial-update a note through the queue. Raises NoteNotFound if absent."""
-    op = Op(kind="update", note_id=note_id, payload={"input": inp}, actor=actor)
+def update_note(note_id: int, inp: NoteUpdateInput, actor: str = "human",
+                feedback: dict | None = None) -> Note:
+    """Partial-update a note through the queue. Raises NoteNotFound if absent.
+
+    #35: ``feedback={reason, text}`` (optional) is the override-feedback a HUMAN gives
+    when editing an AGENT-written note — captured into the op_log detail by the apply
+    layer (only when this edit overrides agent work; a silent edit passes feedback=None)."""
+    payload: dict = {"input": inp}
+    if feedback is not None:
+        payload["feedback"] = feedback
+    op = Op(kind="update", note_id=note_id, payload=payload, actor=actor)
     note = enqueue(op)
     assert note is not None
     return note
 
 
-def delete_note(note_id: int, actor: str = "human") -> None:
-    """Delete a note through the queue. Raises NoteNotFound if absent."""
-    op = Op(kind="delete", note_id=note_id, payload={}, actor=actor)
+def delete_note(note_id: int, actor: str = "human",
+                feedback: dict | None = None) -> None:
+    """Delete a note through the queue. Raises NoteNotFound if absent.
+
+    #35: ``feedback={reason, text}`` (optional) is the override-feedback a HUMAN gives
+    when deleting an AGENT-written note — captured into the op_log detail by the apply
+    layer (only when this delete overrides agent work)."""
+    payload: dict = {}
+    if feedback is not None:
+        payload["feedback"] = feedback
+    op = Op(kind="delete", note_id=note_id, payload=payload, actor=actor)
     enqueue(op)
 
 
