@@ -1106,8 +1106,8 @@ def _patch_usage(monkeypatch, overrides=None):
 
 
 def test_claude_usage_lean_by_default(monkeypatch):
-    """DEFAULT → LEAN: has the live quota signal (pct5h/resetIn/weekly/today/costUSD); does NOT
-    have the heavy splits (series/byModel/byProject/ctx*). Materially smaller than the 4325-char
+    """DEFAULT → LEAN: has the live quota signal (pct5h/resetIn/weekly/today/costUSDAllTime); does
+    NOT have the heavy splits (series/byModel/byProject/ctx*). Materially smaller than the 4325-char
     full dump."""
     import json as _json
     _patch_usage(monkeypatch)
@@ -1115,8 +1115,10 @@ def test_claude_usage_lean_by_default(monkeypatch):
     assert out["verbose"] is False
     u = out["usage"]
     # the live quota signal + the few numbers an agent wants
-    for k in ("pct5h", "resetIn", "weekly", "today", "costUSD"):
+    for k in ("pct5h", "resetIn", "weekly", "today", "costUSDAllTime"):
         assert k in u, f"lean must keep {k}"
+    # #43: the lean cost key is costUSDAllTime (lifetime) — NOT a bare costUSD (would misread as today)
+    assert "costUSD" not in u, "lean must NOT carry a bare costUSD (misreads as today-cost)"
     assert u["pct5h"] == 17.0 and u["resetIn"] == "3h 18m"  # leads with the live signal
     # the heavy splits are DROPPED from the default
     for k in ("series", "byModel", "byProject", "ctxPct", "ctxUsed", "ctxMax"):
@@ -1136,13 +1138,14 @@ def test_claude_usage_verbose_is_full(monkeypatch):
 
 
 def test_claude_usage_cost_formatted_two_decimals(monkeypatch):
-    """costUSD is formatted to 2 decimals (the cumulative magnitude is a known item — just
-    format). Both lean and verbose."""
+    """cost is formatted to 2 decimals (cumulative magnitude is a known item — just format).
+    #43: the LEAN key is costUSDAllTime (lifetime, clearly labeled); the VERBOSE key stays costUSD
+    (the documented full-model field FE/REST consume). Same value, distinct keys per surface."""
     _patch_usage(monkeypatch, {"costUSD": 53627.53499})
     lean = rs.claude_usage()["usage"]
     verbose = rs.claude_usage(verbose=True)["usage"]
-    assert lean["costUSD"] == 53627.53
-    assert verbose["costUSD"] == 53627.53
+    assert lean["costUSDAllTime"] == 53627.53 and "costUSD" not in lean  # lean = renamed, no bare costUSD
+    assert verbose["costUSD"] == 53627.53  # verbose = unchanged full-model field
 
 
 def test_claude_usage_remaining_null_has_reason_note(monkeypatch):

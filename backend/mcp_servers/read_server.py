@@ -458,8 +458,10 @@ def graveyard_overview() -> dict[str, Any]:
 def claude_usage(window: str = "5h", verbose: bool = False) -> dict[str, Any]:
     """Claude token-usage view. LEAN by DEFAULT (CLAUDE-USAGE-LEAN #18, agent-first): the few
     numbers an agent usually wants — leading with the LIVE quota signal (pct5h / resetIn / weekly)
-    + today's tokens + costUSD ($.01) + provenance. ``verbose=true`` returns the FULL shape (the
-    per-day series + by-model + by-project splits + the context-window fields).
+    + today's tokens + ``costUSDAllTime`` (LIFETIME cumulative cost, $.01 — NOT today's; #43 renamed
+    from a bare costUSD so it can't be misread as today-cost next to ``today``-tokens) + provenance.
+    ``verbose=true`` returns the FULL shape (the per-day series + by-model + by-project splits + the
+    context-window fields), which keeps the documented ``costUSD`` full-model field.
 
     Why lean leads with pct5h/resetIn, NOT remaining: ``remaining`` is cap − used, but ``cap`` is
     a PLACEHOLDER (200k, NOT from disk — there's no rate-limit ceiling readable). With used ≫ cap,
@@ -488,7 +490,12 @@ def claude_usage(window: str = "5h", verbose: bool = False) -> dict[str, Any]:
         "resetIn": u.get("resetIn"),
         "weekly": u.get("weekly"),
         "today": u.get("today"),
-        "costUSD": cost_fmt,
+        # CLAUDE-USAGE-COST-LABEL (#43): the LIFETIME cumulative cost, NOT today's. Named *AllTime so
+        # an agent reading it next to ``today`` (token-today) can't misread it as "$X spent today"
+        # (the cumulative sum ≫ a day's cost). A real today-cost isn't cheaply derivable (the series
+        # has per-day TOTAL tokens, not per-day-per-model) → rename, don't add costUSDToday. The
+        # verbose/full shape keeps ``costUSD`` (the documented full-model field FE/REST consume).
+        "costUSDAllTime": cost_fmt,
         "remaining": u.get("remaining"),       # honest-null when cap is a placeholder (see note)
         "quotaSource": u.get("quotaSource"),
         "tokenSource": u.get("tokenSource"),
