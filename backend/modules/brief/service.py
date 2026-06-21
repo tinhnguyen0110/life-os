@@ -24,7 +24,15 @@ from datetime import datetime, timezone
 from store import md_store
 
 from . import reader
-from .schema import Brief, BriefSummary, Priority, Severity
+from .schema import (
+    Brief,
+    BriefSummary,
+    ClusterRef,
+    Priority,
+    RecentNote,
+    Severity,
+    WikiContext,
+)
 
 logger = logging.getLogger("life-os.brief.service")
 
@@ -43,6 +51,8 @@ IDLE_DAYS = 7
 BUILD90_PROGRESS = 90
 STREAK_AT_RISK_MIN = 3  # DAILY-TRACING-P4 (#65): a streak ≥3 days is hard-won → at-risk if undone today
 PRIORITY_CAP = 7  # DAILY-TRACING-P4 (#65): +tracing rule → 7 rules, cap 7 so none is silently dropped (#30 was 6)
+WIKI_RECENT_CAP = 7      # WIKI-CONTEXT (#36): newest create|edit notes surfaced into the brief
+WIKI_CLUSTER_CAP = 5     # WIKI-CONTEXT (#36): top notable clusters (importance-ranked by the reader)
 
 
 def _now_iso() -> str:
@@ -258,6 +268,43 @@ def _compute_as_of(src: reader.Sources, generated_at: str) -> tuple[str, bool]:
     return as_of, stale
 
 
+def _build_wiki_context(src: reader.Sources, generated_at: str) -> WikiContext:
+    """WIKI-CONTEXT (#36): the deterministic wiki-graph block — recent note activity
+    (newest create|edit) + notable clusters. Pulled from src.wiki (reader.recent_activity
+    + detect_clusters); NO model, NO recompute.
+
+    honest-mirror: src.wiki is None ONLY when the wiki read raised in reader.pull (a warning
+    was already appended to src.warnings) → return an empty-lists context tagged with a
+    warning (the block is present + honest-blind, never omitted, never a fabricated note).
+    Empty activity/clusters → empty lists (truthful, not None-the-section)."""
+    if src.wiki is None:
+        return WikiContext(recentNotes=[], clusters=[], asOf=generated_at, source="wiki",
+                           warnings=["wiki source unavailable"])
+
+    recent_notes: list[RecentNote] = []
+    for op in src.wiki.get("recentOps", []):
+        # recent_activity rows: {ts, op, actor, noteId, noteTitle, detail}. Only create|edit
+        # have a live note to surface (delete/merge removed it). Skip a None noteId defensively.
+        kind = op.get("op")
+        if kind not in ("create", "edit") or op.get("noteId") is None:
+            continue
+        recent_notes.append(RecentNote(
+            noteId=op["noteId"], title=op.get("noteTitle") or "",
+            kind=kind, ts=op.get("ts") or generated_at))
+        if len(recent_notes) >= WIKI_RECENT_CAP:
+            break
+
+    clusters: list[ClusterRef] = []
+    for c in src.wiki.get("clusters", [])[:WIKI_CLUSTER_CAP]:
+        # mirror the reader's detect_clusters shape: label = suggestedTitle, noteCount = size.
+        clusters.append(ClusterRef(
+            label=c.get("suggestedTitle") or "(untitled cluster)",
+            noteCount=int(c.get("size") or 0)))
+
+    return WikiContext(recentNotes=recent_notes, clusters=clusters,
+                       asOf=generated_at, source="wiki", warnings=[])
+
+
 def generate_brief() -> Brief:
     """Assemble the brief from live data. Fail-soft per source (a source down → warning,
     its rules skipped, brief still produced). honest-empty: no rule fires → priorities=[]."""
@@ -296,10 +343,15 @@ def generate_brief() -> Brief:
     if src.projects is None and src.finance is None and src.market is None and src.claude is None:
         src.warnings.append("không đủ dữ liệu — mọi nguồn lỗi")
 
+    # WIKI-CONTEXT (#36): ADDITIVE — recent wiki notes + clusters, deterministic. Present
+    # whenever the brief assembles (honest-empty/blind, never faked); the existing priorities/
+    # summary/stale are UNCHANGED (backward-compat).
+    wiki_context = _build_wiki_context(src, generated_at)
+
     return Brief(
         generatedAt=generated_at, asOf=as_of, source="template",
         summary=summary, priorities=priorities, stale=stale,
-        warnings=src.warnings,
+        warnings=src.warnings, wikiContext=wiki_context,
     )
 
 

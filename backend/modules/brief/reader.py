@@ -28,6 +28,9 @@ class Sources:
     claude: object | None = None          # ClaudeUsage
     reminders: list | None = None         # REMINDERS-4 (#30): list[Reminder] un-done (week+overdue)
     tracing: object | None = None         # DAILY-TRACING-P4 (#65): TracingOverview (for streak-at-risk)
+    # WIKI-CONTEXT (#36): {recentOps: list[dict], clusters: list[dict]} or None if wiki down.
+    # recentOps = wiki_reader.recent_ops() rows; clusters = wiki_reader.detect_clusters().
+    wiki: dict | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -90,5 +93,20 @@ def pull() -> Sources:
     except Exception as exc:
         logger.error("brief: tracing read failed: %s", exc)
         src.warnings.append(f"tracing nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        # WIKI-CONTEXT (#36): the wiki-graph context (recent note activity + notable clusters).
+        # REUSE the existing wiki reader surfaces — recent_ops (the op-log feed) + detect_clusters
+        # (the MOC-candidate clusters) — NO recompute, NO new read path. Deterministic (no model).
+        from modules.wiki import reader as wiki_reader
+        src.wiki = {
+            # recent_activity = the TITLED op-log feed ({ts, op, actor, noteId, noteTitle, detail});
+            # the service filters to create|edit + caps. clusters = the MOC-candidate clusters.
+            "recentOps": wiki_reader.recent_activity(20),
+            "clusters": wiki_reader.detect_clusters(),
+        }
+    except Exception as exc:
+        logger.error("brief: wiki read failed: %s", exc)
+        src.warnings.append(f"wiki nguồn lỗi ({type(exc).__name__})")
 
     return src
