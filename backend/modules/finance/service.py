@@ -399,6 +399,30 @@ def _series(days: int = 365) -> list[float]:
     return [float(r["total_value"]) for r in rows]
 
 
+def _nav_change(total_value: float) -> Change | None:
+    """#72-BE: REAL day-over-day portfolio change = ``total_value`` − the most-recent PRIOR-DAY
+    snapshot's total_value. HONEST-NULL: returns None when there is NO prior-day baseline (0
+    snapshots, or only today's) — a fabricated ``Change(abs=0.0)`` would read as a "flat day" when
+    the truth is "no data" (honest-mirror). A genuine equal-value move WITH a prior → abs 0.0 / pct
+    0.0 (that IS honest flat). prior_total==0 → pct None (no div-by-zero). Fail-soft on a store
+    error (None + log, mirrors _series)."""
+    today = _now().date().isoformat()
+    try:
+        # the last few distinct-day rows, oldest→newest; the prior-day baseline = the most-recent
+        # row whose day != today (if today has no snapshot, the latest row IS the baseline).
+        rows = db.snapshots(limit=10)
+    except Exception as exc:
+        logger.warning("portfolio change snapshot read failed: %s", exc)
+        return None
+    prior_rows = [r for r in rows if r["day"] != today]
+    if not prior_rows:  # 0 snapshots, or only today's → no prior baseline → honest null
+        return None
+    prior_total = float(prior_rows[-1]["total_value"])  # most-recent prior day (rows oldest→newest)
+    abs_change = round(total_value - prior_total, 2)
+    pct = round(abs_change / prior_total * 100.0, 2) if prior_total else None
+    return Change(abs=abs_change, pct=pct)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -791,7 +815,9 @@ def _get_overview_impl(holdings: list[Holding]) -> tuple[FinanceOverview, list[s
 
     overview = FinanceOverview(
         totalValue=total_value,
-        change=Change(abs=0.0, pct=None) if total_value else None,
+        # #72-BE: REAL day-over-day change from the daily snapshots (honest-null when no prior-day
+        # baseline). Computed even at total_value==0 — a $0 day after a prior $X day is a real drop.
+        change=_nav_change(total_value),
         # FINANCE-CORRECTNESS (#49): the flat holdings list is now ENRICHED (per-holding
         # price/usdValue/changePct surfaced from the aggregate entries) + dust-folded. Built
         # from by_channel (which already has the OKX override applied), so usdValue is

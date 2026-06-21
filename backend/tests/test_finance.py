@@ -130,6 +130,82 @@ def test_overview_empty_no_div0(isolated_paths, mock_prices):
     assert overview.change is None
 
 
+# --------------------------------------------------------------------------- #
+# #72-BE — real day-over-day nav change (honest-null at <2 days). EXERCISE the    #
+# rule by seeding snapshots on distinct days, then asserting the delta.          #
+# --------------------------------------------------------------------------- #
+def _seed_snapshot(days_ago: int, total: float):
+    """Record a snapshot dated `days_ago` UTC days back (distinct day = distinct PK)."""
+    from datetime import timedelta, timezone
+    from store import db
+    ts = (service._now() - timedelta(days=days_ago)).astimezone(timezone.utc).isoformat()
+    db.record_snapshot(ts, total)
+
+
+def test_nav_change_two_days_real_delta(isolated_paths):
+    """2 snapshots (prior day 1000, today's live value 1100) → abs=100.0 pct=10.0 (the
+    distinguishing: a real delta, not the old stub 0.0). EXERCISE — seed a prior day, compute."""
+    _seed_snapshot(days_ago=1, total=1000.0)
+    change = service._nav_change(1100.0)
+    assert change is not None
+    assert change.abs == 100.0 and change.pct == 10.0
+
+
+def test_nav_change_one_snapshot_today_only_is_none(isolated_paths):
+    """Only TODAY's snapshot (no prior day) → None (honest-null, NOT a fabricated abs=0 — a 0
+    would read as 'flat day' when the truth is 'no prior baseline')."""
+    _seed_snapshot(days_ago=0, total=1000.0)  # today only
+    assert service._nav_change(1000.0) is None
+
+
+def test_nav_change_zero_snapshots_is_none(isolated_paths):
+    """No snapshots at all → None (no baseline)."""
+    assert service._nav_change(500.0) is None
+
+
+def test_nav_change_flat_with_prior_is_honest_zero(isolated_paths):
+    """A prior day EXISTS and today equals it → abs=0.0 pct=0.0 (this IS honest flat — distinct
+    from the no-data None case above; the key honest-mirror distinguishing)."""
+    _seed_snapshot(days_ago=1, total=1000.0)
+    change = service._nav_change(1000.0)
+    assert change is not None and change.abs == 0.0 and change.pct == 0.0
+
+
+def test_nav_change_prior_zero_pct_none_no_div0(isolated_paths):
+    """prior_total==0 → pct=None (no divide-by-zero), abs still computed (the real rise from 0)."""
+    _seed_snapshot(days_ago=1, total=0.0)
+    change = service._nav_change(250.0)
+    assert change is not None and change.abs == 250.0 and change.pct is None
+
+
+def test_nav_change_uses_most_recent_prior_day(isolated_paths):
+    """3 snapshots (day-3: 800, day-1: 1000, today seeded too) → baseline = the MOST-RECENT prior
+    day (1000), not the oldest. today live=1100 → abs=100 (vs 1100-800=300 if it wrongly used oldest)."""
+    _seed_snapshot(days_ago=3, total=800.0)
+    _seed_snapshot(days_ago=1, total=1000.0)
+    _seed_snapshot(days_ago=0, total=1050.0)  # today's recorded snapshot — must be IGNORED as baseline
+    change = service._nav_change(1100.0)
+    assert change is not None and change.abs == 100.0  # 1100 - 1000 (most-recent prior), not -800/-1050
+
+
+def test_nav_change_store_error_fail_soft(isolated_paths, monkeypatch):
+    """Snapshot store error → None + log, never crash (mirrors _series fail-soft)."""
+    from store import db
+    monkeypatch.setattr(db, "snapshots", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert service._nav_change(1000.0) is None
+
+
+def test_overview_change_reflects_real_delta_end_to_end(isolated_paths, mock_prices):
+    """End-to-end: a prior-day snapshot + live holdings → get_overview().change is the REAL delta,
+    not the old stub. (Behavior, through the public surface.)"""
+    _seed_snapshot(days_ago=1, total=40000.0)
+    service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
+    overview, _ = service.get_overview()
+    assert overview.totalValue == 50000.0
+    assert overview.change is not None
+    assert overview.change.abs == 10000.0 and overview.change.pct == 25.0  # 50000 vs prior 40000
+
+
 def test_overview_price_fail_open_uses_cost(isolated_paths, mock_prices):
     service.upsert_holding(HoldingInput(channel="crypto", symbol="BTC", qty=1, avgCost=50000))
     overview, warnings = service.get_overview()
