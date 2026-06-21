@@ -1161,11 +1161,41 @@ def _brief_news() -> dict[str, Any]:
 
 
 def _brief_wiki() -> dict[str, Any]:
-    """Neutral wiki snapshot (R2-G1): vault overview (stats / inbox / orphans /
-    recentActivity). From modules/wiki (reader.overview → (data, warning)). Honest-
-    empty vault → pctWithLink None + a warning, never a crash."""
+    """Neutral wiki snapshot (R2-G1): a LEAN vault overview (#100 bounded-output — point, don't paste).
+    The brief is a daily GLANCE → it carries COUNTS + top-N STUBS (id/title/status), NOT the full
+    inbox dump (was 23KB / 70% of life_brief — 41 notes WITH rawContent). The full inbox/orphans live
+    on the standalone ``wiki_overview`` MCP tool / REST ``/wiki/overview`` (unchanged — the full-detail
+    surface); the brief points there via ``truncated.fullDetailVia``. Honest-empty vault → counts 0 +
+    the stats warning, never a crash. recentActivity is already #96-cleaned (no dup/empty/soft-deleted);
+    here it's just capped to 5."""
     data, warning = _wiki_overview()
-    return {"overview": _jsonable(data), "warning": warning}
+    ov = data if isinstance(data, dict) else {}
+    inbox = ov.get("inbox") or []
+    orphans = ov.get("orphans") or []
+    recent = ov.get("recentActivity") or []
+
+    def _stub(n: dict[str, Any]) -> dict[str, Any]:
+        # id+title+status ONLY — NO rawContent/aiSuggest/captured (the bloat the agent doesn't need
+        # at a glance; it drills via wiki_get_note / wiki_overview for the body).
+        return {"id": n.get("id"), "title": n.get("title"), "status": n.get("status")}
+
+    lean = {
+        "stats": ov.get("stats"),               # counts — cheap, the headline (kept full)
+        "proposalCount": ov.get("proposalCount"),
+        "inboxCount": len(inbox),               # the NUMBER, not the 41 full notes
+        "inboxTop": [_stub(n) for n in inbox[:3]],
+        "orphanCount": len(orphans),
+        "orphanTop": [_stub(n) for n in orphans[:3]],
+        "recentActivity": recent[:5],           # already #96-clean; cap to 5
+        # cairn #295 structured-truncation flag: the agent KNOWS it's a summary + where the full is.
+        "truncated": {
+            "inboxOmitted": max(0, len(inbox) - 3),
+            "orphansOmitted": max(0, len(orphans) - 3),
+            "recentCap": 5,
+            "fullDetailVia": "wiki_overview",   # point-don't-paste: name the full-detail tool
+        },
+    }
+    return {"overview": _jsonable(lean), "warning": warning}
 
 
 def _brief_decision() -> dict[str, Any]:

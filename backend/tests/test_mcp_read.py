@@ -648,6 +648,64 @@ def test_R2G1_life_brief_includes_macro_news_wiki(app_db):
     assert "overview" in brief["wiki"] and "error" not in brief["wiki"]
 
 
+# --------------------------------------------------------------------------- #
+# #100 — life_brief.wiki LEAN projection (counts + top-N stubs, NOT the full dump) #
+# --------------------------------------------------------------------------- #
+def test_100_brief_wiki_is_lean_counts_and_top_stubs(app_db):
+    """#100: brief.wiki.overview is the LEAN shape — counts + top-3 STUBS (id/title/status, NO
+    rawContent), recentActivity capped ≤5, + a truncated flag. NOT the full inbox dump (was 23KB)."""
+    from modules.wiki import service as wsvc
+    from modules.wiki.schema import NoteCreateInput
+    for i in range(5):  # 5 fleeting notes → the inbox; cap-to-3 must kick in
+        wsvc.create_note(NoteCreateInput(title=f"Inbox note {i}", content=f"raw body {i} " * 20))
+    ov = rs.life_brief()["brief"]["wiki"]["overview"]
+    # the LEAN key-set (NOT the full {inbox[],orphans[],...})
+    assert set(ov) == {"stats", "proposalCount", "inboxCount", "inboxTop", "orphanCount",
+                       "orphanTop", "recentActivity", "truncated"}
+    assert ov["inboxCount"] == 5, "the COUNT, not the full list"
+    assert len(ov["inboxTop"]) == 3, "top-3 stubs only"
+    # stubs carry id/title/status — NO rawContent (the bloat)
+    for stub in ov["inboxTop"]:
+        assert set(stub) == {"id", "title", "status"}
+        assert "rawContent" not in stub
+    assert len(ov["recentActivity"]) <= 5
+    assert ov["truncated"]["inboxOmitted"] == 2  # 5 - 3
+    assert ov["truncated"]["fullDetailVia"] == "wiki_overview"  # point-don't-paste
+
+
+def test_100_brief_wiki_section_is_small(app_db):
+    """#100 the size teeth: the wiki section is now a fraction of the old ~23KB (counts + stubs, not
+    41 full notes). On a seeded vault it's well under 3KB."""
+    import json
+    from modules.wiki import service as wsvc
+    from modules.wiki.schema import NoteCreateInput
+    for i in range(20):  # a chunky inbox — the old full-paste would be huge
+        wsvc.create_note(NoteCreateInput(title=f"Note {i}", content=f"lots of raw body content {i} " * 30))
+    wiki_section = rs.life_brief()["brief"]["wiki"]
+    size = len(json.dumps(wiki_section))
+    assert size < 3000, f"brief.wiki must be lean (<3KB), got {size} (the 23KB full-dump is gone)"
+
+
+def test_100_standalone_wiki_overview_still_full(app_db):
+    """#100 the source is NOT shrunk: the standalone read path still returns the FULL inbox (with
+    rawContent) — only the BRIEF's projection is lean. The full-detail surface is unchanged."""
+    from modules.wiki import service as wsvc
+    from modules.wiki.schema import NoteCreateInput
+    for i in range(4):
+        wsvc.create_note(NoteCreateInput(title=f"Full {i}", content=f"body {i}"))
+    data, _ = rs._wiki_overview()
+    assert len(data["inbox"]) == 4, "the source overview keeps the FULL inbox"
+    assert "rawContent" in data["inbox"][0], "the full source keeps rawContent (the brief drops it)"
+
+
+def test_100_brief_wiki_honest_empty(app_db):
+    """#100 empty vault → counts 0 + empty top-lists (honest, not a crash); the lean shape holds."""
+    ov = rs.life_brief()["brief"]["wiki"]["overview"]
+    assert ov["inboxCount"] == 0 and ov["inboxTop"] == []
+    assert ov["orphanCount"] == 0 and ov["orphanTop"] == []
+    assert ov["truncated"]["inboxOmitted"] == 0
+
+
 def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
     """Each new section is fail-soft: a down source → {error} for THAT section, the
     rest of the brief still assembles (no 500)."""
