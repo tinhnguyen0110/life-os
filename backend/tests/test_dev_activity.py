@@ -9,6 +9,7 @@ scan root); the live-container curl (tester) verifies the real mount.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 
@@ -199,3 +200,147 @@ def test_mcp_dev_activity_byte_identical_to_reader(temp_repo):
     mcp = rs.dev_activity(90)
     rest = reader.get_overview(90).model_dump()
     assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
+
+
+# =========================================================================== #
+# DEV-TRACING-P2 (#63) — REMOTE (GitHub + Bitbucket) + dedup-by-sha. HTTP is     #
+# MOCKED (monkeypatch service._http_get_json) — NO live network in the suite.    #
+# =========================================================================== #
+def _gh_repos_response(*full_names):
+    return [{"full_name": fn, "name": fn.split("/")[-1], "owner": {"login": "me"}} for fn in full_names]
+
+
+def _gh_commit(sha, *, email, date_iso):
+    return {"sha": sha, "commit": {"committer": {"date": date_iso},
+                                   "author": {"email": email, "date": date_iso}}}
+
+
+@pytest.fixture
+def remote_env(isolated_paths, monkeypatch):
+    """GitHub cred set + NO local roots (isolate the remote path). dev_activity db fresh."""
+    monkeypatch.setenv("GITHUB_PAT", "ghp_faketoken")
+    monkeypatch.setenv("GITHUB_USER", "me")
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "me@example.com")
+    monkeypatch.delenv("DEV_TRACING_ROOTS", raising=False)  # remote-only for these tests
+    monkeypatch.delenv("BITBUCKET_HOST", raising=False)
+    store.init_dev_activity_tables()
+    return isolated_paths
+
+
+def _mock_github(monkeypatch, *, repos, commits_by_repo, detail_by_sha=None):
+    """Wire service._http_get_json to serve canned GitHub responses by URL (no network)."""
+    detail_by_sha = detail_by_sha or {}
+
+    def fake(url, headers, timeout=20):
+        if "/user/repos" in url:
+            return repos
+        if "/commits/" in url:  # per-commit detail (LOC)
+            sha = url.rsplit("/", 1)[-1]
+            return detail_by_sha.get(sha, {"files": []})
+        if "/commits?" in url:
+            full = url.split("/repos/", 1)[1].split("/commits", 1)[0]
+            return commits_by_repo.get(full, [])
+        return []
+    monkeypatch.setattr(service, "_http_get_json", fake)
+
+
+def test_remote_github_commits_counted(remote_env, monkeypatch):
+    """A GitHub repo with the user's commits → counted (source=you via email identity-map)."""
+    _mock_github(monkeypatch,
+                 repos=_gh_repos_response("me/proj"),
+                 commits_by_repo={"me/proj": [
+                     _gh_commit("sha1", email="me@example.com", date_iso="2026-06-21T08:00:00Z"),
+                     _gh_commit("sha2", email="me@example.com", date_iso="2026-06-21T09:00:00Z")]})
+    result = service.scan(days=365)
+    assert result["yourCommits"] == 2
+    ov = reader.get_overview(365)
+    assert ov.summary.totalCommits == 2 and "proj" in ov.summary.topRepos
+
+
+def test_dedup_sha_local_and_remote_counts_once(tmp_path, isolated_paths, monkeypatch):
+    """THE P2 INVARIANT: a commit present in BOTH the local scan AND the GitHub response (same sha)
+    is counted ONCE, not doubled. Seed a local repo, capture its real sha, return it from GitHub."""
+    root = tmp_path / "root"
+    repo = root / "shared"
+    repo.mkdir(parents=True)
+    _git(str(repo), "init", "-b", "main")
+    _commit(str(repo), email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="shared commit")
+    real_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+    cdate = subprocess.run(["git", "-C", str(repo), "show", "-s", "--format=%cI", "HEAD"],
+                           capture_output=True, text=True).stdout.strip()
+    monkeypatch.setenv("DEV_TRACING_ROOTS", str(root))
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "me@example.com")
+    monkeypatch.setenv("GITHUB_PAT", "ghp_fake"); monkeypatch.setenv("GITHUB_USER", "me")
+    monkeypatch.delenv("BITBUCKET_HOST", raising=False)
+    store.init_dev_activity_tables()
+    # GitHub returns the SAME commit (same real sha) — must be deduped.
+    _mock_github(monkeypatch, repos=_gh_repos_response("me/shared"),
+                 commits_by_repo={"me/shared": [_gh_commit(real_sha, email="me@example.com", date_iso=cdate)]})
+    result = service.scan(days=365)
+    assert result["yourCommits"] == 1, f"local⊕remote same sha must count ONCE, got {result['yourCommits']}"
+
+
+def test_dedup_different_sha_counts_two(remote_env, monkeypatch):
+    """Two DIFFERENT shas (one local-absent, both from GitHub) → 2 (dedup only collapses same sha)."""
+    _mock_github(monkeypatch, repos=_gh_repos_response("me/proj"),
+                 commits_by_repo={"me/proj": [
+                     _gh_commit("shaA", email="me@example.com", date_iso="2026-06-21T08:00:00Z"),
+                     _gh_commit("shaB", email="me@example.com", date_iso="2026-06-21T09:00:00Z")]})
+    assert service.scan(days=365)["yourCommits"] == 2
+
+
+def test_github_unset_skips_with_warning(isolated_paths, monkeypatch):
+    """GITHUB_PAT unset → GitHub skipped + honest warning; the scan still completes (local-only)."""
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    monkeypatch.delenv("DEV_TRACING_ROOTS", raising=False)
+    monkeypatch.delenv("BITBUCKET_HOST", raising=False)
+    store.init_dev_activity_tables()
+    result = service.scan(days=365)
+    assert any("GITHUB_PAT" in w for w in result["warnings"])
+    assert result["yourCommits"] == 0  # no crash, honest-empty
+
+
+def test_github_rate_limit_403_honest_warning_no_crash(remote_env, monkeypatch):
+    """A GitHub 403/rate-limit → honest warning + source skipped, NOT a crash, NOT fabricated data."""
+    import urllib.error
+
+    def boom(url, headers, timeout=20):
+        raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_http_get_json", boom)
+    result = service.scan(days=365)  # must not raise
+    assert any("github" in w.lower() and "403" in w for w in result["warnings"])
+    assert result["yourCommits"] == 0
+
+
+def test_remote_tz_normalized_to_vn_day(remote_env, monkeypatch):
+    """A remote commit at 23:30Z → the NEXT VN day (UTC+7). The remote date is VN-normalized."""
+    _mock_github(monkeypatch, repos=_gh_repos_response("me/proj"),
+                 commits_by_repo={"me/proj": [
+                     _gh_commit("shaZ", email="me@example.com", date_iso="2026-06-21T23:30:00Z")]})
+    service.scan(days=365)
+    ov = reader.get_overview(365)
+    # 23:30Z = 06:30 VN next day → bucketed to 2026-06-22
+    assert any(d.date == "2026-06-22" for d in ov.byDay), [d.date for d in ov.byDay]
+
+
+def test_no_cred_leak_in_output(remote_env, monkeypatch):
+    """The scan result + overview must NEVER contain the token/cred value (no-cred-leak)."""
+    _mock_github(monkeypatch, repos=_gh_repos_response("me/proj"),
+                 commits_by_repo={"me/proj": [_gh_commit("s1", email="me@example.com", date_iso="2026-06-21T08:00:00Z")]})
+    result = service.scan(days=365)
+    blob = json.dumps(result) + json.dumps(reader.get_overview(365).model_dump())
+    assert "ghp_faketoken" not in blob and "ghp_fake" not in blob, "cred leaked into output!"
+
+
+def test_github_loc_skip_applied_remote(remote_env, monkeypatch):
+    """Remote LOC honors LOC_SKIP: a commit detail with a lockfile + a real file → only the real LOC."""
+    _mock_github(monkeypatch, repos=_gh_repos_response("me/proj"),
+                 commits_by_repo={"me/proj": [_gh_commit("s1", email="me@example.com", date_iso="2026-06-21T08:00:00Z")]},
+                 detail_by_sha={"s1": {"files": [
+                     {"filename": "package-lock.json", "additions": 500, "deletions": 0},
+                     {"filename": "real.py", "additions": 7, "deletions": 2}]}})
+    service.scan(days=365)
+    ov = reader.get_overview(365)
+    proj = [r for r in ov.byRepo if r.repo == "proj"][0]
+    assert proj.locAdded == 7 and proj.locDeleted == 2  # lockfile excluded

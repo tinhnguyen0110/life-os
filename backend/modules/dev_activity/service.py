@@ -12,9 +12,12 @@ Fail-soft per repo (a bad repo never aborts the scan); honest-empty + WARNING wh
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -31,7 +34,7 @@ LOC_SKIP = ("-lock.json", ".lock", "package-lock.json", "yarn.lock", "pnpm-lock.
             "/node_modules/", "/vendor/", "/dist/", "/build/", ".min.js", ".min.css",
             "/generated/", ".svg", ".png", ".jpg")
 
-_DEFAULT_DAYS = 90  # P1 local backfill (P2 → 1yr with remote)
+_DEFAULT_DAYS = 365  # DEV-TRACING-P2 (#63): 1yr backfill (was 90d local-only in P1; remote+local now)
 # git log format: one C-line per commit with email + ISO date + sha, then --numstat file lines.
 _LOG_FORMAT = "C|%ae|%cI|%H"
 
@@ -153,10 +156,180 @@ def _span(first: str | None, last: str | None) -> str:
     return f"{h}h {m}m" if h and m else (f"{h}h" if h else f"{m}m")
 
 
+# --------------------------------------------------------------------------- #
+# DEV-TRACING-P2 (#63) — REMOTE sources (GitHub + Bitbucket Server) + dedup.    #
+# Cred from env ONLY (#50 user-only); unset → skip-source + honest warning.     #
+# A commit seen LOCAL ⊕ REMOTE counts ONCE (dedup by sha). HTTP via the          #
+# mockable _http_get_json boundary (tests monkeypatch it — no live network).     #
+# --------------------------------------------------------------------------- #
+def _http_get_json(url: str, headers: dict[str, str], timeout: int = 20) -> object:
+    """The single HTTP boundary the remote probes use (tests monkeypatch THIS). Returns parsed JSON.
+    Raises urllib.error.HTTPError on a non-2xx (the caller maps 401/403/429 → honest warning)."""
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — fixed https API hosts
+        return json.loads(r.read())
+
+
+def _github_commits(token: str, user: str, since_iso: str, warnings: list[str]) -> list[dict]:
+    """PORT of validate github_probe: list the user's repos (owner+collaborator+org) → the user's
+    commits since → flat records {sha, email, dateIso, repo, locAdd, locDel}. Per-source fail-soft:
+    a 401/403/429/network error → honest warning + return what we have (NOT a crash, NOT fabricated).
+    LOC via the per-commit detail (additions/deletions, LOC_SKIP-filtered) for up to 10 commits/repo
+    (the validate probe-budget; remote LOC is coarser than local — surfaced honestly)."""
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+           "User-Agent": "life-os-dev-activity/1.0", "X-GitHub-Api-Version": "2022-11-28"}
+    out: list[dict] = []
+    try:
+        repos = _http_get_json(
+            "https://api.github.com/user/repos?per_page=100&sort=pushed"
+            "&affiliation=owner,collaborator,organization_member", hdr)
+    except urllib.error.HTTPError as e:
+        warnings.append(f"github: list-repos HTTP {e.code} (token scope? rate-limit?) — source skipped")
+        return out
+    except Exception as e:  # noqa: BLE001 — network/parse → skip the source honestly
+        warnings.append(f"github: unreachable ({type(e).__name__}) — source skipped")
+        return out
+    if not isinstance(repos, list):
+        return out
+    for repo in repos:
+        full = repo.get("full_name", "")
+        name = repo.get("name", full)
+        try:
+            commits = _http_get_json(
+                f"https://api.github.com/repos/{full}/commits?author={user}"
+                f"&since={since_iso}&per_page=100", hdr)
+        except urllib.error.HTTPError as e:
+            if e.code in (409, 404):  # empty repo / no access → skip silently (per validate)
+                continue
+            warnings.append(f"github: {full} commits HTTP {e.code} — repo skipped")
+            continue
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(commits, list):
+            continue
+        # LOC detail for up to 10 recent commits/repo (probe-budget; remote LOC is coarser-honest).
+        loc_by_sha: dict[str, tuple[int, int]] = {}
+        for c in commits[:10]:
+            sha = c.get("sha", "")
+            try:
+                detail = _http_get_json(f"https://api.github.com/repos/{full}/commits/{sha}", hdr)
+                files = detail.get("files", []) if isinstance(detail, dict) else []
+                add = sum(f.get("additions", 0) for f in files if not _is_skip(f.get("filename", "")))
+                dele = sum(f.get("deletions", 0) for f in files if not _is_skip(f.get("filename", "")))
+                loc_by_sha[sha] = (add, dele)
+            except Exception:  # noqa: BLE001 — LOC detail is best-effort; commit still counts
+                pass
+        for c in commits:
+            sha = c.get("sha", "")
+            commit = c.get("commit", {})
+            cdate = commit.get("committer", {}).get("date") or commit.get("author", {}).get("date")
+            email = (commit.get("author", {}).get("email", "") or "").lower()
+            if not sha or not cdate:
+                continue
+            add, dele = loc_by_sha.get(sha, (0, 0))
+            out.append({"sha": sha, "email": email, "dateIso": cdate, "repo": name,
+                        "locAdd": add, "locDel": dele})
+    return out
+
+
+def _bitbucket_commits(host: str, user: str, pw: str, since_dt: datetime,
+                       warnings: list[str]) -> list[dict]:
+    """PORT of validate bitbucket_server_probe: REST 1.0 projects→repos→commits (newest-first, break
+    past `since`). Flat records {sha, email, dateIso, repo, locAdd, locDel(0 — coarse)}. Per-source
+    fail-soft (auth/VPN/network → honest warning + skip)."""
+    import base64
+    auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    hdr = {"Authorization": f"Basic {auth}", "Accept": "application/json",
+           "User-Agent": "life-os-dev-activity/1.0"}
+    since_ms = int(since_dt.timestamp() * 1000)
+    out: list[dict] = []
+    try:
+        projects = _http_get_json(f"{host}/rest/api/1.0/projects?limit=100", hdr, timeout=25)
+    except urllib.error.HTTPError as e:
+        warnings.append(f"bitbucket: HTTP {e.code} (cred/VPN?) — source skipped")
+        return out
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"bitbucket: unreachable ({type(e).__name__}, VPN?) — source skipped")
+        return out
+    for proj in (projects.get("values", []) if isinstance(projects, dict) else []):
+        pkey = proj.get("key", "")
+        try:
+            repos = _http_get_json(f"{host}/rest/api/1.0/projects/{pkey}/repos?limit=100", hdr, 25)
+        except Exception:  # noqa: BLE001
+            continue
+        for repo in (repos.get("values", []) if isinstance(repos, dict) else []):
+            slug = repo.get("slug", "")
+            try:
+                commits = _http_get_json(
+                    f"{host}/rest/api/1.0/projects/{pkey}/repos/{slug}/commits?limit=100", hdr, 25)
+            except Exception:  # noqa: BLE001
+                continue
+            for c in (commits.get("values", []) if isinstance(commits, dict) else []):
+                ts = c.get("authorTimestamp", 0)
+                if ts < since_ms:
+                    break  # newest-first → past the window, stop this repo
+                au = c.get("author", {}) or {}
+                email = (au.get("emailAddress", "") or "").lower()
+                sha = c.get("id", "")
+                if not sha:
+                    continue
+                dt = datetime.fromtimestamp(ts / 1000, timezone.utc)
+                out.append({"sha": sha, "email": email, "dateIso": dt.isoformat(),
+                            "repo": f"{pkey}/{slug}", "locAdd": 0, "locDel": 0})
+    return out
+
+
+def github_creds() -> list[tuple[str, str]]:
+    """GitHub (token, user) pairs from env: GITHUB_PAT/GITHUB_USER (+ PAT2/USER2 multi-account, per
+    the validate script). Only pairs where BOTH are set. Empty → GitHub skipped + warning. Cred is
+    read from env ONLY (#50 user-only) — never logged, never committed."""
+    pairs: list[tuple[str, str]] = []
+    for tk, uk in (("GITHUB_PAT", "GITHUB_USER"), ("GITHUB_PAT2", "GITHUB_USER2")):
+        tok, usr = os.environ.get(tk, "").strip(), os.environ.get(uk, "").strip()
+        if tok and usr:
+            pairs.append((tok, usr))
+    return pairs
+
+
+def bitbucket_cred() -> tuple[str, str, str] | None:
+    """Bitbucket Server (host, user, pw) from env: BITBUCKET_HOST + BITBUCKET_USER + BITBUCKET_PASS.
+    All three required → returns the triple, else None (source skipped + warning). Env-only, #50."""
+    host = os.environ.get("BITBUCKET_HOST", "").strip().rstrip("/")
+    user = os.environ.get("BITBUCKET_USER", "").strip()
+    pw = os.environ.get("BITBUCKET_PASS", "").strip()
+    return (host, user, pw) if (host and user and pw) else None
+
+
+def _fold_remote(records: list[dict], emails: set[str], agg: dict, seen_shas: set[str],
+                 source_system: str) -> None:
+    """Fold remote commit records into ``agg`` (per day×repo×source), DEDUP by sha: a commit whose
+    sha is already in ``seen_shas`` (seen locally or in a prior remote) is SKIPPED — counted once.
+    Adds newly-seen shas to the set. THE P2 invariant (local⊕remote → 1)."""
+    for rec in records:
+        sha = rec["sha"]
+        if sha in seen_shas:
+            continue  # dedup — already counted (local or another remote)
+        seen_shas.add(sha)
+        day = _vn_day(rec["dateIso"])
+        hhmm = _vn_hhmm(rec["dateIso"])
+        src = "you" if rec["email"] in emails else "other"
+        a = agg[(day, rec["repo"], src)]
+        a["commits"] += 1
+        a["loc_add"] += int(rec.get("locAdd", 0))
+        a["loc_del"] += int(rec.get("locDel", 0))
+        a["first"] = min(a["first"] or hhmm, hhmm)
+        a["last"] = max(a["last"] or hhmm, hhmm)
+
+
 def scan(days: int = _DEFAULT_DAYS) -> dict:
     """Scan all configured roots → UPSERT per (date, repo, source). Returns a result summary
     {scannedRepos, days, rowsUpserted, yourCommits, warnings}. Idempotent (upsert overwrites each
-    day's aggregate). honest-empty + warnings when roots are unreachable / identity unset."""
+    day's aggregate). honest-empty + warnings when roots are unreachable / identity unset.
+
+    DEV-TRACING-P2 (#63): after the LOCAL scan, pull REMOTE sources (GitHub + Bitbucket, cred from
+    env) and DEDUP by sha (a commit seen local AND remote counts ONCE). Per-source fail-soft — an
+    unauthed/unreachable/rate-limited remote → honest warning + skip, the scan completes with the
+    other sources. Cred unset → that source skipped + warned (never fabricated, never crash)."""
     roots = scan_roots()
     emails = your_emails()
     warnings: list[str] = []
@@ -166,19 +339,38 @@ def scan(days: int = _DEFAULT_DAYS) -> dict:
         warnings.append("DEV_TRACING_EMAILS not set — all commits tagged 'other' (set your git "
                         "emails to attribute 'you'); your totals will be 0 until configured")
 
-    since_day = (_now() - timedelta(days=max(1, days))).strftime("%Y-%m-%d")
+    since_dt = _now() - timedelta(days=max(1, days))
+    since_day = since_dt.strftime("%Y-%m-%d")
+    since_iso = since_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     agg: dict = defaultdict(lambda: {"commits": 0, "loc_add": 0, "loc_del": 0,
                                      "first": None, "last": None})
+    seen_shas: set[str] = set()  # P2 dedup: a commit counted (local or remote) goes here once
     scanned = 0
+    # --- LOCAL scan first (records shas into seen_shas for the remote dedup) ---
     for root in roots:
         repos = _find_repos(root)
         if not repos and not os.path.isdir(root):
             warnings.append(f"root {root} unreachable (not mounted?) — skipped")
             continue
         for repo_path in repos:
-            _scan_repo(repo_path, since_day, emails, agg)
+            _scan_repo(repo_path, since_day, emails, agg, seen_shas)
             scanned += 1
     warnings.extend(agg.pop("_warnings", []))
+
+    # --- REMOTE pull (P2): GitHub + Bitbucket, DEDUP by sha against local + each other. Per-source
+    # fail-soft (cred unset / unreachable / rate-limit → honest warning + skip). Cred from env only. ---
+    gh_pairs = github_creds()
+    if not gh_pairs:
+        warnings.append("GITHUB_PAT/GITHUB_USER not set — GitHub source skipped (set to include remotes)")
+    for token, user in gh_pairs:
+        _fold_remote(_github_commits(token, user, since_iso, warnings), emails, agg, seen_shas, "github")
+    bb = bitbucket_cred()
+    if bb is None:
+        warnings.append("BITBUCKET_HOST/USER/PASS not set — Bitbucket source skipped")
+    else:
+        host, bu, bp = bb
+        _fold_remote(_bitbucket_commits(host, bu, bp, since_dt, warnings), emails, agg, seen_shas,
+                     "bitbucket")
 
     rows = 0
     your_commits = 0
