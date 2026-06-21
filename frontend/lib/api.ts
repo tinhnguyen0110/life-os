@@ -75,6 +75,8 @@ import type {
   ActivityPatch,
   DevActivityOverview,
   DevScanResult,
+  CodeInsight,
+  RepoMemory,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -820,6 +822,23 @@ export function getDevActivity(days = 90): Promise<ApiResponse<DevActivityOvervi
  *  scan result (scannedRepos/rowsUpserted/yourCommits/warnings). */
 export function scanDevActivity(days = 90): Promise<ApiResponse<DevScanResult>> {
   return apiPost<DevScanResult>(`/dev_activity/scan?days=${days}`);
+}
+
+/* ----------------------------------------------------------------------------
+   #64 Repo Memory (REPOMEM) — render-only reads. code_insight = a fresh-now git
+   read; code_insight/memory = the durable curated note. Both honest-empty
+   (found:false → empty-state, never crash). */
+
+/** GET /code_insight?repo=<name|path> — a fresh structural read of a repo
+ *  (structure/README/recentCommits/stack/asOf). found:false → not found/readable. */
+export function getCodeInsight(repo: string): Promise<ApiResponse<CodeInsight>> {
+  return apiGet<CodeInsight>(`/code_insight?repo=${encodeURIComponent(repo)}`);
+}
+
+/** GET /code_insight/memory?repo=<name> — the durable repo_memory note (the
+ *  Repos/<name> wiki note). found:false + note:null → no note yet for this repo. */
+export function getRepoMemory(repo: string): Promise<ApiResponse<RepoMemory>> {
+  return apiGet<RepoMemory>(`/code_insight/memory?repo=${encodeURIComponent(repo)}`);
 }
 
 export const apiBase = BASE;

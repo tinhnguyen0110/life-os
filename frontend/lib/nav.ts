@@ -44,6 +44,10 @@ export const NAV: NavGroup[] = [
       // (nav-IA option A). DISTINCT screen from /projects (status) + /graveyard (dead):
       // this is git-stats. Same SECTION, separate routes/screens. screen-id DEVACT.
       { route: "/dev-activity", label: "Dev Activity", icon: "i-graph", screen: "DEVACT" },
+      // #64-P3 repo-memory (REPOMEM) — per-repo code_insight + durable repo_memory note.
+      // The human browse layer over the agent's per-repo knowledge. Grouped with the
+      // other project/repo screens. DISTINCT route/screen; render-only.
+      { route: "/repo-memory", label: "Repo Memory", icon: "i-note", screen: "REPOMEM" },
     ],
   },
   {
@@ -135,6 +139,7 @@ export const CRUMB: Record<string, string> = {
   "/routines": "Automation / Routines",
   "/activity": "Activity Feed",
   "/dev-activity": "Dev Activity",
+  "/repo-memory": "Repo Memory · Code Insight",
   "/career": "Sự nghiệp · CV / Blog / Demo",
   // Wiki (W1–W5) — detail route /wiki/[id] resolves to the parent crumb (TopBar
   // crumbFor falls back to the first path segment). Full "Tri thức" NAV group = T3.

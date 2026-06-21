@@ -989,3 +989,22 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .hm-legend .hc { width:10px; height:10px; }
 .hm-acts { display:flex; flex-direction:column; gap:8px; }
 .hma-row { display:flex; align-items:center; gap:8px; font-size:12px; }
+
+/* ============================================================
+   #64-P3 Repo Memory (REPOMEM) — code_insight + repo_memory browse.
+   ============================================================ */
+.repo-readme, .repo-mem-note {
+  font-family:var(--mono); font-size:11px; line-height:1.55; color:var(--tx-1);
+  background:var(--bg-0); border:1px solid var(--line-2); border-radius:var(--r);
+  padding:10px 12px; margin:0; max-height:240px; overflow:auto;
+  white-space:pre-wrap; word-break:break-word;
+}
+.repo-mem-note { max-height:none; }
+.repo-tree { list-style:none; margin:0; padding:0; font-family:var(--mono); font-size:11px; max-height:220px; overflow:auto; }
+.repo-tree li { padding:1px 0; color:var(--tx-1); }
+.repo-tree li.is-dir { color:var(--accent); }
+.repo-commits { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.repo-commits li { display:flex; align-items:baseline; gap:8px; font-size:12px; flex-wrap:wrap; }
+.repo-sha { font-family:var(--mono); font-size:10.5px; color:var(--accent); flex-shrink:0; }
+.repo-cmsg { color:var(--tx-0); flex:1; min-width:0; }
+.repo-cdate { font-family:var(--mono); font-size:10px; flex-shrink:0; }

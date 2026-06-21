@@ -1861,3 +1861,60 @@ export interface DevScanResult {
   yourCommits: number;
   warnings: string[];
 }
+
+/* ============================================================================
+   #64 Repo Memory (REPOMEM) — per-repo durable knowledge surface. Two reads:
+   code_insight (fresh-NOW git read: structure/README/commits/stack) + repo_memory
+   (the durable curated Repos/<name> wiki note an agent writes as it learns the
+   repo). RENDER-ONLY: the backend computes both; the FE displays. Mirrors the
+   FROZEN #64 BE schema (code_insight + repo_memory, P1/P2 on origin).
+   ============================================================================ */
+
+/** One recent commit in a code_insight read. */
+export interface RepoCommit {
+  sha: string;
+  msg: string;
+  /** ISO date (YYYY-MM-DD). */
+  date: string;
+}
+
+/** GET /code_insight?repo=<name|path> → a fresh-now structural read of a repo.
+ *  honest: found:false → empty structure + a warning naming WHY (not crash/blank).
+ *  asOf = the freshness stamp ("read just now"). readme is null when none readable. */
+export interface CodeInsight {
+  repo: string;
+  /** the resolved root path on disk. */
+  root: string;
+  found: boolean;
+  /** top-level entries (bounded by the backend). [] when not found. */
+  structure: string[];
+  /** README excerpt (markdown) or null when none. */
+  readme: string | null;
+  /** recent commits, newest-first. */
+  recentCommits: RepoCommit[];
+  /** detected stack tags, e.g. ["docker", "python"]. */
+  stack: string[];
+  /** ISO-8601 freshness stamp of this read. */
+  asOf: string;
+  /** honest notices (e.g. "repo 'x' not found under the configured roots"). */
+  warnings: string[];
+}
+
+/** The durable repo_memory note (the Repos/<repo> wiki note). null when none yet. */
+export interface RepoMemoryNote {
+  id: string;
+  title: string;
+  /** markdown body. */
+  body: string;
+  /** ISO-8601 last-updated. */
+  updated: string;
+}
+
+/** GET /code_insight/memory?repo=<name> → the curated durable memory note for a
+ *  repo. honest: found:false + note:null → "no memory note yet for this repo"
+ *  (an agent writes it over time) — an empty-state, NOT an error/blank. */
+export interface RepoMemory {
+  repo: string;
+  note: RepoMemoryNote | null;
+  found: boolean;
+}
