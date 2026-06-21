@@ -165,6 +165,28 @@ def _should_fire(row, now_iso_str: str, now: datetime) -> bool:
     return (now - last_dt) >= timedelta(minutes=int(every))
 
 
+def _maybe_escalate_overdue(row, now_iso_str: str) -> None:
+    """#51: the overdue-past-cap → HIGH/MAIL escalation (fires EXACTLY ONCE per reminder).
+
+    Fires when ALL hold for an un-done reminder _should_fire already declined (at cap):
+      - notified_count >= cap (the Discord cadence is exhausted), AND
+      - OVERDUE: due_at <= now (the scan's mockable now_iso_str — consistent with _should_fire's own
+        due-check; the reader's _is_overdue is the real-clock variant, not used here so the test's
+        injected clock governs), AND
+      - NOT already escalated (mail_escalated == 0) → the spam-proof guard.
+    → ``alerts.notify("high", …)`` ONCE → ``store.set_mail_escalated(id)`` so it NEVER re-fires.
+    Fail-soft: any error is swallowed by notify_scan's per-reminder try/except (the scan continues)."""
+    count = int(row["notified_count"])
+    cap = row["max_times"] if row["max_times"] is not None else _DEFAULT_MAX_TIMES
+    keys = row.keys()
+    already = bool(row["mail_escalated"]) if "mail_escalated" in keys else False  # pre-migration tolerant
+    if count >= cap and row["due_at"] <= now_iso_str and not already:
+        from modules.alerts import notify as _alert_notify
+        _alert_notify("high", f"🔴 Overdue: {row['title']}",
+                      f"un-done past {cap} reminders — due {row['due_at']}")  # fail-soft inside
+        store.set_mail_escalated(int(row["id"]))
+
+
 def notify_scan(now: datetime | None = None) -> dict:
     """The reminders-notify engine (one scan tick). Scans UN-DONE reminders and fires per
     _should_fire; on fire → Discord (fail-soft) + mark_notified; a REPEAT reminder also rolls its
@@ -177,6 +199,13 @@ def notify_scan(now: datetime | None = None) -> dict:
         scanned += 1
         try:
             if not _should_fire(row, now_iso_str, now):
+                # #51 ADDITIVE branch (the ENGINE change, decide-and-log): _should_fire returns
+                # False at cap (count >= cap → Discord stops). For an un-done reminder that is now
+                # OVERDUE AND past-cap AND not-yet-escalated → escalate ONCE to a HIGH-severity MAIL
+                # alert (alert creds live post-#50), then set mail_escalated so it NEVER re-fires
+                # (spam-proof — fires EXACTLY ONCE per reminder, not a recurring nag). The normal
+                # pre-cap Discord path above is UNTOUCHED (byte-identical to #29).
+                _maybe_escalate_overdue(row, now_iso_str)
                 continue
             # ALERT-ROUTING (#33) — DELIVERY-CHANNEL rewire ONLY: route the fire through the shared
             # alerts engine instead of the local Discord poster. The ENGINE (cadence/cap/roll/tick/

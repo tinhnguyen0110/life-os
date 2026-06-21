@@ -206,3 +206,83 @@ def test_routine_records_run_and_attributes(rem_db):
     assert len(runs) == 1 and runs[0]["routine_id"] == "reminders-notify"
     from modules.automation.service import _CATALOG_BY_ID
     assert "reminders-notify" in _CATALOG_BY_ID and _CATALOG_BY_ID["reminders-notify"]["name"]
+
+
+# --------------------------------------------------------------------------- #
+# #51 — overdue-PAST-CAP → HIGH/MAIL escalation (fires EXACTLY ONCE, spam-proof) #
+# ADDITIVE to the #29 engine: a SEPARATE branch when _should_fire returns False  #
+# at cap. The pre-cap Discord path above stays byte-identical (the 14 #29 tests). #
+# --------------------------------------------------------------------------- #
+def _drive_to_cap(rid_due: datetime, calls: list) -> None:
+    """Fire a re-notifying reminder (cap=3, cadence 5min) to its cap → 3 normal Discord fires."""
+    for m in (0, 5, 10):
+        svc.notify_scan(now=rid_due + timedelta(minutes=m))
+
+
+def test_51_overdue_past_cap_escalates_high_mail_exactly_once(rem_db):
+    """The core: an un-done overdue past-cap reminder → high/mail fires ONCE; a 2nd scan does NOT
+    re-fire (mail_escalated guard — spam-proof). alerts.notify('high') called exactly once / 2 scans."""
+    _mk("Pay rent", T0, re_notify_every=5, max_times=3)
+    _drive_to_cap(T0, rem_db)
+    assert [c for c in rem_db if c[0] == "normal"]  # pre-cap Discord fired (the #29 path)
+    rem_db.clear()
+
+    svc.notify_scan(now=T0 + timedelta(minutes=20))   # past cap + overdue → escalate
+    svc.notify_scan(now=T0 + timedelta(minutes=21))   # 2nd scan → must NOT re-fire
+    highs = [c for c in rem_db if c[0] == "high"]
+    assert len(highs) == 1, f"high/mail must fire EXACTLY once across 2 scans, got {len(highs)}"
+    assert highs[0][1] == "🔴 Overdue: Pay rent"       # the high-severity title
+
+
+def test_51_pre_cap_is_unchanged_normal_discord(rem_db):
+    """A pre-cap reminder still fires normal/Discord (the #29 behavior, byte-identical) — NEVER
+    high/mail while under the cap."""
+    _mk("Soon", T0, re_notify_every=5, max_times=3)
+    svc.notify_scan(now=T0)                            # first fire (count 1, pre-cap)
+    assert [c for c in rem_db if c[0] == "normal"]     # normal Discord
+    assert not [c for c in rem_db if c[0] == "high"]   # NO high/mail pre-cap
+
+
+def test_51_done_reminder_never_escalates(rem_db):
+    """teeth (a): a TICKED (done) reminder isn't in undone_reminders → never escalates."""
+    rid = _mk("Done one", T0, re_notify_every=5, max_times=3)
+    _drive_to_cap(T0, rem_db)
+    svc.tick(rid)                                      # mark done
+    rem_db.clear()
+    svc.notify_scan(now=T0 + timedelta(minutes=20))
+    assert not [c for c in rem_db if c[0] == "high"], "a done reminder must not escalate"
+
+
+def test_51_escalation_guard_is_load_bearing(rem_db, monkeypatch):
+    """teeth (b): WITHOUT the mail_escalated guard the escalation would SPAM every scan. Simulate the
+    reverted guard (set_mail_escalated → no-op) → a 2nd scan re-fires (proves the guard is what makes
+    it exactly-once)."""
+    monkeypatch.setattr(store, "set_mail_escalated", lambda rid: None)  # revert the guard
+    _mk("Spammy", T0, re_notify_every=5, max_times=3)
+    _drive_to_cap(T0, rem_db)
+    rem_db.clear()
+    svc.notify_scan(now=T0 + timedelta(minutes=20))
+    svc.notify_scan(now=T0 + timedelta(minutes=21))
+    highs = [c for c in rem_db if c[0] == "high"]
+    assert len(highs) == 2, "WITHOUT the guard it spams every scan (RED — proves the guard matters)"
+
+
+def test_51_not_overdue_past_cap_does_not_escalate(rem_db):
+    """DISTINGUISHING: past-cap but NOT overdue (due in the future) → no escalation. (A reminder
+    can't be both past-cap and not-overdue in practice, but the overdue AND is load-bearing.)"""
+    # a reminder due in the FUTURE, force count to cap via direct store (no fire path)
+    rid = _mk("Future", T0 + timedelta(hours=1), re_notify_every=5, max_times=3)
+    store.mark_notified(rid, notified_count=3, last_notified=T0.isoformat())  # at cap
+    rem_db.clear()
+    svc.notify_scan(now=T0)                            # now < due → not overdue
+    assert not [c for c in rem_db if c[0] == "high"], "not-overdue past-cap must NOT escalate"
+
+
+def test_51_roll_repeat_resets_escalation(rem_db):
+    """DECIDED: a repeat reminder that rolls forward resets mail_escalated (a fresh period can
+    re-escalate). roll_repeat sets mail_escalated=0."""
+    rid = _mk("Daily nag", T0, repeat="daily")
+    store.set_mail_escalated(rid)
+    assert bool(store.get_reminder(rid)["mail_escalated"]) is True
+    store.roll_repeat(rid, new_due_at=(T0 + timedelta(days=1)).isoformat())
+    assert bool(store.get_reminder(rid)["mail_escalated"]) is False  # reset on roll

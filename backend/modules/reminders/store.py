@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     done_at          TEXT,                             -- ISO-8601 when ticked, else NULL
     created          TEXT    NOT NULL,                 -- ISO-8601 created
     source           TEXT    NOT NULL DEFAULT 'manual', -- TRACING-REMINDERS (#75): manual | tracing
-    activity_id      TEXT                              -- (#75) the tracing activity id when source=tracing
+    activity_id      TEXT,                             -- (#75) the tracing activity id when source=tracing
+    mail_escalated   INTEGER NOT NULL DEFAULT 0        -- #51: 1 = overdue-past-cap high/mail fired once (spam-proof)
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
@@ -48,7 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
 # The columns selected for a Reminder row (stable order; reader maps these to the model).
 # REMINDERS-3 (#29): +last_notified. TRACING-REMINDERS (#75): +source, +activity_id.
 _COLS = ("id, title, note, due_at, repeat, re_notify_every, max_times, "
-         "notified_count, last_notified, done_at, created, source, activity_id")
+         "notified_count, last_notified, done_at, created, source, activity_id, "
+         "mail_escalated")  # #51
 
 
 def init_reminders_tables() -> sqlite3.Connection:
@@ -69,6 +71,8 @@ def init_reminders_tables() -> sqlite3.Connection:
             conn.execute("ALTER TABLE reminders ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
         if "activity_id" not in cols:
             conn.execute("ALTER TABLE reminders ADD COLUMN activity_id TEXT")
+        if "mail_escalated" not in cols:  # #51 — overdue-past-cap high/mail escalation flag (spam-proof)
+            conn.execute("ALTER TABLE reminders ADD COLUMN mail_escalated INTEGER NOT NULL DEFAULT 0")
         # the activity_id index — AFTER the ALTER (the column now exists on both new + migrated tables).
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_activity ON reminders(activity_id, source)")
         conn.commit()
@@ -241,13 +245,27 @@ def mark_notified(reminder_id: int, *, notified_count: int, last_notified: str) 
         conn.commit()
 
 
-def roll_repeat(reminder_id: int, *, new_due_at: str) -> None:
-    """SEMANTIC 1 (roll-on-fire): a repeat reminder fired → roll due_at forward (+period) + RESET
-    notified_count=0 + last_notified=NULL so the next period fires fresh. ``once`` never calls this."""
+def set_mail_escalated(reminder_id: int) -> None:
+    """#51: mark a reminder's overdue-past-cap high/mail escalation as FIRED (spam-proof — it never
+    re-fires). SCOPED to the single id (the #72 wipe lesson — never a blanket UPDATE)."""
     conn = db.get_conn()
     with _lock:
         conn.execute(
-            "UPDATE reminders SET due_at = ?, notified_count = 0, last_notified = NULL WHERE id = ?",
+            "UPDATE reminders SET mail_escalated = 1 WHERE id = ?", (int(reminder_id),)
+        )
+        conn.commit()
+
+
+def roll_repeat(reminder_id: int, *, new_due_at: str) -> None:
+    """SEMANTIC 1 (roll-on-fire): a repeat reminder fired → roll due_at forward (+period) + RESET
+    notified_count=0 + last_notified=NULL so the next period fires fresh. ``once`` never calls this.
+    #51: also reset mail_escalated=0 — a fresh period can re-escalate if it goes overdue-past-cap
+    (decided + logged: roll resets the escalation flag like it resets notified_count)."""
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE reminders SET due_at = ?, notified_count = 0, last_notified = NULL, "
+            "mail_escalated = 0 WHERE id = ?",
             (new_due_at, int(reminder_id)),
         )
         conn.commit()
