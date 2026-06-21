@@ -101,7 +101,10 @@ def _apply_journal_create(payload: dict[str, Any]) -> str:
     # ``cast`` only satisfies the type-checker — pydantic still VALIDATES the Literal at
     # runtime (a non-BUY/SELL value raises, surfacing as an honest apply_error, not a crash).
     action = cast(Action, str(payload["action"]).upper())
-    body = JournalInput(
+    # #57: date + outcome have defaults (None) on JournalInput — the [call-arg] is the
+    # no-pydantic-mypy-plugin gotcha (mypy reads defaulted fields as required), NOT a missing-required.
+    # run-the-red confirmed: JournalInput.date/outcome = Field(None,...). Scoped ignore, not a bug-fix.
+    body = JournalInput(  # type: ignore[call-arg]
         action=action,
         asset=payload["asset"],
         reason=payload["reason"],
@@ -163,6 +166,10 @@ def accept(proposal_id: int, *, decided_by: str = "user") -> dict[str, Any]:
         return row if row is not None else existing
 
     # First (and only) transition → apply the target-module write exactly once.
+    # #57: transitioned=True means mark_decided's UPDATE hit a row (rowcount>0) → the post-update
+    # SELECT returns it → row is non-None here (+ existing was non-None, guarded above). Assert the
+    # invariant (documents it + satisfies mypy + catches a store-contract violation, not a blanket ignore).
+    assert row is not None, "mark_decided returned transitioned=True with row=None (store contract violation)"
     kind = row["kind"]
     handler = APPLY_HANDLERS.get(kind)
     applied_ref: str | None = None

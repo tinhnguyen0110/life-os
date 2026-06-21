@@ -606,6 +606,29 @@ def test_GATE4_macro_cycle_honest_on_missing_axis(monkeypatch, isolated_paths):
     # phase may be named from the (mock) directions OR unknown — but the LOW q is the honesty.
     assert cyc.confidence == cyc.qCycle.q and cyc.confidence < 0.5
 
+    # #40 (HARDENING): the MCP macro_cycle tool FORWARDS that warning as a top-level ``warnings`` list
+    # (mirrors macro_overview's {macro, warnings}) — so an agent sees the mock/thin-axis caveat without
+    # digging into macroCycle.warning. THE distinguishing: a mock axis → warnings NON-empty.
+    from mcp_servers import read_server as rs
+    out = rs.macro_cycle()
+    assert set(out) == {"macroCycle", "warnings"}
+    assert out["warnings"] == [cyc.warning] and out["warnings"], "mock axis → non-empty forwarded warnings"
+
+
+def test_GATE4_macro_cycle_mcp_warnings_empty_when_all_real(monkeypatch, isolated_paths):
+    """#40 distinguishing (the other arm): all-REAL axes → no model warning → the MCP tool's
+    top-level ``warnings`` is EMPTY. An always-warn impl FAILS this."""
+    from mcp_servers import read_server as rs
+    from modules.macro import service as macro_svc
+    from modules.macro.schema import MacroOverview, MacroIndicatorView
+    inds = [MacroIndicatorView(indicator=i, label=i, unit="", latest=1.0, asOf="2026-06-01",
+                               trend="up", source="fred", points=30, confidence=0.95)
+            for i in ("industrial_production", "cpi", "yield_curve_10y2y", "unemployment")]
+    monkeypatch.setattr(macro_svc, "get_overview", lambda: (MacroOverview(indicators=inds, source="fred"), []))
+    out = rs.macro_cycle()
+    assert set(out) == {"macroCycle", "warnings"}
+    assert not any(out["warnings"]), "all-real axes → empty forwarded warnings"
+
 
 def test_GATE4_macro_cycle_unknown_when_axes_indeterminate(monkeypatch, isolated_paths):
     """When growth/inflation direction isn't both determinable → phase 'unknown' (NOT fabricated)."""

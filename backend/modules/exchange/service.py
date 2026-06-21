@@ -55,7 +55,9 @@ def _parse_balances(raw: list[dict]) -> tuple[list[OkxBalance], float]:
             available = float(item.get("availBal") or 0)
             frozen = float(item.get("frozenBal") or 0)
             usd_val = item.get("eqUsd")
-            usd_float = float(usd_val) if usd_val not in (None, "", "0") else None
+            # #57: narrow for mypy (a `not in (None,...)` check doesn't narrow Any|None) — only
+            # float() a present, non-empty, non-zero value; else honest None.
+            usd_float = float(usd_val) if usd_val and usd_val != "0" else None
             bal = OkxBalance(  # type: ignore[call-arg]  # DUST-FOLD #17: isDust/count have defaults; no pydantic mypy plugin in env → mypy reads defaulted fields as required (known gotcha)
                 symbol=item.get("ccy", "?"),
                 available=available,
@@ -141,7 +143,9 @@ def sync() -> tuple[ExchangeOverview, str | None]:
     global _last_snapshot
 
     if not is_configured():
-        snap = ExchangeOverview(totalUsdValue=0.0, configured=False)
+        # #57: syncedAt has a default (None) — the [call-arg] is the no-pydantic-mypy-plugin gotcha
+        # (mypy reads defaulted fields as required), same as the OkxBalance ignore above. NOT a bug.
+        snap = ExchangeOverview(totalUsdValue=0.0, configured=False)  # type: ignore[call-arg]
         _last_snapshot = snap
         return snap, None
 

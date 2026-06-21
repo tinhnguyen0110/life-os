@@ -342,9 +342,8 @@ def get_usage(window: str = "5h") -> ClaudeUsage:
     by_model = _parse_by_model(stats)
     top_model = by_model[0].model if by_model else "—"
     cost_usd = round(sum(b.costUSD for b in by_model), 4)
-    as_of = stats.get("lastComputedDate")
-    if not isinstance(as_of, str):
-        as_of = today_iso
+    _as_of_raw = stats.get("lastComputedDate")  # Any | None from the stats dict
+    as_of = _as_of_raw if isinstance(_as_of_raw, str) else today_iso  # #57: narrow to str (non-str → today)
     return _finish(
         model=top_model, series=series, by_model=by_model, by_project=[],
         cost_usd=cost_usd, as_of=as_of, stale=as_of < yesterday_iso,

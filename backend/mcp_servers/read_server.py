@@ -312,8 +312,13 @@ def macro_cycle() -> dict[str, Any]:
     (freshness×coverage×agreement) over those axes. ``favored``/``defensive`` are the CLASSIC-
     CLOCK reference map (which asset classes that phase is associated with), NOT advice for the
     user's book. NEUTRAL — data + q. Honest: a mock/missing axis → coverage<1 → lower qCycle +
-    a warning; phase 'unknown' if too thin (never a fabricated phase). ``{macroCycle}``."""
-    return {"macroCycle": _jsonable(_decision_macro_cycle())}
+    a warning; phase 'unknown' if too thin (never a fabricated phase). ``{macroCycle, warnings}`` —
+    #40 (HARDENING): the cycle's honest mock/thin-axis warning is forwarded as a top-level
+    ``warnings`` list (mirrors macro_overview's {macro, warnings}), so an agent sees the data-quality
+    caveat without digging into macroCycle.warning. All-real axes → warnings empty."""
+    cycle = _decision_macro_cycle()
+    warn = getattr(cycle, "warning", None)  # #40: lift the model's mock/missing-axis note to top-level
+    return {"macroCycle": _jsonable(cycle), "warnings": [warn] if warn else []}
 
 
 def decision_weight() -> dict[str, Any]:

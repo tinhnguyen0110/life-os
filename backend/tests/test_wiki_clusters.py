@@ -53,6 +53,14 @@ def test_dense_triangle_is_a_cluster(wiki_db):
     assert c["density"] == 1.0  # 3 edges / max 3
     assert c["importance"] == round(3 * 1.0, 3)
     assert c["suggestedTitle"] in {"Alpha", "Beta", "Gamma"}
+    # #39 (HARDENING): topMembers — top-N member titles for label synthesis, deterministic (no AI),
+    # a SUBSET of members[].title, capped at N (=5).
+    assert "topMembers" in c
+    member_titles = {m["title"] for m in c["members"]}
+    assert set(c["topMembers"]) <= member_titles, "topMembers must be a subset of member titles"
+    assert len(c["topMembers"]) <= 5 and len(c["topMembers"]) == min(3, 5)  # this triangle has 3
+    # deterministic: same call → same topMembers (no AI, stable order)
+    assert reader.detect_clusters()[0]["topMembers"] == c["topMembers"]
 
 
 def test_isolated_notes_are_not_a_cluster(wiki_db):

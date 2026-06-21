@@ -10,6 +10,10 @@ from typing import Any
 
 from .. import store as wiki_store
 
+# #39 (HARDENING): how many member titles a cluster surfaces as ``topMembers`` (the label-synthesis
+# hint). Small + deterministic — an agent reads a few names, not the whole member list.
+_TOP_MEMBERS_N = 5
+
 
 def _connected_components(adj: dict[int, set[int]]) -> list[set[int]]:
     """Connected components of an undirected graph (BFS flood-fill). ``adj`` maps
@@ -103,6 +107,10 @@ def detect_clusters() -> list[dict[str, Any]]:
             "density": round(density, 3),
             "importance": round(n * density, 3),  # advisory only (D-W5.3)
             "suggestedTitle": best_title,          # deterministic hint, NOT AI
+            # #39 (HARDENING): the top member titles so an agent can synthesize a cluster label from
+            # the names without fetching each note. Deterministic (first N of the id-sorted members),
+            # NO AI. Subset of members[].title.
+            "topMembers": [m["title"] for m in members[:_TOP_MEMBERS_N]],
         })
 
     clusters.sort(key=lambda c: (-c["importance"], -c["size"], c["members"][0]["id"]))
@@ -192,10 +200,13 @@ def ego_graph(note_id: int, depth: int = 2) -> dict[str, Any] | None:
     for c in detect_clusters():
         member_ids = {m["id"] for m in c["members"]}
         if member_ids & visited:
+            vis_members = [m for m in c["members"] if m["id"] in visited]
             visible_clusters.append({
-                "members": [m for m in c["members"] if m["id"] in visited],
+                "members": vis_members,
                 "size": c["size"], "density": c["density"],
                 "importance": c["importance"], "suggestedTitle": c["suggestedTitle"],
+                # #39: topMembers derived from the VISIBLE (filtered) members → a true subset of what's shown
+                "topMembers": [m["title"] for m in vis_members[:_TOP_MEMBERS_N]],
             })
     return {"center": int(note_id), "nodes": nodes, "edges": edges,
             "clusters": visible_clusters}

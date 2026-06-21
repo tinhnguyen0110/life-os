@@ -54,7 +54,7 @@ class CvMeta(BaseModel):
 class Cv(BaseModel):
     """The full living CV: header meta + ordered sections + bookkeeping."""
 
-    meta: CvMeta = Field(default_factory=CvMeta)  # type: ignore[arg-type]
+    meta: CvMeta = Field(default_factory=CvMeta)  # #57: removed stale type:ignore (was unused)
     sections: list[CvSection] = Field(default_factory=list)
     updatedAt: str | None = None
     seeded: bool = Field(False, description="True if seeded from the source CV (vs user-created)")
