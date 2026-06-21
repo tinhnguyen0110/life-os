@@ -64,6 +64,7 @@ from .apply import (
     _apply_refine,
     _apply_update,
     _commit_note,
+    _refresh_indexes,
 )
 
 # Public CRUD (router + other modules call these).
@@ -94,6 +95,6 @@ __all__ = [
     # accessible so the public surface is byte-for-byte the same (not part of the
     # supported API, but re-exported to avoid any silent surface shrink).
     "_apply", "_apply_create", "_apply_update", "_apply_delete", "_apply_merge",
-    "_apply_refine", "_commit_note", "_derive_links", "_resolve_ghosts_for",
+    "_apply_refine", "_commit_note", "_refresh_indexes", "_derive_links", "_resolve_ghosts_for",
     "_would_be_link_count", "_read_note", "_render", "_body_hash", "_json",
 ]

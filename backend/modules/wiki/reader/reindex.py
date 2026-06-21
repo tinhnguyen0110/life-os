@@ -70,7 +70,14 @@ def reindex_note(note_id: int) -> dict[str, Any]:
         content_hash=note.contentHash, created=note.created, updated=note.updated,
         capture_source=cap,
     )
-    logger.info("reindex: note %s cache rebuilt from md", note_id)
+    # WIKI-REINDEX-FTS (#68): the cache row alone is NOT enough — a rebuild must ALSO
+    # re-sync the secondary indexes (resolver aliases + outbound edges + ghost-resolve
+    # + FTS) the same way a normal write does, or wiki_search misses the note's new
+    # content + backlinks go stale after an out-of-band md change. Reuse _commit_note's
+    # extracted helper (DRY — identical 4 steps). Only the "rebuilt" branch reaches here
+    # (unchanged returns above; missing_dropped deleted the cache + never reaches this).
+    wiki_service._refresh_indexes(note)
+    logger.info("reindex: note %s cache rebuilt from md + indexes resynced", note_id)
     return {"noteId": note_id, "action": "rebuilt"}
 
 

@@ -522,6 +522,76 @@ def test_reindex_missing_everywhere_is_unchanged(wiki_db):
     assert res == {"noteId": 999, "action": "unchanged"}
 
 
+# --- WIKI-REINDEX-FTS (#68): a reindex-rebuild re-syncs FTS + links, not just the cache row --- #
+def _overwrite_md_out_of_band(note_id: int, *, title: str, content: str) -> None:
+    """Rewrite a note's .md DIRECTLY (NOT through the service write path that refreshes
+    indexes) — simulates the md changing out-of-band (external edit / git pull). The cache
+    row + FTS + links are now STALE relative to the md until a reindex runs."""
+    existing = wiki_service.get_note(note_id)
+    assert existing is not None
+    edited = existing.model_copy(update={
+        "title": title, "content": content,
+        "contentHash": wiki_service._body_hash(content),
+    })
+    wiki_store.write_note_file(note_id, wiki_service._render(edited), "out-of-band md edit")
+
+
+def test_reindex_rebuild_resyncs_fts(wiki_db):
+    """THE distinguishing (#68): edit the md out-of-band → reindex → wiki_search FINDS the
+    new title/body. Asserting only the cache row (test_reindex_rebuilds_dropped_cache_row)
+    PASSES against the stale-FTS bug — only a real fix makes SEARCH find the new content."""
+    note = wiki_service.create_note(NoteCreateInput(title="Old Title", content="alpha original"))
+    assert len(wiki_reader.search("alpha")) == 1  # FTS in sync after the create
+    # md changes out-of-band: FTS is now stale (still indexes the OLD body).
+    _overwrite_md_out_of_band(note.id, title="Brandnew Title", content="zeta replacement")
+    assert wiki_store.fts_search("zeta") == []        # stale: new term not yet searchable
+    assert len(wiki_store.fts_search("alpha")) == 1   # stale: old term still indexed
+    # reindex must re-sync FTS from the md (the #68 fix — not just the cache row).
+    res = wiki_reader.reindex_note(note.id)
+    assert res["action"] == "rebuilt"
+    assert len(wiki_reader.search("zeta")) == 1, "reindex must make the NEW body searchable"
+    assert len(wiki_reader.search("Brandnew")) == 1, "reindex must make the NEW title searchable"
+    assert wiki_store.fts_search("alpha") == [], "the OLD term must no longer match after rebuild"
+
+
+def test_reindex_rebuild_resyncs_backlinks(wiki_db):
+    """A reindex-rebuild re-derives outbound edges from the md → backlinks stay correct.
+    Add a [[link]] to the md out-of-band → reindex → the target's backlinks show it."""
+    target = wiki_service.create_note(NoteCreateInput(title="Target Note", content="t"))
+    source = wiki_service.create_note(NoteCreateInput(title="Source Note", content="no link yet"))
+    assert wiki_reader.backlinks(target.id)["linked"] == []  # no inbound edge yet
+    # out-of-band: source's md now links the target — edges are stale (still none).
+    _overwrite_md_out_of_band(source.id, title="Source Note",
+                              content=f"now links [[{target.id}]] here")
+    assert wiki_reader.backlinks(target.id)["linked"] == [], "edge stale until reindex"
+    res = wiki_reader.reindex_note(source.id)
+    assert res["action"] == "rebuilt"
+    linked = wiki_reader.backlinks(target.id)["linked"]
+    assert [l["id"] for l in linked] == [source.id], "reindex must re-derive the new inbound edge"
+
+
+def test_reindex_unchanged_does_not_touch_indexes(wiki_db):
+    """action=unchanged must NOT churn FTS (no needless re-index when the md matches the
+    cache). A 2nd reindex right after a create is a no-op → search still works, action unchanged."""
+    note = wiki_service.create_note(NoteCreateInput(title="Stable", content="constant body word"))
+    res = wiki_reader.reindex_note(note.id)
+    assert res == {"noteId": note.id, "action": "unchanged"}
+    assert len(wiki_reader.search("constant")) == 1  # FTS intact (was never re-touched)
+
+
+def test_reindex_all_still_prunes_orphans(wiki_db):
+    """#61 regression: reindex_all must STILL prune orphan cache rows (md gone) even after
+    the #68 index-resync change to the rebuilt branch."""
+    keep = wiki_service.create_note(NoteCreateInput(title="Keep", content="kept"))
+    orphan = wiki_service.create_note(NoteCreateInput(title="Orphan", content="doomed"))
+    # orphan the cache row: delete the md out-of-band, leave the cache row.
+    wiki_store.delete_note_file(orphan.id, "test: orphan md out-of-band")
+    out = wiki_reader.reindex_all()
+    assert orphan.id in out["droppedIds"] and out["dropped"] >= 1
+    assert wiki_store.get_note_cache(orphan.id) is None  # pruned
+    assert wiki_store.get_note_cache(keep.id) is not None  # real note untouched
+
+
 # =========================================================================== #
 # W1b-T1 — wikilink parser + resolver + edge persistence                       #
 # =========================================================================== #

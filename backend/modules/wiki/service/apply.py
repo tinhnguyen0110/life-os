@@ -22,6 +22,31 @@ from .serialize import _body_hash, _json, _parse_capture_source, _render
 logger = logging.getLogger("life-os.wiki.service")
 
 
+def _refresh_indexes(note: Note) -> None:
+    """Re-sync the disposable secondary indexes for ONE note from its current state:
+    the title/alias→id resolver (wiki_aliases), the outbound edges (wiki_links),
+    ghost auto-resolution, and the FTS5 full-text row. Idempotent — derived purely
+    from ``note``, never partial. These are the 4 post-write steps that must run on
+    EVERY path that makes a note's content current: a normal write (``_commit_note``)
+    AND a reindex-rebuild (reader/reindex.py, when the md changed out-of-band) — so
+    wiki_search + backlinks never go stale relative to the md (WIKI-REINDEX-FTS #68).
+
+    NOTE this is the index-only half — it does NOT write the md or the cache row
+    (those are write-specific: _commit_note does the md+cache, reindex does its own
+    cache upsert). Call it AFTER the cache row is current.
+    """
+    # B2 — refresh the title/alias→id resolver index for THIS note, then re-derive
+    # its outbound edges from the (new) body against the (now-current) index.
+    wiki_store.replace_aliases(note.id, note.title, note.aliases)
+    _derive_links(note)
+    # B4 — auto-resolve ghosts: any pre-existing ghost edge whose target_title now
+    # matches this note's title/alias → flip to resolved pointing at this id.
+    _resolve_ghosts_for(note)
+    # C1 — sync the FTS index for this note (disposable full-text cache).
+    wiki_store.fts_upsert(note.id, title=note.title, body=note.content,
+                          aliases=note.aliases, tags=note.tags)
+
+
 def _commit_note(note: Note, message: str, capture_source: str = "quick_add") -> str:
     """Write the note md file (1 git commit) + upsert the cache row + refresh the
     resolver index + re-derive this note's outbound edges. Returns sha.
@@ -40,16 +65,9 @@ def _commit_note(note: Note, message: str, capture_source: str = "quick_add") ->
         content_hash=note.contentHash, created=note.created, updated=note.updated,
         capture_source=capture_source, folder=note.folder,
     )
-    # B2 — refresh the title/alias→id resolver index for THIS note, then re-derive
-    # its outbound edges from the (new) body against the (now-current) index.
-    wiki_store.replace_aliases(note.id, note.title, note.aliases)
-    _derive_links(note)
-    # B4 — auto-resolve ghosts: any pre-existing ghost edge whose target_title now
-    # matches this note's title/alias → flip to resolved pointing at this id.
-    _resolve_ghosts_for(note)
-    # C1 — sync the FTS index for this note (disposable full-text cache).
-    wiki_store.fts_upsert(note.id, title=note.title, body=note.content,
-                          aliases=note.aliases, tags=note.tags)
+    # B2/B4/C1 — refresh the disposable secondary indexes (resolver + edges + ghosts +
+    # FTS) for this note. Shared with reindex-rebuild via _refresh_indexes (#68, DRY).
+    _refresh_indexes(note)
     return sha
 
 
