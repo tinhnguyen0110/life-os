@@ -39,7 +39,7 @@ const FIN = (over = {}) => ({
     ...over,
   },
 });
-const err422 = (field: string, msg: string) => new ApiError(422, `${field}: ${msg}`, [{ type: "x", loc: ["body", field], msg }]);
+const err422 = (field: string, msg: string) => new ApiError(422, `${field}: ${msg}`, { detail: [{ type: "x", loc: ["body", field], msg }] });
 
 describe("S6 Portfolio LIST — render (render-only)", () => {
   it("header counts: N holdings · M channels (value>0)", async () => {

@@ -24,9 +24,9 @@ const CONFIG = (over = {}) => ({
   riskCapitalSmallUsd: 50000, riskCapitalLargeUsd: 500000, ...over,
 });
 const ENV = (data: unknown) => ({ success: true, data });
-// a real FastAPI per-field 422 for briefHour
+// a real FastAPI per-field 422 for briefHour (legacy loc-array shape — still supported)
 const err422 = (field: string, msg: string) =>
-  new ApiError(422, `${field}: ${msg}`, [{ type: "x", loc: ["body", field], msg }]);
+  new ApiError(422, `${field}: ${msg}`, { detail: [{ type: "x", loc: ["body", field], msg }] });
 
 describe("S12 Settings — render + states", () => {
   it("renders the 4 panels render-only from config", async () => {
