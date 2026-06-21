@@ -16,9 +16,24 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
+from core.agent_errors import agent_error  # WIKI-RECONCILE/#61 item#3: agent-readable 404 shape
 from core.base import BaseModule
 from core.responses import ok
+
+
+def _note_not_found(note_id: int) -> JSONResponse:
+    """WIKI-RECONCILE/#61 item#3: a note-id 404 as the agent-first error shape (flat top-level
+    ``{error:{code,message,hint,retryable}}`` via agent_error #46) — NOT the raw {"detail":...}.
+    JSONResponse (not HTTPException(detail=...)) so the body is the flat error, not double-nested
+    under "detail". NOT_FOUND auto-resolves retryable=False. The agent gets a code to branch on + a
+    hint naming where to find a valid id."""
+    return JSONResponse(
+        status_code=404,
+        content=agent_error("NOT_FOUND", f"wiki note {note_id} not found",
+                            hint="check the id via wiki_tree or wiki_search"),
+    )
 
 from datetime import datetime, timezone
 
@@ -159,6 +174,16 @@ def verify_citations(body: CitationVerifyInput):
     return ok(data=citations.verify_citations(claims))
 
 
+@router.post("/reindex")
+def reindex():
+    """WIKI-RECONCILE (#53): bulk-reconcile the wiki cache against the md files (source of truth),
+    PRUNING orphan cache rows whose .md is gone (the tree-lies bug — phantom rows listed by
+    all_notes() that GET /notes/{id} 404s). ``{scanned, dropped, rebuilt, unchanged, droppedIds}``.
+    Reuses the per-note reindex primitive — prunes ONLY orphan index rows, never a real note.
+    Idempotent (a 2nd call drops 0). Same reader.reindex_all the MCP wiki_reindex calls → byte-identical (#24)."""
+    return ok(data=reader.reindex_all())
+
+
 @router.get("/clusters")
 def clusters():
     """MOC candidates (W5a, D-W5.1): graph-detected clusters of ≥3 linked notes
@@ -244,7 +269,7 @@ def get_note(note_id: int, mode: str = "full", heading: str | None = None):
     MCP wiki_get_note uses → byte-identical (#24)."""
     note, warning = service.resolve_note(note_id)
     if note is None:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #61 item#3: agent-readable 404 shape
     return ok(data=reader.note_view(note, mode=mode, heading=heading), warning=warning)
 
 
@@ -253,7 +278,7 @@ def get_backlinks(note_id: int):
     """Backlinks for a note: ``{linked, unlinked, outbound}`` (B3). 404 if the note
     is absent. ``unlinked`` ships ``[]`` in W1b (FTS-backed, populated W1c)."""
     if service.get_note(note_id) is None:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #61 item#3: agent-readable 404 shape
     return ok(data=reader.backlinks(note_id))
 
 
@@ -265,7 +290,7 @@ def get_context(note_id: int, depth: int = 2):
     once instead of 2-3 calls. 404 if the note is absent (the wiki REST convention). Same
     ``reader.context`` the MCP ``wiki_context`` tool calls → MCP≡REST byte-identical (#24)."""
     if service.get_note(note_id) is None:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #61 item#3: agent-readable 404 shape
     return ok(data=reader.context(note_id, depth))
 
 
@@ -278,7 +303,7 @@ def get_suggested_links(note_id: int, limit: int = 5):
     note is absent. Same ``reader.suggest_links`` the MCP ``wiki_suggest_links`` calls → MCP≡REST
     byte-identical (#24). Suggest-only — never applies a link."""
     if service.get_note(note_id) is None:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #61 item#3: agent-readable 404 (4th GET note-id route)
     return ok(data={"suggestedLinks": reader.suggest_links(note_id, limit)})
 
 

@@ -9,7 +9,7 @@
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
 - whole-app shared: **42 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
-- standalone wiki (canonical): **13 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
+- standalone wiki (canonical): **14 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
   `read` in the catalog (the honest "what THIS agent sees" view) — adds no NEW tool fns.
@@ -103,6 +103,7 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | `wiki_verify_citations` | wiki-read | Post-verify citations (anti-fabrication gate): verified/rejected/ungrounded/weakly_grounded |
 | `wiki_proposal_status` | wiki-read | One WIKI proposal's disposition by id (the wiki_proposals queue). PORTED #70. |
 | `wiki_list_proposals` | wiki-read | The agent's WIKI proposals (newest-first) + counts. PORTED #70. |
+| `wiki_reindex` | wiki-read | Bulk-reconcile the cache vs md files: prune orphan rows whose .md is gone. {scanned,dropped,rebuilt,unchanged,droppedIds}. Idempotent (#53). |
 | `propose_note` | wiki-write | Propose a NEW wiki note → wiki_proposals queue |
 | `propose_edit` | wiki-write | Propose an EDIT to a wiki note → wiki_proposals queue |
 | `propose_link` | wiki-write | Propose ADDING a [[target]] link to a wiki note → wiki_proposals queue |

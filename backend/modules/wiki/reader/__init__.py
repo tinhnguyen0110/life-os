@@ -28,8 +28,8 @@ from __future__ import annotations
 # op_log feed.
 from .oplog import recent_ops
 
-# reindex seam.
-from .reindex import reindex_note
+# reindex seam + bulk reconcile (#53).
+from .reindex import reindex_all, reindex_note
 
 # backlinks + search + unlinked mentions.
 from .backlinks import backlinks, search, unlinked_mentions
@@ -60,7 +60,7 @@ from .note_view import note_view
 
 __all__ = [
     "recent_ops",
-    "reindex_note",
+    "reindex_note", "reindex_all",
     "backlinks", "search", "unlinked_mentions",
     "ego_graph", "global_graph", "detect_clusters",
     "context",

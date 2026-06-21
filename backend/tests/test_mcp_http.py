@@ -18,9 +18,9 @@ Defensive cases (each a real assertion, per the dispatch):
     mcp-session-id (no per-session state) so a backend RESTART can't drop a client; a
     tools/list works with NO prior initialize-session (restart-survivable). (Was: distinct
     session ids — stateful; the agent-first switch removed sessions entirely.)
-(d) stdio unbroken → each build_server() still builds + len(TOOLS) == 40/4/11/6/15
-    (MCP-DEDUP #70: shared read 46→40, shared write 10→4, standalone wiki-read 9→11;
-    MCP-DOMAINS T1: finance subset 15).
+(d) stdio unbroken → each build_server() still builds + the per-server tool counts hold (asserted
+    live below — shared read/write + standalone wiki-read 14 (#23/#34/#41/#53) / wiki-write 6 /
+    finance subset 15). Historical: MCP-DEDUP #70 shared read 46→40, write 10→4, wiki-read 9→11.
 (e) no `from __future__ import annotations` added to the 5 server modules.
 """
 
@@ -160,11 +160,12 @@ def test_stdio_build_servers_unchanged():
     # wiki_context supersets the two removed granular tools → net −1).
     # WIKI-SUGGEST-LINK #34: wiki-read 11→12 (+wiki_suggest_links).
     # WIKI-STALE-DETECTOR #41: wiki-read 12→13 (+wiki_stale).
+    # WIKI-RECONCILE #53: wiki-read 13→14 (+wiki_reindex).
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 13
+    assert len(wr._tool_manager.list_tools()) == 14
     assert len(ww._tool_manager.list_tools()) == 6
 
 

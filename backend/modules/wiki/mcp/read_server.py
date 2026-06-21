@@ -253,6 +253,18 @@ def wiki_list_proposals(status: str | None = None, limit: int = 50) -> dict[str,
     return {"proposals": proposals, "counts": proposals_store.count_by_status()}
 
 
+def wiki_reindex() -> dict[str, Any]:
+    """WIKI-RECONCILE (#53): bulk-reconcile the wiki cache against the md files (source of truth),
+    PRUNING orphan cache rows whose .md is gone — the tree-lies fix (phantom rows that all_notes()
+    listed but GET /notes/{id} 404'd, from out-of-band .md deletes). Returns
+    ``{scanned, dropped, rebuilt, unchanged, droppedIds}`` — droppedIds names the pruned ids so the
+    agent sees WHAT went. Prunes ONLY orphan INDEX rows (md already gone), never a real note;
+    idempotent (a 2nd call drops 0). Same reader.reindex_all the REST POST /wiki/reindex calls →
+    MCP≡REST byte-identical (#24)."""
+    _audit("wiki_reindex", {})
+    return reader.reindex_all()
+
+
 # Registry of (name → logic fn) — the single source of truth for what tools exist.
 # Tests iterate this for parity + audit; FastMCP registration iterates it below.
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -272,6 +284,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     # PORTED (#70) — wiki-proposal read-back (was embedded in the shared read_server)
     "wiki_proposal_status": wiki_proposal_status,
     "wiki_list_proposals": wiki_list_proposals,
+    "wiki_reindex": wiki_reindex,  # WIKI-RECONCILE #53: bulk prune orphan cache rows
 }
 
 
@@ -313,6 +326,7 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(wiki_verify_citations, description=wiki_verify_citations.__doc__)
     mcp.add_tool(wiki_proposal_status, description=wiki_proposal_status.__doc__)  # ported #70
     mcp.add_tool(wiki_list_proposals, description=wiki_list_proposals.__doc__)    # ported #70
+    mcp.add_tool(wiki_reindex, description=wiki_reindex.__doc__)  # WIKI-RECONCILE #53
     return mcp
 
 

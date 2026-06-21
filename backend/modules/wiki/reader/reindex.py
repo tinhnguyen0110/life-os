@@ -72,3 +72,40 @@ def reindex_note(note_id: int) -> dict[str, Any]:
     )
     logger.info("reindex: note %s cache rebuilt from md", note_id)
     return {"noteId": note_id, "action": "rebuilt"}
+
+
+def reindex_all() -> dict[str, Any]:
+    """WIKI-RECONCILE (#53): bulk-reconcile the WHOLE wiki cache against the md files (the source of
+    truth), PRUNING orphan cache rows whose .md is gone (the tree-lies bug — test-writes that deleted
+    a .md without going through _apply_delete left phantom rows: all_notes() listed them but GET
+    /notes/{id} 404'd). Runs the per-note ``reindex_note`` over every cache row — ZERO new prune
+    logic, just the existing primitive aggregated.
+
+    Returns ``{scanned, dropped, rebuilt, unchanged, droppedIds}`` — lean + agent-readable (the agent
+    sees WHAT was pruned, not just a count):
+      - scanned: cache rows examined · dropped: orphan rows pruned (md gone) · rebuilt: rows
+        refreshed from a changed md · unchanged: rows already consistent · droppedIds: the pruned ids.
+    Idempotent: a 2nd run immediately after drops 0 (the orphans are gone). Prunes ONLY orphan INDEX
+    rows — never a real note whose .md exists."""
+    scanned = dropped = rebuilt = unchanged = 0
+    dropped_ids: list[int] = []
+    # snapshot the ids first — reindex_note mutates the cache (delete_note_cache), so don't iterate
+    # the live row set while modifying it.
+    ids = [int(r["id"]) for r in wiki_store.all_notes()]
+    for nid in ids:
+        scanned += 1
+        action = reindex_note(nid)["action"]
+        if action == "missing_dropped":
+            dropped += 1
+            dropped_ids.append(nid)
+        elif action == "rebuilt":
+            rebuilt += 1
+        else:  # unchanged
+            unchanged += 1
+    return {
+        "scanned": scanned,
+        "dropped": dropped,
+        "rebuilt": rebuilt,
+        "unchanged": unchanged,
+        "droppedIds": dropped_ids,
+    }

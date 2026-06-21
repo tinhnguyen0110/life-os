@@ -376,6 +376,7 @@ def test_server_builds_with_all_tools():
         "wiki_clusters", "wiki_verify_citations",
         # PORTED #70 — wiki-proposal read-back (was embedded in the shared read_server)
         "wiki_proposal_status", "wiki_list_proposals",
+        "wiki_reindex",  # WIKI-RECONCILE #53: bulk prune orphan cache rows
     }
 
 

@@ -186,6 +186,12 @@ def _pairs(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         dict(id="verify_citations", mcp=lambda: mcp.wiki_verify_citations(claims=[{"noteId": b, "span": "target"}]),
              method="POST", path="/wiki/citations/verify", json_body={"claims": [{"noteId": b, "span": "target"}]},
              norm_mcp=n_identity, norm_rest=n_identity),
+        # wiki_reindex (#53): both return reader.reindex_all() verbatim. On this CLEAN fixture (no
+        # orphans) it's idempotent (dropped:0), so the MCP call then the REST call return the SAME
+        # aggregate → byte-identical. (A seeded-orphan case is tested in test_wiki_reconcile, not here.)
+        dict(id="reindex", mcp=lambda: mcp.wiki_reindex(),
+             method="POST", path="/wiki/reindex", json_body={},
+             norm_mcp=n_identity, norm_rest=n_identity),
     ]
 
 
@@ -255,7 +261,7 @@ def test_every_mcp_tool_is_paired_or_exempt():
     paired_tools = {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_tree", "wiki_clusters",
         "wiki_get_note", "wiki_context", "wiki_suggest_links", "wiki_stale",
-        "wiki_list_proposals", "wiki_verify_citations",
+        "wiki_list_proposals", "wiki_verify_citations", "wiki_reindex",
     }
     covered = paired_tools | set(EXEMPT_MCP_ONLY)
     tools = set(mcp.TOOLS)

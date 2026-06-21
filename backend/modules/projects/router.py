@@ -130,6 +130,11 @@ def _wiki_refresh_work() -> tuple[str, str]:
     """Re-read every tracked project's git + persist lastAuto. Returns (status, detail).
 
     Fail-open per project: one unreadable repo never aborts the sweep. NEVER pulls.
+
+    WIKI-RECONCILE (#53): after the primary sweep, a FAIL-SOFT self-heal add-on runs reindex_all() —
+    prunes orphan wiki cache rows (md gone) so the tree can't drift-lie over time. Per
+    fail-closed-write-fail-soft-addon: the primary status is decided BEFORE the add-on, so a reindex
+    error can NEVER fail the project sweep that already succeeded — it's noted in the detail only.
     """
     statuses, _ = service.list_projects()
     refreshed = 0
@@ -139,7 +144,17 @@ def _wiki_refresh_work() -> tuple[str, str]:
             refreshed += 1
         except Exception as exc:  # per-project fail-open
             logger.error("wiki-refresh: project %r failed: %s", status.id, exc)
-    return "ok", f"wiki-refresh swept {refreshed} project(s)"
+    # primary status decided HERE, before the add-on (the add-on can only ANNOTATE the detail).
+    detail = f"wiki-refresh swept {refreshed} project(s)"
+    try:
+        from modules.wiki import reader as wiki_reader
+        rec = wiki_reader.reindex_all()
+        if rec["dropped"]:
+            detail += f"; wiki-reconcile pruned {rec['dropped']} orphan note(s) {rec['droppedIds']}"
+    except Exception as exc:  # noqa: BLE001 — fail-soft: a reconcile error must NOT fail the sweep
+        logger.warning("wiki-refresh: reconcile add-on failed (sweep still OK): %s", exc)
+        detail += "; wiki-reconcile ERR (skipped)"
+    return "ok", detail
 
 
 def wiki_refresh() -> None:
