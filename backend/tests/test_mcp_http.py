@@ -159,11 +159,12 @@ def test_stdio_build_servers_unchanged():
     # WIKI-RETRIEVAL-3 #23 (F1=b): wiki-read 12→11 (+wiki_context, −wiki_graph −wiki_backlinks;
     # wiki_context supersets the two removed granular tools → net −1).
     # WIKI-SUGGEST-LINK #34: wiki-read 11→12 (+wiki_suggest_links).
+    # WIKI-STALE-DETECTOR #41: wiki-read 12→13 (+wiki_stale).
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 12
+    assert len(wr._tool_manager.list_tools()) == 13
     assert len(ww._tool_manager.list_tools()) == 6
 
 

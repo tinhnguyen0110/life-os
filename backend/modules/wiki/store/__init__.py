@@ -114,6 +114,8 @@ from .queries import (
     degree,
     edges_among,
     fleeting_notes,
+    inbound_counts,
+    mutual_link_pairs,
     note_ids_with_resolved_link,
     outbound_link_count,
     resolved_neighbors,
@@ -143,6 +145,7 @@ __all__ = [
     "all_notes", "count_notes", "count_by_status", "count_resolved_links",
     "count_ghost_links", "note_ids_with_resolved_link", "degree",
     "resolved_neighbors", "edges_among", "all_resolved_edges", "fleeting_notes",
+    "inbound_counts", "mutual_link_pairs",  # WIKI-STALE-DETECTOR #41
     "outbound_link_count", "total_link_count",
     # folder-meta KV (#20)
     "get_folder_meta", "all_folder_meta", "set_folder_meta",

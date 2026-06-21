@@ -126,6 +126,39 @@ def all_resolved_edges() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def inbound_counts() -> dict[int, int]:
+    """WIKI-STALE-DETECTOR (#41): resolved-inbound count per target note, as ``{target_id: count}``,
+    in ONE GROUP BY. This is the PERF-correct path for the stale detector (which needs "does each
+    note have ≥1 inbound" across the WHOLE vault) — vs calling backlinks(id) per-note, which builds
+    per-source snippets (wasted work) + is O(n) queries. Self-edges excluded (no self-inbound)."""
+    conn = db.get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT target_id, COUNT(*) AS c FROM wiki_links "
+            "WHERE is_resolved = 1 AND target_id IS NOT NULL AND source_id != target_id "
+            "GROUP BY target_id"
+        ).fetchall()
+    return {int(r["target_id"]): int(r["c"]) for r in rows}
+
+
+def mutual_link_pairs() -> list[tuple[int, int]]:
+    """WIKI-STALE-DETECTOR (#41): pairs of notes that link EACH OTHER (A→B AND B→A, both resolved),
+    as ordered ``(a, b)`` tuples with a < b (each pair once). A SELF-JOIN of wiki_links against
+    itself on the reversed edge. Self-edges excluded. The contradiction-candidate v1 detector reads
+    these + checks the two notes' trust tiers for divergence (verified ↔ candidate)."""
+    conn = db.get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT DISTINCT l1.source_id AS a, l1.target_id AS b "
+            "FROM wiki_links l1 JOIN wiki_links l2 "
+            "  ON l1.source_id = l2.target_id AND l1.target_id = l2.source_id "
+            "WHERE l1.is_resolved = 1 AND l2.is_resolved = 1 "
+            "  AND l1.target_id IS NOT NULL AND l2.target_id IS NOT NULL "
+            "  AND l1.source_id < l1.target_id"  # ordered → each mutual pair once
+        ).fetchall()
+    return [(int(r["a"]), int(r["b"])) for r in rows]
+
+
 def fleeting_notes() -> list[sqlite3.Row]:
     """Notes with status='fleeting', oldest→newest (the inbox)."""
     conn = db.get_conn()

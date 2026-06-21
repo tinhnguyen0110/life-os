@@ -43,6 +43,9 @@ from .context import context
 # suggested links (#34): FTS-based top NEW link candidates for a note.
 from .suggest import suggest_links
 
+# staleness + contradiction-candidate detector (#41): read-only, no auto-fix.
+from .stale import stale_notes
+
 # overview + inbox.
 from .overview import inbox, overview
 
@@ -59,6 +62,7 @@ __all__ = [
     "ego_graph", "global_graph", "detect_clusters",
     "context",
     "suggest_links",
+    "stale_notes",
     "overview", "inbox",
     "folder_tree", "mocs",
     "note_view",

@@ -147,6 +147,20 @@ def wiki_suggest_links(note_id: int, limit: int = 5) -> dict[str, Any]:
     return {"suggestedLinks": reader.suggest_links(int(note_id), int(limit))}
 
 
+def wiki_stale() -> dict[str, Any]:
+    """WIKI-STALE-DETECTOR (#41): the read-only staleness + contradiction-candidate detector →
+    {stale:[{id,title,updated,daysSince,inboundCount,status}], contradictionCandidates:[{pair,titles,
+    reason}], thresholdDays, staleCount, candidateCount}. STALE = evergreen + updated > the
+    staleThresholdDays config knob + ≥1 inbound; fleeting/developing/orphan-evergreen NOT flagged.
+    Contradiction v1 = mutually-linked notes with divergent trust tier (verified↔candidate) — a
+    deterministic human-review FLAG, NO AI. Read-only (no auto-fix); honest-empty. Same
+    reader.stale_notes the REST GET /wiki/stale calls (same config threshold) → MCP≡REST
+    byte-identical (#24)."""
+    _audit("wiki_stale", {})
+    from modules.settings.service import get_config
+    return reader.stale_notes(threshold_days=get_config().staleThresholdDays)
+
+
 def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     """Recent wiki mutations (the op-log activity feed), newest first."""
     _audit("wiki_recent_ops", {"limit": limit})
@@ -250,6 +264,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     # wiki_context SUPERSETS both (graph + backlinks in one call). REST + reader fns kept.
     "wiki_context": wiki_context,
     "wiki_suggest_links": wiki_suggest_links,  # WIKI-SUGGEST-LINK #34: top NEW link candidates
+    "wiki_stale": wiki_stale,  # WIKI-STALE-DETECTOR #41: staleness + contradiction candidates
     "wiki_recent_ops": wiki_recent_ops,
     "wiki_tree": wiki_tree,  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
     "wiki_clusters": wiki_clusters,
@@ -291,6 +306,7 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks no longer registered (wiki_context supersets).
     mcp.add_tool(wiki_context, description=wiki_context.__doc__)
     mcp.add_tool(wiki_suggest_links, description=wiki_suggest_links.__doc__)
+    mcp.add_tool(wiki_stale, description=wiki_stale.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
     mcp.add_tool(wiki_tree, description=wiki_tree.__doc__)  # #19: MCP mirror of REST /wiki/tree
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)

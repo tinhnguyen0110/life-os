@@ -174,6 +174,17 @@ def mocs():
     return ok(data=reader.mocs())
 
 
+@router.get("/stale")
+def stale():
+    """WIKI-STALE-DETECTOR (#41, SPEC A6): the read-only staleness + contradiction-candidate
+    detector. ``{stale:[{id,title,updated,daysSince,inboundCount,status}], contradictionCandidates:
+    [{pair,titles,reason}], thresholdDays, staleCount, candidateCount}``. STALE = evergreen + updated
+    > the ``staleThresholdDays`` config knob + ≥1 inbound. Read-only (no auto-fix); honest-empty.
+    Same ``reader.stale_notes`` the MCP ``wiki_stale`` calls → MCP≡REST byte-identical (#24)."""
+    from modules.settings.service import get_config
+    return ok(data=reader.stale_notes(threshold_days=get_config().staleThresholdDays))
+
+
 @router.get("/tree")
 def tree(folder: str | None = None, depth: int | None = None):
     """W-Explorer virtual folder-tree built from notes' ``folder`` fields. Nested

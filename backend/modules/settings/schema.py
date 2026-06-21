@@ -27,6 +27,7 @@ class AppConfig(BaseModel):
     automationEnabled: bool = Field(default=True, description="master switch — scheduled routines run when True")
     briefHour: int = Field(default=8, ge=0, le=23, description="hour-of-day (UTC) morning-pull + brief run")
     idleThresholdDays: int = Field(default=7, ge=1, description="idle-hunter flags projects idle > this many days")
+    staleThresholdDays: int = Field(default=90, ge=1, description="wiki stale-detector (#41) flags an evergreen note with ≥1 inbound link updated > this many days ago")
     patternCheckEnabled: bool = Field(default=True, description="pattern-check (build-to-90) routine on/off")
     errorChannel: ErrorChannel = Field(default="inapp", description="where routine errors surface")
     alertMailThreshold: AlertMailThreshold = Field(default="high", description="alerts.notify() also sends mail at/above this severity (Discord always); #33")
@@ -63,6 +64,7 @@ class AppConfigPatch(BaseModel):
     automationEnabled: bool | None = Field(default=None)
     briefHour: int | None = Field(default=None, ge=0, le=23)
     idleThresholdDays: int | None = Field(default=None, ge=1)
+    staleThresholdDays: int | None = Field(default=None, ge=1)  # #41 wiki stale-detector threshold
     patternCheckEnabled: bool | None = Field(default=None)
     errorChannel: ErrorChannel | None = Field(default=None)
     alertMailThreshold: AlertMailThreshold | None = Field(default=None)  # #33 alert mail threshold

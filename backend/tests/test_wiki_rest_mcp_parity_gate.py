@@ -175,6 +175,10 @@ def _pairs(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         dict(id="suggest_links", mcp=lambda: mcp.wiki_suggest_links(b, limit=5),
              method="GET", path=f"/wiki/notes/{b}/suggested-links", params={"limit": 5},
              norm_mcp=n_identity, norm_rest=n_identity),
+        # wiki_stale (#41): both return reader.stale_notes() verbatim (same config threshold) → identical.
+        dict(id="stale", mcp=lambda: mcp.wiki_stale(),
+             method="GET", path="/wiki/stale", params={},
+             norm_mcp=n_identity, norm_rest=n_identity),
         dict(id="list_proposals", mcp=lambda: mcp.wiki_list_proposals(status="pending"),
              method="GET", path="/wiki/proposals", params={"status": "pending"},
              norm_mcp=n_identity, norm_rest=n_identity),
@@ -250,8 +254,8 @@ def test_every_mcp_tool_is_paired_or_exempt():
     # map pair-ids back to tool names (get_note's 3 modes are one tool)
     paired_tools = {
         "wiki_search", "wiki_overview", "wiki_inbox", "wiki_tree", "wiki_clusters",
-        "wiki_get_note", "wiki_context", "wiki_suggest_links", "wiki_list_proposals",
-        "wiki_verify_citations",
+        "wiki_get_note", "wiki_context", "wiki_suggest_links", "wiki_stale",
+        "wiki_list_proposals", "wiki_verify_citations",
     }
     covered = paired_tools | set(EXEMPT_MCP_ONLY)
     tools = set(mcp.TOOLS)
