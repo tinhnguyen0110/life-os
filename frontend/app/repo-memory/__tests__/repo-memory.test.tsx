@@ -100,6 +100,23 @@ describe("S REPOMEM — Repo Memory browse (#64-P3)", () => {
     await waitFor(() => expect(screen.getByTestId("repo-opt-life-os").getAttribute("aria-pressed")).toBe("true"));
   });
 
+  // #82 — the code_insight cold read (~2.5s) shows a SHIMMER SKELETON, not a bare
+  // hint (the #71 pattern propagated to this screen). With a never-resolving fetch the
+  // loading state stays: insight-loading present, aria-busy, .sk-line shimmer bars.
+  it("code_insight loading → shimmer skeleton (aria-busy + .sk-line), NOT a bare hint", async () => {
+    getProjects.mockResolvedValue(PROJECTS());
+    getCodeInsight.mockReturnValue(new Promise(() => {})); // never resolves → stays loading
+    getRepoMemory.mockResolvedValue(MEMORY_NONE());
+
+    render(<RepoMemoryPage />);
+    const loading = await screen.findByTestId("insight-loading");
+    expect(loading.getAttribute("aria-busy")).toBe("true");
+    // shimmer bars present (the skeleton, not just a text hint)
+    expect(loading.querySelectorAll(".sk-line").length).toBeGreaterThan(0);
+    // the real body must NOT be shown while loading
+    expect(screen.queryByTestId("insight-body")).toBeNull();
+  });
+
   // HARD GATE — code_insight found:true → all sections render.
   it("code_insight found:true → structure/README/commits/stack/asOf all render", async () => {
     getProjects.mockResolvedValue(PROJECTS());

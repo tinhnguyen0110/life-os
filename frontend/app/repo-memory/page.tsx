@@ -104,9 +104,25 @@ export default function RepoMemoryPage() {
               )}
             </div>
 
+            {/* #82 (#71 pattern): code_insight is a FRESH git read — a repo never
+                scanned before is ~2.5s cold (warm ~4ms). Show a shimmer skeleton (not a
+                bare hint) so the long cold read doesn't read as a hang. Mirrors the
+                /dev-activity skeleton; .sk-line is reduced-motion-safe. */}
             {insightStatus === "loading" && (
-              <div className="hint faint" style={{ padding: "16px 4px" }} data-testid="insight-loading">
-                Đang đọc {repo}…
+              <div data-testid="insight-loading" aria-busy="true" style={{ padding: "4px 2px" }}>
+                <div className="hint faint" style={{ marginBottom: 10 }}>Đang đọc {repo} (lần đầu có thể mất vài giây)…</div>
+                {/* stack chips placeholder */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 12 }} aria-hidden="true">
+                  <div className="sk-line" style={{ width: 54, height: 18, borderRadius: 100 }} />
+                  <div className="sk-line" style={{ width: 64, height: 18, borderRadius: 100 }} />
+                </div>
+                {/* README block placeholder */}
+                <div className="sk-line" style={{ width: "30%", marginBottom: 6 }} aria-hidden="true" />
+                <div className="sk-line" style={{ width: "100%", height: 56 }} aria-hidden="true" />
+                {/* structure + commits placeholder */}
+                <div className="sk-line" style={{ width: "40%", margin: "14px 0 6px" }} aria-hidden="true" />
+                <div className="sk-line" style={{ width: "85%" }} aria-hidden="true" />
+                <div className="sk-line" style={{ width: "70%", marginTop: 5 }} aria-hidden="true" />
               </div>
             )}
 
