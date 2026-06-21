@@ -20,6 +20,8 @@ Coverage (the REWORKED M4 boundary — replaces the old "agent proposes, nothing
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from modules.settings import service as ssvc
@@ -108,6 +110,55 @@ def test_propose_edit_writes_through(wiki_db):
     r = write_server.propose_edit(nid, title="new title", rationale="clarify")
     assert r["applied"] is True and r["noteId"] == nid
     assert wsvc.get_note(nid).title == "new title", "the edit applied NOW"
+
+
+# --------------------------------------------------------------------------- #
+# #90 GAP-1 — propose_edit `status` param (promote fleeting→developing→evergreen) #
+# --------------------------------------------------------------------------- #
+def test_90_propose_edit_status_flips_through_the_chain(wiki_db):
+    """#90: propose_edit(status="evergreen") → the note's status flips evergreen (read back) —
+    the whole chain (payload → NoteUpdateInput → _apply_update) carries status for free."""
+    nid = _seed_note()  # born fleeting
+    assert wsvc.get_note(nid).status == "fleeting"
+    r = write_server.propose_edit(nid, status="evergreen", rationale="promote")
+    assert r["applied"] is True
+    assert wsvc.get_note(nid).status == "evergreen", "status promoted via MCP"
+
+
+def test_90_propose_edit_bad_status_is_agent_error_note_unchanged(wiki_db):
+    """#90: a bad status enum → NOT applied, NOT a silent accept, NOT a raw trace — the note's status
+    is UNCHANGED + the result signals the error readably (the NoteUpdateInput Status Literal rejects
+    it at apply; _enqueue surfaces it in the result)."""
+    nid = _seed_note()
+    # first set a known status so 'unchanged' is meaningful
+    write_server.propose_edit(nid, status="developing")
+    assert wsvc.get_note(nid).status == "developing"
+    r = write_server.propose_edit(nid, status="xyz-not-a-status")
+    assert r["applied"] is False, "a bad status must NOT apply"
+    # the error is agent-readable (the warning/result names the valid enum, not a bare trace)
+    msg = (r.get("warning") or "") + json.dumps(r.get("proposal") or {})
+    assert "fleeting" in msg and "developing" in msg and "evergreen" in msg, "valid enum named for the agent"
+    assert wsvc.get_note(nid).status == "developing", "the note's status is UNCHANGED on a bad enum"
+
+
+def test_90_propose_edit_omitted_status_unchanged(wiki_db):
+    """#90 back-compat: propose_edit WITHOUT status → status UNCHANGED (only the given fields edit)."""
+    nid = _seed_note()
+    write_server.propose_edit(nid, status="evergreen")     # set it
+    write_server.propose_edit(nid, title="renamed only")   # edit title, NO status
+    note = wsvc.get_note(nid)
+    assert note.title == "renamed only" and note.status == "evergreen", "status preserved (back-compat)"
+
+
+def test_90_rest_put_status_parity(wiki_db):
+    """#90: REST PUT /wiki/notes/{id} already supports status — a quick parity assert (the MCP
+    propose_edit now reaches the same apply path)."""
+    from fastapi.testclient import TestClient
+    from main import create_app
+    client = TestClient(create_app())
+    nid = _seed_note()
+    r = client.put(f"/wiki/notes/{nid}", json={"status": "evergreen"})
+    assert r.status_code == 200 and r.json()["data"]["status"] == "evergreen"
 
 
 def test_propose_link_writes_through(wiki_db):

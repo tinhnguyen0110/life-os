@@ -183,14 +183,20 @@ def propose_note(title: str, content: str, rationale: str | None = None,
 
 
 def propose_edit(note_id: int, rationale: str | None = None, title: str | None = None,
-                 content: str | None = None) -> dict[str, Any]:
+                 content: str | None = None, status: str | None = None) -> dict[str, Any]:
     """EDIT an existing note (kind=note_edit). Only the given fields change. WIKI-WRITE-THROUGH:
-    applies NOW (default) → returns ``noteId``; toggle OFF → pending. ``rationale`` optional."""
+    applies NOW (default) → returns ``noteId``; toggle OFF → pending. ``rationale`` optional.
+    ``status`` (#90 GAP-1): promote/demote the note's workflow status — fleeting | developing |
+    evergreen (the Status enum). Omitted (None) → status UNCHANGED (back-compat). A bad value →
+    an agent-readable error (the NoteUpdateInput enum-validate at apply rejects it; the note is NOT
+    changed). Lets an agent promote fleeting→developing→evergreen via MCP (was REST-only)."""
     payload: dict[str, Any] = {}
     if title is not None:
         payload["title"] = title
     if content is not None:
         payload["content"] = content
+    if status is not None:  # #90: enum-validated downstream (NoteUpdateInput.status: Status Literal)
+        payload["status"] = status
     return _enqueue("note_edit", target_id=int(note_id), payload=payload,
                     rationale=rationale, tool="propose_edit")
 
