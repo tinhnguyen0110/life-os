@@ -39,7 +39,7 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("DEC"); // Decision Cockpit (FINANCE-UI)
     expect(screens).toContain("REM"); // Reminders (#31 GAP-4) under "Hằng ngày"
     expect(screens).toContain("TRACE"); // Daily Tracing (#65-P3 G-HABIT) under "Hằng ngày"
-    expect(screens).toContain("DEVACT"); // Dev Activity (#63 git contributions) under "Hệ thống" — DISTINCT from S14 /activity feed
+    expect(screens).toContain("DEVACT"); // Dev Activity (#63 git contributions) under "Dự án" (user CHỐT nav-IA option A) — DISTINCT from S14 /activity feed
     expect(unique.size).toBe(28);
   });
 

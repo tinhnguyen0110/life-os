@@ -40,6 +40,10 @@ export const NAV: NavGroup[] = [
       // cap-overflow value) used to leak here on a fetch-fail — neutralized to "—".
       { route: "/projects", label: "Danh sách", icon: "i-proj", screen: "S2", badge: { text: "—", cls: "acc" } },
       { route: "/graveyard", label: "Nghĩa địa", icon: "i-grave", screen: "S4" },
+      // #63 dev-activity (git contributions) — grouped under "Dự án" per user CHỐT
+      // (nav-IA option A). DISTINCT screen from /projects (status) + /graveyard (dead):
+      // this is git-stats. Same SECTION, separate routes/screens. screen-id DEVACT.
+      { route: "/dev-activity", label: "Dev Activity", icon: "i-graph", screen: "DEVACT" },
     ],
   },
   {
@@ -97,8 +101,6 @@ export const NAV: NavGroup[] = [
     items: [
       { route: "/routines", label: "Automation", icon: "i-bolt", screen: "S13", badge: { text: "—", cls: "g" } },
       { route: "/activity", label: "Activity Feed", icon: "i-pulse", screen: "S14" },
-      // #63 dev-activity (git contributions) — DISTINCT from /activity (the run-log feed).
-      { route: "/dev-activity", label: "Dev Activity", icon: "i-graph", screen: "DEVACT" },
     ],
   },
   {
