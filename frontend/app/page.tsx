@@ -32,6 +32,16 @@ function pnlCell(abs: number | null | undefined): { text: string; cls: string } 
   return { text: fmtSign(abs), cls: abs < 0 ? "neg" : "pos" };
 }
 
+/** #72-FE — day-change render, 3-way + honest-null. A FLAT/$0 day must read NEUTRAL
+ *  (▬, faint, "$0"), NOT a green ▲ "+$0" (the old `< 0 ? neg : pos` made 0 → green-up,
+ *  presenting flat as a gain). No prior-day point (null) → "—"/neutral, never a fake
+ *  arrow or fabricated number. Returns the arrow + tone class + the honest amount text. */
+function dayDelta(abs: number | null | undefined): { arrow: string; cls: string; amount: string } {
+  if (abs == null || !Number.isFinite(abs)) return { arrow: "▬", cls: "faint", amount: "—" };
+  if (abs === 0) return { arrow: "▬", cls: "faint", amount: "$0" };
+  return abs < 0 ? { arrow: "▼", cls: "neg", amount: fmtSign(abs) } : { arrow: "▲", cls: "pos", amount: fmtSign(abs) };
+}
+
 /** A tile that failed → compact inline error (fail-open: doesn't blank the screen). */
 function TileError({ label, msg }: { label: string; msg: string }) {
   return (
@@ -96,9 +106,14 @@ export default function HomePage() {
                 <div className="kicker" style={{ position: "relative" }}>Tổng tài sản · USD</div>
                 <div className="num" style={{ fontSize: 34, fontWeight: 700, position: "relative" }} data-amount>{fmtUSD(fin?.totalValue)}</div>
                 <div className="nwd" style={{ position: "relative", marginTop: 4 }}>
-                  <span className={`num ${(fin?.change?.abs ?? 0) < 0 ? "neg" : "pos"}`}>
-                    {(fin?.change?.abs ?? 0) < 0 ? "▼" : "▲"} {fmtSign(fin?.change?.abs)} · {fmtPct(fin?.change?.pct ?? null)}
-                  </span>
+                  {(() => {
+                    const d = dayDelta(fin?.change?.abs);
+                    return (
+                      <span className={`num ${d.cls}`} data-testid="home-daychange">
+                        {d.arrow} {d.amount} · {fmtPct(fin?.change?.pct ?? null)}
+                      </span>
+                    );
+                  })()}
                 </div>
                 {/* allocation bar */}
                 <div className="allocbar" style={{ position: "relative", display: "flex", height: 7, borderRadius: 4, overflow: "hidden", marginTop: 10 }}>

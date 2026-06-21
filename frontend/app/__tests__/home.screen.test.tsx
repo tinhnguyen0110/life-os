@@ -258,3 +258,51 @@ describe("S1 Home Command Center (frontend-owned)", () => {
     expect(screen.queryByTestId("home-pnl-scope")).toBeNull();
   });
 });
+
+// #72-FE — the day-change tile must be HONEST about a flat/$0 or no-data day: a $0
+// change is NEUTRAL (▬, faint), NOT a green ▲ "+$0" (which presents flat as a gain).
+describe("S1 Home — day-change honesty (#72-FE)", () => {
+  beforeEach(() => { getActivity.mockResolvedValue(ACTIVITY); getBrief.mockResolvedValue(BRIEF); });
+
+  const withChange = (change: unknown) => ({ ...FIN, data: { ...FIN.data, change } });
+
+  async function renderDelta(change: unknown) {
+    getFinance.mockResolvedValueOnce(withChange(change));
+    getProjects.mockResolvedValueOnce(PROJ);
+    getMarket.mockResolvedValueOnce(MKT);
+    render(<HomePage />);
+    return screen.findByTestId("home-daychange");
+  }
+
+  it("FLAT day ($0 change) → NEUTRAL ▬ + faint (NOT green ▲, NOT '+$0')", async () => {
+    const el = await renderDelta({ abs: 0, pct: null });
+    expect(el).toHaveTextContent("▬");
+    expect(el).toHaveTextContent("$0");
+    expect(el.textContent).not.toContain("▲"); // the bug: flat shown as green up
+    expect(el.textContent).not.toContain("+$0");
+    expect(el.className).toContain("faint");
+    expect(el.className).not.toContain("pos");
+  });
+
+  it("POSITIVE day → green ▲ + pos", async () => {
+    const el = await renderDelta({ abs: 1200, pct: 1.2 });
+    expect(el).toHaveTextContent("▲");
+    expect(el).toHaveTextContent("+$1,200");
+    expect(el.className).toContain("pos");
+  });
+
+  it("NEGATIVE day → red ▼ + neg (the distinguishing case)", async () => {
+    const el = await renderDelta({ abs: -800, pct: -0.8 });
+    expect(el).toHaveTextContent("▼");
+    expect(el.className).toContain("neg");
+    expect(el.className).not.toContain("pos");
+  });
+
+  it("NO-DATA day (change null) → ▬ + '—', honest-null (no fake arrow/number)", async () => {
+    const el = await renderDelta(null);
+    expect(el).toHaveTextContent("▬");
+    expect(el).toHaveTextContent("—");
+    expect(el.textContent).not.toContain("▲");
+    expect(el.className).toContain("faint");
+  });
+});
