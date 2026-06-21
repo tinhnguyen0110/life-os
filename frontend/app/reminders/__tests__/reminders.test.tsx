@@ -240,3 +240,27 @@ describe("#31 Reminders — done tab (render-only client filter, no server `done
     expect(ids).toEqual(["rem-title-31", "rem-title-32", "rem-title-30"]);
   });
 });
+
+describe("#75 Reminders — source badge (from-habit, honest)", () => {
+  it("source='tracing' → '📿 từ thói quen' badge renders (with the activity link in the title)", async () => {
+    getReminders.mockResolvedValue(LIST([REM({ id: 1, source: "tracing", activity_id: "run" })]));
+    render(<RemindersPage />);
+    const badge = await screen.findByTestId("rem-source-1");
+    expect(badge).toHaveTextContent(/từ thói quen/);
+    expect(badge.getAttribute("title")).toMatch(/run/); // links to the activity
+  });
+
+  it("source='manual' → NO badge (honest — don't badge a manual reminder)", async () => {
+    getReminders.mockResolvedValue(LIST([REM({ id: 2, source: "manual" })]));
+    render(<RemindersPage />);
+    await screen.findByTestId("rem-2");
+    expect(screen.queryByTestId("rem-source-2")).toBeNull();
+  });
+
+  it("defensive: source ABSENT (pre-#75-BE backend) → NO badge, no crash (treated as manual)", async () => {
+    getReminders.mockResolvedValue(LIST([REM({ id: 3 })])); // no source field
+    render(<RemindersPage />);
+    await screen.findByTestId("rem-3");
+    expect(screen.queryByTestId("rem-source-3")).toBeNull();
+  });
+});

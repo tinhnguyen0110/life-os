@@ -223,3 +223,62 @@ describe("#65-P3 Tracing — log round-trip + errors (fail-closed)", () => {
     await waitFor(() => expect(archiveActivity).toHaveBeenCalledWith("water"));
   });
 });
+
+describe("#75 Tracing — habit-reminder toggle (sets remind_at/remind_repeat; BE makes the reminder)", () => {
+  async function openAdd() {
+    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "run", name: "Run" }) });
+    const user = userEvent.setup();
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("add-activity")).toBeInTheDocument());
+    await user.click(screen.getByTestId("add-activity"));
+    return user;
+  }
+
+  it("remind toggle OFF (default) → create sends remind_at null + remind_repeat 'off'", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-id"), "run");
+    await user.type(screen.getByTestId("a-name"), "Run");
+    await user.type(screen.getByTestId("a-goal"), "5");
+    // toggle is off by default — the time/repeat inputs are NOT shown
+    expect(screen.queryByTestId("a-remind-time")).toBeNull();
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.remindAt).toBeNull();
+    expect(body.remindRepeat).toBe("off");
+  });
+
+  it("remind toggle ON → time + cadence inputs appear → create sends remind_at + remind_repeat", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-id"), "run");
+    await user.type(screen.getByTestId("a-name"), "Run");
+    await user.type(screen.getByTestId("a-goal"), "5");
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    // now the time + repeat inputs are revealed
+    const time = screen.getByTestId("a-remind-time") as HTMLInputElement;
+    expect(time).toBeInTheDocument();
+    await user.clear(time);
+    await user.type(time, "07:30");
+    await user.selectOptions(screen.getByTestId("a-remind-repeat"), "weekdays");
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.remindAt).toBe("07:30");
+    expect(body.remindRepeat).toBe("weekdays");
+  });
+
+  it("card shows the habit's reminder when set (defensive: absent field → no chip)", async () => {
+    // with remindAt set → the 🔔 chip renders
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "run", name: "Run", remindAt: "07:00", remindRepeat: "daily" })]));
+    const { unmount } = render(<TracingPage />);
+    expect(await screen.findByTestId("remind-run")).toHaveTextContent("07:00");
+    expect(screen.getByTestId("remind-run")).toHaveTextContent(/hằng ngày/);
+    unmount();
+    // defensive: pre-#75-BE the field is absent → NO chip, no crash
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "run2", name: "Run2" })])); // no remindAt
+    render(<TracingPage />);
+    await screen.findByTestId("act-run2");
+    expect(screen.queryByTestId("remind-run2")).toBeNull();
+  });
+});

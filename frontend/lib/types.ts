@@ -1609,7 +1609,17 @@ export interface Reminder {
   created: string;
   /** un-done AND due_at < now (NOT cap-gated, reader-derived #29). Drives RED. */
   overdue: boolean;
+  /** #75: "manual" (user-created) or "tracing" (auto from a habit's nudge). absent
+   *  pre-#75-BE → treat as "manual" (no badge). */
+  source?: ReminderSource;
+  /** #75: the linked activity id when source="tracing", else null/absent. SNAKE on the
+   *  wire — the reminders module is pure snake_case (due_at/done_at), so this field is
+   *  `activity_id` to stay consistent WITHIN the module (team-lead decision, not camel). */
+  activity_id?: string | null;
 }
+
+/** #75 — where a reminder came from. */
+export type ReminderSource = "manual" | "tracing";
 
 /** POST /reminders body. due_at unparseable / blank title → 422 (no row stored). */
 export interface ReminderInput {
@@ -1676,7 +1686,15 @@ export interface ActivityView {
   week: number[];
   /** last 84 VN-days (12w×7) Σval, oldest→newest. */
   history12w: number[];
+  /** #75: HH:MM (VN local) to nudge a reminder for this habit, null = no reminder.
+   *  CAMEL wire (tracing module convention). OPTIONAL/defensive — absent pre-#75-BE. */
+  remindAt?: string | null;
+  /** #75: the nudge cadence. "off" / absent ⇒ no reminder. */
+  remindRepeat?: RemindRepeat;
 }
+
+/** #75 — a habit's reminder-nudge cadence. */
+export type RemindRepeat = "daily" | "weekdays" | "off";
 
 /** The day's score panel (backend-computed roll-up). */
 export interface TracingScore {
@@ -1711,7 +1729,11 @@ export interface TracingLogInput {
   note?: string | null;
 }
 
-/** POST /tracing/activities body — define a new activity. dup id → 409, blank/neg → 422. */
+/** POST /tracing/activities body — define a new activity. dup id → 409, blank/neg → 422.
+ *  #75: remindAt/remindRepeat are CAMEL-case on the wire — the tracing module's
+ *  convention (durMin/topStreak), team-lead/architect decision. Sending remindAt is
+ *  all the FE does — the BE creates the linked reminder (one-way tracing→reminder
+ *  sync; FE does NOT create it). */
 export interface ActivityInput {
   id: string;
   name: string;
@@ -1720,6 +1742,10 @@ export interface ActivityInput {
   emoji?: string;
   icon?: string;
   color?: string;
+  /** HH:MM VN local to nudge, null/absent = no reminder. [#75] */
+  remindAt?: string | null;
+  /** "off"/absent = no reminder. [#75] */
+  remindRepeat?: RemindRepeat;
 }
 
 /** PUT /tracing/activities/{id} body — partial edit (all fields optional). */
@@ -1730,9 +1756,13 @@ export interface ActivityPatch {
   emoji?: string;
   icon?: string;
   color?: string;
+  /** #75 — set/clear the habit's reminder (CAMEL wire). null clears it. */
+  remindAt?: string | null;
+  remindRepeat?: RemindRepeat;
 }
 
-/** The bare stored activity (POST/PUT activities response — NOT the derived view). */
+/** The bare stored activity (POST/PUT activities response — NOT the derived view).
+ *  #75: remindAt/remindRepeat OPTIONAL/defensive (absent pre-#75-BE). */
 export interface Activity {
   id: string;
   name: string;
@@ -1743,6 +1773,8 @@ export interface Activity {
   color: string;
   created: string;
   archived: boolean;
+  remindAt?: string | null;
+  remindRepeat?: RemindRepeat;
 }
 
 /* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----

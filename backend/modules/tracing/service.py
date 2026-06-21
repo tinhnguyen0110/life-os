@@ -71,8 +71,8 @@ def _row_to_activity(row: sqlite3.Row) -> Activity:
         id=row["id"], name=row["name"], emoji=row["emoji"], icon=row["icon"],
         unit=row["unit"], goal=row["goal"], color=row["color"], created=row["created"],
         archived=bool(row["archived"]),
-        remind_at=row["remind_at"] if "remind_at" in keys else None,
-        remind_repeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
+        remindAt=row["remind_at"] if "remind_at" in keys else None,  # camel field ← snake DB col
+        remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
     )
 
 
@@ -165,7 +165,7 @@ def _derive_activity_view(act: Activity) -> ActivityView:
     return ActivityView(
         id=act.id, name=act.name, emoji=act.emoji, icon=act.icon, unit=act.unit,
         goal=act.goal, color=act.color,
-        remind_at=act.remind_at, remind_repeat=act.remind_repeat,  # #75: surface the reminder link
+        remindAt=act.remindAt, remindRepeat=act.remindRepeat,  # #75: surface the reminder link (camel)
         today=today_stat, streak=streak, week=week, history12w=history,
     )
 
@@ -240,14 +240,14 @@ def _sync_reminder(act: Activity) -> None:
     from modules.reminders import service as rem
     from modules.reminders.schema import _to_utc_iso
     try:
-        if act.remind_at and act.remind_repeat != "off":
-            # today-VN @ remind_at → a VN-offset ISO → UTC (reminders compares due_at in UTC).
-            due_local = f"{vn_today()}T{act.remind_at}:00+07:00"
+        if act.remindAt and act.remindRepeat != "off":
+            # today-VN @ remindAt → a VN-offset ISO → UTC (reminders compares due_at in UTC).
+            due_local = f"{vn_today()}T{act.remindAt}:00+07:00"
             due_at = _to_utc_iso(due_local)
             title = f"{act.emoji} {act.name}".strip()
             rem.upsert_for_activity(
                 activity_id=act.id, title=title, due_at=due_at,
-                repeat=_REPEAT_MAP.get(act.remind_repeat, "daily"),
+                repeat=_REPEAT_MAP.get(act.remindRepeat, "daily"),
             )
         else:
             rem.delete_for_activity(act.id)
@@ -261,7 +261,7 @@ def create_activity(inp: ActivityInput) -> Activity:
     store.create_activity(
         id=inp.id, name=inp.name, emoji=inp.emoji, icon=inp.icon, unit=inp.unit,
         goal=inp.goal, color=inp.color, created=vn_now_iso(),
-        remind_at=inp.remind_at, remind_repeat=inp.remind_repeat,
+        remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,  # store col snake ← camel field
     )
     created = store.get_activity(inp.id)
     assert created is not None  # just inserted
@@ -270,10 +270,16 @@ def create_activity(inp: ActivityInput) -> Activity:
     return act
 
 
+# 75-TWEAK: the camel wire field → snake store column (only the remind fields differ; the rest
+# share the same name in both field + column).
+_FIELD_TO_COL = {"remindAt": "remind_at", "remindRepeat": "remind_repeat"}
+
+
 def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:
     """Update the supplied fields of an activity def. Returns the updated def, or None if absent.
     #75: re-syncs the linked reminder (upsert on remind change, delete on clear/off)."""
-    fields = upd.model_dump(exclude_none=True)
+    # map the camel wire field names to the snake store columns (#75-TWEAK).
+    fields = {_FIELD_TO_COL.get(k, k): v for k, v in upd.model_dump(exclude_none=True).items()}
     if not store.update_activity(activity_id, fields):
         return None
     row = store.get_activity(activity_id)

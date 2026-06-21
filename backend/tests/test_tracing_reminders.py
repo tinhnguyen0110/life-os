@@ -36,7 +36,7 @@ def _tracing_reminders():
 # --- set remind → a tracing reminder APPEARS --------------------------------- #
 def test_create_with_remind_materializes_reminder(db):
     trc.create_activity(ActivityInput(id="run", name="Run", emoji="🏃", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     rems = _tracing_reminders()
     assert len(rems) == 1
     r = rems[0]
@@ -51,19 +51,19 @@ def test_create_without_remind_no_reminder(db):
 
 
 def test_remind_repeat_off_no_reminder(db):
-    """remind_at set but remind_repeat=off → NO reminder (off wins)."""
-    trc.create_activity(ActivityInput(id="x", name="X", goal=1.0, remind_at="07:00", remind_repeat="off"))
+    """remind_at set but remindRepeat=off → NO reminder (off wins)."""
+    trc.create_activity(ActivityInput(id="x", name="X", goal=1.0, remindAt="07:00", remindRepeat="off"))
     assert _tracing_reminders() == []
 
 
 # --- update → the SAME reminder updates (no duplicate) ----------------------- #
 def test_update_remind_updates_same_reminder_no_dup(db):
     trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     first = _tracing_reminders()
     assert len(first) == 1
     first_id = first[0].id
-    trc.update_activity("run", ActivityUpdate(remind_at="08:30"))
+    trc.update_activity("run", ActivityUpdate(remindAt="08:30"))
     after = _tracing_reminders()
     assert len(after) == 1, "update must NOT create a duplicate reminder"
     assert after[0].id == first_id  # SAME reminder row (find-by-activity upsert)
@@ -72,7 +72,7 @@ def test_update_remind_updates_same_reminder_no_dup(db):
 
 def test_rename_activity_updates_reminder_title(db):
     trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     trc.update_activity("run", ActivityUpdate(name="Morning Run"))
     rems = _tracing_reminders()
     assert len(rems) == 1 and "Morning Run" in rems[0].title
@@ -81,15 +81,15 @@ def test_rename_activity_updates_reminder_title(db):
 # --- clear / archive → the reminder is GONE --------------------------------- #
 def test_clear_remind_via_off_deletes_reminder(db):
     trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     assert len(_tracing_reminders()) == 1
-    trc.update_activity("run", ActivityUpdate(remind_repeat="off"))  # the clear path
-    assert _tracing_reminders() == [], "remind_repeat=off must delete the linked reminder"
+    trc.update_activity("run", ActivityUpdate(remindRepeat="off"))  # the clear path
+    assert _tracing_reminders() == [], "remindRepeat=off must delete the linked reminder"
 
 
 def test_archive_activity_deletes_reminder(db):
     trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     assert len(_tracing_reminders()) == 1
     trc.archive_activity("run")
     assert _tracing_reminders() == [], "archiving the activity must delete its reminder (one-way)"
@@ -119,7 +119,7 @@ def test_manual_reminder_cannot_forge_tracing_source(db):
 # --- consumer-recheck: reminders_list + the new fields work ----------------- #
 def test_reminders_list_includes_tracing_source_field(db):
     trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
-                                      remind_at="07:00", remind_repeat="daily"))
+                                      remindAt="07:00", remindRepeat="daily"))
     view, warnings = rem.list_reminders("all")
     assert warnings == [] or all("malformed" not in w for w in warnings)  # no map failure
     tracing = [r for r in view.reminders if r.source == "tracing"]
@@ -132,18 +132,18 @@ def test_reminders_list_includes_tracing_source_field(db):
 
 
 def test_weekdays_maps_to_daily_engine(db):
-    """remind_repeat=weekdays → the reminder fires daily (the #29 engine has no weekday-mask;
+    """remindRepeat=weekdays → the reminder fires daily (the #29 engine has no weekday-mask;
     documented honest limitation — surfaced as weekdays on the activity, fires daily)."""
     trc.create_activity(ActivityInput(id="work", name="Work", goal=8.0,
-                                      remind_at="09:00", remind_repeat="weekdays"))
+                                      remindAt="09:00", remindRepeat="weekdays"))
     rems = _tracing_reminders()
     assert len(rems) == 1 and rems[0].repeat == "daily"
     # the activity surfaces the original weekdays intent
-    assert trc.get_activity("work").remind_repeat == "weekdays"
+    assert trc.get_activity("work").remindRepeat == "weekdays"
 
 
 def test_invalid_remind_at_rejected_422(db):
     """A bad HH:MM → ValidationError (→ 422 at the router), no activity/reminder created."""
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
-        ActivityInput(id="x", name="X", goal=1.0, remind_at="25:99", remind_repeat="daily")
+        ActivityInput(id="x", name="X", goal=1.0, remindAt="25:99", remindRepeat="daily")

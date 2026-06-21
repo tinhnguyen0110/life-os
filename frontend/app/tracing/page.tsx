@@ -19,7 +19,7 @@
 import { useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
 import { apiBase, ApiError } from "@/lib/api";
-import type { ActivityView, ActivityInput, TracingLogInput } from "@/lib/types";
+import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
 
@@ -39,9 +39,17 @@ function heatColor(count: number, max: number): string {
 }
 
 type LogForm = { id: string; name: string; unit: string; val: string; durMin: string; note: string };
-type AddForm = { id: string; name: string; goal: string; unit: string; emoji: string; color: string };
+type AddForm = {
+  id: string; name: string; goal: string; unit: string; emoji: string; color: string;
+  // #75: optional habit-reminder nudge. remindOn drives the toggle; when on, remindTime
+  // + remindRepeat become the activity's remindAt/remindRepeat (BE creates the reminder).
+  remindOn: boolean; remindTime: string; remindRepeat: RemindRepeat;
+};
 
-const EMPTY_ADD: AddForm = { id: "", name: "", goal: "", unit: "", emoji: "", color: "#FF6A33" };
+const EMPTY_ADD: AddForm = {
+  id: "", name: "", goal: "", unit: "", emoji: "", color: "#FF6A33",
+  remindOn: false, remindTime: "07:00", remindRepeat: "daily",
+};
 
 export default function TracingPage() {
   const { data, status, errMsg, warning, reload, log, add, archive } = useTracing();
@@ -107,6 +115,11 @@ export default function TracingPage() {
       unit: adding.unit.trim() || undefined,
       emoji: adding.emoji.trim() || undefined,
       color: adding.color || undefined,
+      // #75: send remindAt/remindRepeat (CAMEL — the tracing module's wire convention,
+      // like durMin) ONLY when the toggle is on — the BE creates the linked reminder.
+      // Off → remindAt null (no reminder). FE just sends it.
+      remindAt: adding.remindOn ? adding.remindTime : null,
+      remindRepeat: adding.remindOn ? adding.remindRepeat : "off",
     };
     setBusy(true);
     try {
@@ -198,6 +211,47 @@ export default function TracingPage() {
               <input className="finput" value={adding.emoji} onChange={(e) => setAdding({ ...adding, emoji: e.target.value })} data-testid="a-emoji" placeholder="💧" /></div>
             <div className="field"><span className="flabel">Màu</span>
               <input className="finput" type="color" value={adding.color} onChange={(e) => setAdding({ ...adding, color: e.target.value })} data-testid="a-color" /></div>
+
+            {/* #75: habit-reminder nudge. Toggle on → time + cadence → sets the
+                activity's remindAt/remindRepeat; the BE creates the reminder. */}
+            <div className="field" style={{ gridColumn: "1 / 3" }}>
+              <span className="flabel">Nhắc nhở (tùy chọn)</span>
+              <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className={`tab${adding.remindOn ? " on" : ""}`}
+                  onClick={() => setAdding({ ...adding, remindOn: !adding.remindOn })}
+                  data-testid="a-remind-toggle"
+                  aria-pressed={adding.remindOn}
+                >
+                  🔔 {adding.remindOn ? "Bật" : "Tắt"}
+                </button>
+                {adding.remindOn && (
+                  <>
+                    <input
+                      className="finput num"
+                      type="time"
+                      style={{ width: 120 }}
+                      value={adding.remindTime}
+                      onChange={(e) => setAdding({ ...adding, remindTime: e.target.value })}
+                      data-testid="a-remind-time"
+                    />
+                    <select
+                      className="finput"
+                      style={{ width: 150 }}
+                      value={adding.remindRepeat}
+                      onChange={(e) => setAdding({ ...adding, remindRepeat: e.target.value as RemindRepeat })}
+                      data-testid="a-remind-repeat"
+                    >
+                      <option value="daily">Hằng ngày</option>
+                      <option value="weekdays">Ngày thường (T2–T6)</option>
+                    </select>
+                  </>
+                )}
+              </div>
+              {adding.remindOn && <span className="fhint">BE sẽ tạo một nhắc nhở "{adding.remindTime} {adding.remindRepeat === "daily" ? "hằng ngày" : "ngày thường"}" cho thói quen này.</span>}
+            </div>
+
             {formErr && <span className="hint neg" style={{ gridColumn: "1 / 3" }} data-testid="add-error">{formErr}</span>}
             <div className="row" style={{ gap: 8, gridColumn: "1 / 3" }}>
               <button className="btn accent" type="submit" disabled={busy} data-testid="a-submit">{busy ? "Đang lưu…" : "Tạo hoạt động"}</button>
@@ -349,6 +403,12 @@ function ActivityCard({ a, onLog, onArchive, busy }: { a: ActivityView; onLog: (
         <div className="ac-meta">
           <div className="ac-name">{a.name}</div>
           <div className="ac-goal faint">target <span className="num">{a.goal} {a.unit}</span> / ngày</div>
+          {/* #75: show the habit's reminder when set (defensive — field absent pre-#75-BE). */}
+          {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
+            <div className="ac-goal acc" data-testid={`remind-${a.id}`} title="Nhắc nhở từ thói quen này">
+              🔔 <span className="num">{a.remindAt}</span> {a.remindRepeat === "daily" ? "hằng ngày" : "ngày thường"}
+            </div>
+          )}
         </div>
         <div className="ac-streak" title={`Streak: ${a.streak} ngày liên tiếp`} data-testid={`streak-${a.id}`}>
           <span className="num" style={{ fontSize: 20, color: a.color }}>{a.streak}</span>

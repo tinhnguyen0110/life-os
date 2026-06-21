@@ -338,6 +338,14 @@ export default function RemindersPage() {
                       {r.repeat !== "once" && (
                         <span className="tagchip">{r.repeat === "daily" ? "hằng ngày" : "hằng tuần"}</span>
                       )}
+                      {/* #75: "from habit" badge ONLY when source="tracing". manual/absent
+                          → NO badge (honest — don't badge a manual reminder). Defensive
+                          against the not-yet-built BE field (undefined → no badge). */}
+                      {r.source === "tracing" && (
+                        <span className="tagchip acc" data-testid={`rem-source-${r.id}`} title={r.activity_id ? `Từ thói quen: ${r.activity_id}` : "Tự động từ một thói quen"}>
+                          📿 từ thói quen
+                        </span>
+                      )}
                       {r.re_notify_every != null && (
                         <span className="faint">↻ {r.re_notify_every}′</span>
                       )}
