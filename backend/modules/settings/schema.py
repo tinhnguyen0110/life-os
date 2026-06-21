@@ -17,6 +17,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ErrorChannel = Literal["discord", "inapp", "none"]
+# ALERT-ROUTING (#33): the severity at/above which alerts.notify() also sends MAIL (Discord always).
+AlertMailThreshold = Literal["low", "normal", "high"]
 
 
 class AppConfig(BaseModel):
@@ -27,6 +29,7 @@ class AppConfig(BaseModel):
     idleThresholdDays: int = Field(default=7, ge=1, description="idle-hunter flags projects idle > this many days")
     patternCheckEnabled: bool = Field(default=True, description="pattern-check (build-to-90) routine on/off")
     errorChannel: ErrorChannel = Field(default="inapp", description="where routine errors surface")
+    alertMailThreshold: AlertMailThreshold = Field(default="high", description="alerts.notify() also sends mail at/above this severity (Discord always); #33")
     timezone: str = Field(default="Asia/Ho_Chi_Minh", min_length=1, max_length=64, description="display timezone label (stored-only this sprint)")
     displayName: str = Field(default="", max_length=80, description="owner display name (stored-only this sprint; may be empty)")
     # W4d (USER-ORDERED, reverses D8 proposals-only). ON = agent/MCP writes apply to
@@ -62,6 +65,7 @@ class AppConfigPatch(BaseModel):
     idleThresholdDays: int | None = Field(default=None, ge=1)
     patternCheckEnabled: bool | None = Field(default=None)
     errorChannel: ErrorChannel | None = Field(default=None)
+    alertMailThreshold: AlertMailThreshold | None = Field(default=None)  # #33 alert mail threshold
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     displayName: str | None = Field(default=None, max_length=80)  # may be empty (stored-only)
     wikiAgentAutonomous: bool | None = Field(default=None)  # W4d toggle (USER-ORDERED)

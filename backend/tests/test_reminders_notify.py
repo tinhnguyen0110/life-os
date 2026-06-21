@@ -31,9 +31,17 @@ T0 = datetime(2026, 6, 21, 12, 0, 0, tzinfo=timezone.utc)
 @pytest.fixture
 def rem_db(isolated_paths, monkeypatch):
     store.init_reminders_tables()
-    # capture notify calls without posting (default for most tests)
-    calls: list[str] = []
-    monkeypatch.setattr(svc, "_notify", lambda msg: (calls.append(msg) or True))
+    # ALERT-ROUTING (#33): the scan now routes fires through alerts.notify (the shared engine),
+    # not the old local _notify. The DELIVERY SEAM moved — we mock alerts.notify (where the fire
+    # now goes) to capture calls without posting. The ENGINE (cadence/cap/roll/tick + every
+    # assertion below) is UNCHANGED; only WHERE the notification is intercepted changed.
+    # NB: the scan does `from modules.alerts import notify`, which resolves the name on the
+    # modules.alerts PACKAGE → patch THAT attribute (not modules.alerts.service.notify).
+    import modules.alerts as alerts_pkg
+    calls: list[tuple] = []
+    monkeypatch.setattr(alerts_pkg, "notify",
+                        lambda severity, title, body: (calls.append((severity, title, body))
+                                                       or {"discord": "sent", "mail": "n/a", "severity": severity}))
     return calls
 
 
@@ -151,12 +159,15 @@ def test_not_overdue_when_future_or_done(rem_db):
 # fail-soft — a webhook failure doesn't crash the scan; other reminders run     #
 # --------------------------------------------------------------------------- #
 def test_webhook_failure_is_fail_soft(isolated_paths, monkeypatch):
-    """A Discord post that RAISES must NOT crash the scan — _notify catches it (returns False);
-    the reminder is still marked notified (the fire was attempted) + other reminders still scanned.
-    Tests the real _notify fail-soft path (monkeypatch urlopen to raise)."""
+    """ALERT-ROUTING (#33): a Discord post that RAISES must NOT crash the scan — alerts.notify
+    catches it (fail-soft, returns skipped, never raises); the reminder is still marked notified
+    (the fire was attempted) + other reminders still scanned. Tests the REAL alerts fail-soft path
+    (the delivery now lives in alerts) by making its urlopen raise + giving it a webhook."""
     store.init_reminders_tables()
     import urllib.request
-    monkeypatch.setattr(svc, "_discord_webhook", lambda: "http://fake.invalid/hook")
+    import modules.alerts.service as alerts_svc
+    monkeypatch.setattr(alerts_svc, "_env_value",
+                        lambda key: "http://fake.invalid/hook" if key == "discord" else "")
     monkeypatch.setattr(urllib.request, "urlopen",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network down")))
     a = _mk("A", T0)
@@ -168,14 +179,16 @@ def test_webhook_failure_is_fail_soft(isolated_paths, monkeypatch):
     assert service.get(a).notified_count == 1 and service.get(b).notified_count == 1
 
 
-def test_notify_silent_skip_when_no_webhook(rem_db, monkeypatch):
-    """No webhook configured → _notify silent-skips (returns False), the scan still runs + marks
-    notified (honest: the reminder is 'fired' from the engine's POV; Discord just had nowhere to go)."""
-    monkeypatch.setattr(svc, "_notify", svc._notify)  # use the real one
-    monkeypatch.setattr(svc, "_discord_webhook", lambda: "")  # no webhook
+def test_notify_silent_skip_when_no_webhook(isolated_paths, monkeypatch):
+    """ALERT-ROUTING (#33): no webhook/creds configured → alerts.notify silent-skips (returns
+    skipped), the scan still runs + marks notified (honest: the reminder is 'fired' from the
+    engine's POV; the channels just had nowhere to go). Tests the REAL alerts no-config path."""
+    store.init_reminders_tables()
+    import modules.alerts.service as alerts_svc
+    monkeypatch.setattr(alerts_svc, "_env_value", lambda key: "")  # no discord, no SMTP creds
     rid = _mk("A", T0)
     s = svc.notify_scan(now=T0)
-    assert s["fired"] == 1  # the engine fired (advanced state); the Discord post was a no-op skip
+    assert s["fired"] == 1  # the engine fired (advanced state); the post was a no-op skip
     assert service.get(rid).notified_count == 1
 
 

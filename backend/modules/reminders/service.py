@@ -15,10 +15,7 @@ Discord is fail-SOFT per reminder (one webhook fail → log + continue; the rout
 
 from __future__ import annotations
 
-import json
 import logging
-import pathlib
-import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from . import store
@@ -81,35 +78,10 @@ def list_reminders(filter_key: str | None) -> tuple[ReminderList, list[str]]:
 # --------------------------------------------------------------------------- #
 # REMINDERS-3 (#29) — the notify engine (the alarm fires)                        #
 # --------------------------------------------------------------------------- #
-def _discord_webhook() -> str:
-    """Read the Discord webhook from .env ``discord=`` (mirrors .claude/process/notify.py). No
-    .env / no key → "" (→ _notify silent-skips). Single-user, no secret store."""
-    env = pathlib.Path(__file__).resolve().parents[2] / ".env"
-    if not env.exists():
-        return ""
-    for line in env.read_text().splitlines():
-        if line.strip().startswith("discord="):
-            return line.split("=", 1)[1].strip()
-    return ""
-
-
-def _notify(msg: str) -> bool:
-    """Post a NEUTRAL reminder message to Discord. Fail-SOFT: no webhook → silent-skip (returns
-    False, not an error); a post failure → log + return False (the scan continues). Returns True
-    only on a successful post. Mirrors notify.py (urllib, 10s timeout, no new dependency)."""
-    url = _discord_webhook()
-    if not url or not msg:
-        return False
-    try:
-        req = urllib.request.Request(
-            url, data=json.dumps({"content": msg}).encode(),
-            headers={"Content-Type": "application/json", "User-Agent": "life-os-reminders/1.0"},
-        )
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception as exc:  # noqa: BLE001 — fail-soft: a webhook fail must not break the scan
-        logger.warning("reminders notify skipped (webhook fail): %s", exc)
-        return False
+# ALERT-ROUTING (#33): the local Discord poster (_discord_webhook + _notify) was REMOVED — the
+# reminders-notify scan now delegates delivery to the shared alerts engine (modules.alerts.notify),
+# de-duplicating the per-module webhook code. The ENGINE below (cadence/cap/roll/tick/_should_fire)
+# is unchanged; only the delivery channel moved. See notify_scan() for the call-site.
 
 
 def _roll_due_at(due_at: str, repeat: str, now: datetime) -> str:
@@ -173,7 +145,16 @@ def notify_scan(now: datetime | None = None) -> dict:
         try:
             if not _should_fire(row, now_iso_str, now):
                 continue
-            _notify(f"⏰ Reminder: {row['title']} (due {row['due_at']})")  # fail-soft inside
+            # ALERT-ROUTING (#33) — DELIVERY-CHANNEL rewire ONLY: route the fire through the shared
+            # alerts engine instead of the local Discord poster. The ENGINE (cadence/cap/roll/tick/
+            # overdue + _should_fire) is UNTOUCHED — only WHERE the notification goes changes. All
+            # fires from this scan are PRE-cap regular reminder fires → severity "normal" (Discord
+            # only, byte-identical to #29's prior Discord-only behavior). _should_fire returns False
+            # at cap, so there is NO past-cap fire path here to escalate to "high"/mail — escalating
+            # an overdue-past-cap reminder to mail would require an ENGINE change (out of #33's F2
+            # delivery-only scope) → flagged to architect/team-lead as a decide-and-log.
+            from modules.alerts import notify as _alert_notify
+            _alert_notify("normal", f"⏰ Reminder: {row['title']}", f"due {row['due_at']}")  # fail-soft inside
             fired += 1
             if row["repeat"] in ("daily", "weekly"):
                 # SEMANTIC 1: roll forward + reset count/last_notified (next period fires fresh).

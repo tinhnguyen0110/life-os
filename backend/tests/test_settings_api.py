@@ -45,11 +45,14 @@ def test_get_settings_defaults(app_client):
                       # #55 FINANCE-ASSISTANT P3: user-configurable capital-size risk thresholds
                       "riskCapitalSmallUsd", "riskCapitalLargeUsd",
                       # #72 SIDEBAR-UX: backend-persisted pinned sidebar routes (multi-device)
-                      "pinnedRoutes"}
+                      "pinnedRoutes",
+                      # #33 ALERT-ROUTING: the alert mail-threshold knob
+                      "alertMailThreshold"}
     assert d["briefHour"] == 8 and d["idleThresholdDays"] == 7 and d["automationEnabled"] is True
     assert d["wikiAgentAutonomous"] is True  # WIKI-WRITE-THROUGH #25: default ON (was OFF, W4d)
     assert d["riskCapitalSmallUsd"] == 50000.0 and d["riskCapitalLargeUsd"] == 500000.0  # #55 defaults
     assert d["pinnedRoutes"] == []  # #72 default: no pins → empty list (not missing/null)
+    assert d["alertMailThreshold"] == "high"  # #33 default: mail only on high severity
 
 
 def test_patch_settings_round_trip(app_client):
