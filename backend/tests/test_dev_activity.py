@@ -576,3 +576,111 @@ def test_mcp_dev_activity_includes_lastScanned(temp_repo):
     rest = reader.get_overview(90).model_dump()
     assert "lastScanned" in mcp and mcp["lastScanned"] is not None
     assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
+
+
+# --------------------------------------------------------------------------- #
+# #91 — get_overview agent-first hardening: token-overflow + days-window + dup   #
+# --------------------------------------------------------------------------- #
+def _seed_year(store_mod, n_days: int = 365) -> None:
+    """Seed n_days of you+other rows (1/day, 2 sources) for the window tests."""
+    import datetime
+    from modules.dev_activity import service as svc
+    today = svc._now().astimezone(svc.VN_TZ).date()
+    for i in range(n_days):
+        d = (today - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
+        store_mod.upsert_day(date=d, repo="life-os", source="you", commits=3, loc_added=10,
+                             loc_deleted=2, first_ts="09:00", last_ts="17:00")
+        store_mod.upsert_day(date=d, repo="team-x", source="other", commits=5, loc_added=20,
+                             loc_deleted=3, first_ts="10:00", last_ts="18:00")
+
+
+def test_91_days_365_is_bounded_aggregate_no_token_flood(isolated_paths):
+    """#91 fix-1 (the worst): days=365 → AGGREGATE mode (byDay repos[] omitted, otherRepos dropped)
+    → a bounded payload an agent can read (was ~186KB). aggregated=True + a truncate-hint."""
+    import json
+    store.init_dev_activity_tables()
+    _seed_year(store)
+    ov = reader.get_overview(365, run_scan_warnings=False)
+    assert ov.aggregated is True
+    assert all(d.repos == [] for d in ov.byDay), "aggregate mode drops per-day repos[]"
+    assert ov.otherRepos == [], "aggregate mode drops otherRepos (not byte-doubled to the agent)"
+    assert any("aggregated" in w for w in ov.warnings), "the truncate-hint must be present"
+    # byRepo + summary + daily counts KEPT (the agent still reads the year's shape)
+    assert ov.byRepo and ov.summary.totalCommits > 0
+    assert all(d.totalCommits >= 0 for d in ov.byDay)
+    size = len(json.dumps(ov.model_dump()))
+    assert size < 60_000, f"days=365 must be bounded for an agent's token budget, got {size} chars"
+
+
+def test_91_days_90_keeps_full_detail_for_FE(isolated_paths):
+    """#91 fix-1 (FE-safe): days=90 (the FE's max) → full per-day detail KEPT + otherRepos KEPT +
+    aggregated=False (the #97 FE byDay.repos heatmap/peak-hours + you-vs-other bar unaffected)."""
+    store.init_dev_activity_tables()
+    _seed_year(store, n_days=90)
+    ov = reader.get_overview(90, run_scan_warnings=False)
+    assert ov.aggregated is False
+    assert any(d.repos for d in ov.byDay), "≤90 keeps the per-day repos[] detail (FE needs it)"
+    assert ov.otherRepos, "≤90 keeps otherRepos (FE's you-vs-other bar)"
+
+
+def test_91_days_1_is_today_only_no_off_by_one(isolated_paths):
+    """#91 fix-3: days=1 = EXACTLY today VN (no yesterday). The off-by-one (since=now-1d inclusive)
+    is fixed."""
+    import datetime
+    from modules.dev_activity import service as svc
+    store.init_dev_activity_tables()
+    today = svc._now().astimezone(svc.VN_TZ).date()
+    yesterday = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    store.upsert_day(date=today.strftime("%Y-%m-%d"), repo="r", source="you", commits=1,
+                     loc_added=1, loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    store.upsert_day(date=yesterday, repo="r", source="you", commits=9,
+                     loc_added=9, loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    ov = reader.get_overview(1, run_scan_warnings=False)
+    dates = [d.date for d in ov.byDay]
+    assert dates == [today.strftime("%Y-%m-%d")], f"days=1 must be TODAY only, got {dates}"
+    assert yesterday not in dates, "days=1 must NOT include yesterday (off-by-one fixed)"
+
+
+def test_91_days_zero_is_honest_empty_not_silent_one(isolated_paths):
+    """#91 fix-3: days=0 → honest-empty + a message (NOT a silent coerce to days=1)."""
+    store.init_dev_activity_tables()
+    _seed_year(store, n_days=5)
+    ov = reader.get_overview(0, run_scan_warnings=False)
+    assert ov.byDay == [] and ov.rangeDays == 0
+    assert any("days must be" in w for w in ov.warnings), "honest message, not silent days=1"
+    # a NEGATIVE days too
+    assert reader.get_overview(-3, run_scan_warnings=False).byDay == []
+
+
+def test_91_other_rows_not_byte_doubled_in_agent_aggregate(isolated_paths):
+    """#91 fix-2: in the agent's aggregate view (>90), the 'other' rows are NOT carried twice (they're
+    in NEITHER byDay.repos NOR otherRepos) — no byte-doubling of the large call."""
+    store.init_dev_activity_tables()
+    _seed_year(store)
+    ov = reader.get_overview(365, run_scan_warnings=False)
+    other_in_bydays = [r for d in ov.byDay for r in d.repos if r.source != "you"]
+    assert other_in_bydays == [] and ov.otherRepos == [], "no 'other' rows duplicated in the agent view"
+
+
+def test_91_aggregate_threshold_boundary(isolated_paths):
+    """#91: the threshold is days>90 → aggregate. days=90 = detail; days=91 = aggregate (boundary)."""
+    store.init_dev_activity_tables()
+    _seed_year(store, n_days=100)
+    assert reader.get_overview(90, run_scan_warnings=False).aggregated is False
+    assert reader.get_overview(91, run_scan_warnings=False).aggregated is True
+
+
+def test_91_structured_truncation_policy_data(isolated_paths):
+    """#91 (cairn-#295): the bounded response carries STRUCTURED truncation policy-data (truncated=
+    {daysSummarized, detailThresholdDays, perDayDetailOmitted, otherReposOmitted}) — the agent reads
+    the flags, not just prose. Full-detail (≤90) → truncated is None."""
+    store.init_dev_activity_tables()
+    _seed_year(store)
+    ov365 = reader.get_overview(365, run_scan_warnings=False)
+    assert ov365.truncated is not None
+    assert ov365.truncated.detailThresholdDays == 90
+    assert ov365.truncated.daysSummarized == len(ov365.byDay)
+    assert ov365.truncated.perDayDetailOmitted is True and ov365.truncated.otherReposOmitted is True
+    # ≤90 → no truncation object
+    ov90 = reader.get_overview(90, run_scan_warnings=False)
+    assert ov90.truncated is None

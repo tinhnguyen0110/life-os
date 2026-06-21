@@ -61,11 +61,32 @@ class DevActivitySummary(BaseModel):
     topRepos: list[str] = Field(default_factory=list, description="your repos by commit count, desc (top 5)")
 
 
+class Truncation(BaseModel):
+    """#91: STRUCTURED truncation policy-data (the cairn-#295 pattern: the bounding layer returns the
+    POLICY as DATA, not a transport-baked prose hint — so the agent reads the flags + each consumer
+    [agent/FE] phrases its own affordance). Present (non-None) only when the response was bounded."""
+
+    daysSummarized: int = Field(..., ge=0, description="how many days had their per-day repos[] omitted")
+    detailThresholdDays: int = Field(..., ge=1, description="days <= this return full per-day detail")
+    perDayDetailOmitted: bool = Field(True, description="byDay[].repos[] omitted (read byRepo + counts)")
+    otherReposOmitted: bool = Field(True, description="otherRepos dropped (not byte-doubled in the bounded view)")
+
+
 class DevActivityOverview(BaseModel):
     """GET /dev_activity — the scan result. honest-mirror: no repos/commits → []+0; roots unreachable
     → warnings names them (NOT silent-zero). ``source`` always present so team-context is honest."""
 
-    rangeDays: int = Field(..., ge=1, description="the backfill window scanned (days)")
+    rangeDays: int = Field(..., ge=0, description="the backfill window (days). 0 = a non-positive "
+                           "request → honest-empty (#91)")
+    aggregated: bool = Field(default=False, description="#91: True when days > the detail threshold "
+                             "(90) → byDay carries SUMMARIZED days (per-day repos[] omitted, see "
+                             "``truncated``) so a 1-year call fits an agent's token budget; byRepo + "
+                             "summary + daily counts are kept. False = full per-day detail (≤90d).")
+    truncated: "Truncation | None" = Field(default=None, description="#91: STRUCTURED truncation "
+                                           "policy-data when bounded (daysSummarized/threshold/what-was-"
+                                           "omitted), else None — the agent reads the flags; each surface "
+                                           "phrases its own hint (cairn-#295 pattern). warnings ALSO "
+                                           "carries a transport-agnostic prose line for a quick read.")
     byDay: list[DayView] = Field(default_factory=list, description="per VN day, newest-first")
     byRepo: list[RepoSummary] = Field(default_factory=list, description="per repo, by commits desc")
     otherRepos: list[RepoDay] = Field(default_factory=list,
