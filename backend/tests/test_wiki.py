@@ -1118,10 +1118,10 @@ def test_search_returns_ranked_with_snippet(wiki_db):
     wiki_service.create_note(NoteCreateInput(title="Beta note", content="mango once only"))
     results = wiki_reader.search("mango")
     assert len(results) == 2
-    # WIKI-RETRIEVAL-2 (#22): the result shape is now {id,title,folder,snippet,score} — dropped
-    # the unused `status`, added `folder` + the FTS `score` (agent sees WHY it ranked). Top-5 default.
+    # WIKI-RETRIEVAL-2 (#22) + #99: the result shape is {id,title,folder,snippet,score,relevance} —
+    # `folder` + the FTS `score` (transparency) + the 0..1 `relevance` (agent-readable rank). Top-5.
     for r in results:
-        assert set(r) == {"id", "title", "folder", "snippet", "score"}
+        assert set(r) == {"id", "title", "folder", "snippet", "score", "relevance"}
     assert any("<b>mango</b>" in r["snippet"] for r in results)
 
 
@@ -1199,6 +1199,9 @@ def test_api_search_endpoint(api):
     assert r.status_code == 200
     data = r.json()["data"]
     assert len(data) == 1 and data[0]["title"] == "Searchable"
+    # #99 (1-exp): REST search carries the agent-readable relevance (0..1) too (same reader.search →
+    # parity). It's an ABSOLUTE magnitude (1-exp of the score), NOT forced to 1.0 — assert in-range.
+    assert 0.0 <= data[0]["relevance"] <= 1.0 and data[0]["score"] <= 0  # raw score kept ≤0
 
 
 def test_api_search_bad_query_200_not_500(api):

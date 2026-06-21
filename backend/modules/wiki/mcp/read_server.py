@@ -73,9 +73,13 @@ def _audit(tool: str, params: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 def wiki_search(q: str = "", query: str = "", limit: int = 5) -> dict[str, Any]:
     """Full-text search the vault → RANKED top-K results (WIKI-RETRIEVAL-2 #22 — default top-5,
-    each {id,title,folder,snippet,score} so the agent sees WHY it matched, NO body → drill via
-    wiki_get). Accepts ``q`` OR ``query`` (alias; q wins if both given). Bad/empty/FTS-special →
-    empty results (reader sanitizes; never raises). Same reader.search as REST /wiki/search (#24)."""
+    each {id,title,folder,snippet,score,relevance} so the agent sees WHY it matched + HOW STRONG,
+    NO body → drill via wiki_get). ``relevance`` (0..1, #99) = ABSOLUTE per-result match strength =
+    ``1 - exp(bm25 score)`` (score ≤ 0; higher = stronger). A flat/all-WEAK result set (e.g. a common
+    term) is all-LOW — NOT a forced 1→0 spread; the magnitude is honest, NOT relative-within-the-set.
+    Raw ``score`` (bm25 rank, ≤0, more-negative=better) is kept for transparency. Accepts ``q`` OR
+    ``query`` (alias; q wins). Bad/empty/FTS-special → empty (reader sanitizes; never raises). Same
+    reader.search as REST /wiki/search (#24 parity)."""
     term = q or query
     _audit("wiki_search", {"q": term, "limit": limit})
     return {"results": reader.search(term, limit=limit)}

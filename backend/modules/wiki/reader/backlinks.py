@@ -6,6 +6,7 @@ full-text query; ``unlinked_mentions`` finds plain-text mentions that aren't lin
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from .. import store as wiki_store
@@ -60,15 +61,28 @@ def backlinks(note_id: int) -> dict[str, Any]:
 
 
 def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Full-text search → RANKED top-K ``[{id, title, folder, snippet, score}]`` (FTS5 rank).
-    WIKI-RETRIEVAL-2 (#22): agent-first — default TOP-5 (was 30/flat), each result carries
-    ``folder`` + ``score`` (the FTS5 rank; more-negative = more relevant) so the agent sees WHY
-    it matched, then drills with wiki_get. NO body (snippet + id only — token-cheap). Empty/bad
-    query → ``[]`` (never raises — store sanitizes)."""
+    """Full-text search → RANKED top-K ``[{id, title, folder, snippet, score, relevance}]`` (FTS5).
+    WIKI-RETRIEVAL-2 (#22): agent-first — default TOP-5, each result carries ``folder`` + the rank.
+    NO body (snippet + id only — token-cheap). Empty/bad query → ``[]`` (never raises — store sanitizes).
+
+    #99 agent-readable RELEVANCE (the score-correction): raw bm25 ``score`` (≤0, more-negative=better)
+    is near-flat for a common term → an agent can't read the magnitude. Add a ``relevance`` (0..1) =
+    ABSOLUTE per-result match strength = ``1 - exp(score)`` (score ≤ 0 → exp(score) ∈ (0,1] → relevance
+    ∈ [0,1); higher = stronger match). PER-ROW, no set-span.
+
+    🔴 ``relevance`` is an ABSOLUTE per-result magnitude, NOT relative-within-the-set: a flat / all-WEAK
+    result set (e.g. a common term, all scores ≈0) → ALL relevance ≈0.0 (honest "all weak" — NOT a
+    forced 1→0 spread); a strong match (score very negative) → ≈1.0. (This corrects the earlier min-max
+    which MANUFACTURED a full 1→0 spread out of a microscopic flat-data span — an honest-mirror breach.)
+    Raw ``score`` (bm25 rank) is KEPT for transparency. Order UNCHANGED (best-first; 1-exp is monotonic
+    in score → relevance still descending best-first). Empty/bad query → ``[]`` (comprehension)."""
+    rows = wiki_store.fts_search(q, limit=limit)
     return [
         {"id": r["id"], "title": r["title"], "folder": r["folder"],
-         "snippet": r["snippet"], "score": r["score"]}
-        for r in wiki_store.fts_search(q, limit=limit)
+         "snippet": r["snippet"], "score": r["score"],
+         # per-row absolute magnitude: score ≤ 0 → 1-exp(score) ∈ [0,1); no span, no div-by-zero.
+         "relevance": round(1.0 - math.exp(r["score"]), 4)}
+        for r in rows
     ]
 
 

@@ -149,17 +149,84 @@ def test_get_modes_rest_mcp_byte_identical(wiki_db):
 # WIKI-RETRIEVAL-2 (#22) — wiki_search ranked top-5 + query alias                #
 # --------------------------------------------------------------------------- #
 def test_search_ranked_top5_with_score(wiki_db):
-    """search → ≤5 RANKED results, each {id,title,folder,snippet,score}; NOT a flat dump."""
+    """search → ≤5 RANKED results, each {id,title,folder,snippet,score,relevance}; NOT a flat dump."""
     from modules.wiki.schema import NoteCreateInput
     for i in range(8):
         wsvc.create_note(NoteCreateInput(title=f"career note {i}", content="career career stuff"))
     res = read_server.wiki_search(q="career")["results"]
     assert len(res) <= 5, "ranked top-5, not flat-all"
     for r in res:
-        assert set(r) == {"id", "title", "folder", "snippet", "score"}
+        assert set(r) == {"id", "title", "folder", "snippet", "score", "relevance"}  # #99: +relevance
     # ranked: scores are in FTS rank order (ascending = best-first; rank is more-negative=better)
     scores = [r["score"] for r in res]
     assert scores == sorted(scores), "results are in rank order"
+    # #99 (1-exp): relevance is 0..1 higher=better → descending best-first (1-exp monotonic in score).
+    # NOT asserting [0]==1.0 — 1-exp of a finite score is 0.9999-ish, not exactly 1.0.
+    relevances = [r["relevance"] for r in res]
+    assert relevances == sorted(relevances, reverse=True), "relevance descending (best-first)"
+    assert all(0.0 <= v <= 1.0 for v in relevances), "relevance ∈ [0,1]"
+
+
+def test_99_relevance_spread_top_distinguishable_from_bottom(wiki_db):
+    """#99 (1-exp): a SPECIFIC strong-vs-weak query → the top hit's relevance is strictly > the tail
+    (distinguishable) + monotonic with the raw score. (Absolute magnitudes are corpus-dependent — a
+    tiny test vault gives smaller bm25 than the live vault — so assert the RELATIVE/order property, not
+    a fixed threshold; 1-exp faithfully maps whatever bm25 gives.)"""
+    from modules.wiki.schema import NoteCreateInput
+    # one note PACKED with the terms (more-negative score → higher 1-exp), two mention once
+    wsvc.create_note(NoteCreateInput(title="Packed", content="alpha beta gamma " * 8))
+    wsvc.create_note(NoteCreateInput(title="Mention1", content="alpha once " + "filler " * 30))
+    wsvc.create_note(NoteCreateInput(title="Mention2", content="beta once " + "filler " * 30))
+    res = read_server.wiki_search(q="alpha beta gamma")["results"]
+    assert len(res) >= 2
+    assert res[0]["relevance"] > res[-1]["relevance"], "the stronger top distinguishable from the weaker tail"
+    assert all(0.0 <= r["relevance"] <= 1.0 for r in res)
+    # 1-exp is monotonic in score → relevance order matches the raw-score (best-first) order
+    scores = [r["score"] for r in res]
+    assert scores == sorted(scores)
+    rels = [r["relevance"] for r in res]
+    assert rels == sorted(rels, reverse=True), "relevance descending (monotonic with score)"
+
+
+def test_99_weak_single_not_forced_high(wiki_db):
+    """#99 (1-exp) THE KEY honest test: a WEAK single match (the term appears once amid lots of filler
+    → bm25 ≈0) → LOW relevance, NOT forced to 1.0. This is the min-max-LIE case the correction fixes:
+    min-max forced a lone weak hit to 1.0 ('most relevant of 1'); 1-exp reports its true low magnitude.
+    relevance is an ABSOLUTE magnitude, not relative-within-the-set."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(
+        title="Weak", content="filler " * 200 + "zzqxweak " + "filler " * 200))
+    weak = read_server.wiki_search(q="zzqxweak")["results"]
+    assert len(weak) == 1
+    # the lone weak hit is NOT forced to 1.0 (min-max would have); its magnitude is honest-low.
+    assert weak[0]["relevance"] < 1.0, "a lone WEAK match must NOT be forced to 1.0 (the min-max lie)"
+    assert weak[0]["relevance"] < 0.5, "a weak single match → honest-low magnitude"
+
+
+def test_99_flat_all_weak_not_a_forced_spread(wiki_db):
+    """#99 (1-exp) the honest-mirror property the correction restores: an all-WEAK result set (a
+    term spread thin across notes) → all relevance LOW + the spread SMALL — NOT a manufactured 1→0
+    spread. (min-max would have stretched a microscopic flat span to a full range — the breach.)"""
+    from modules.wiki.schema import NoteCreateInput
+    for i in range(6):
+        wsvc.create_note(NoteCreateInput(title=f"Flat {i}",
+                                         content="lorem ipsum dolor " * 30 + f" commonterm {i}"))
+    res = read_server.wiki_search(q="commonterm", limit=10)["results"]
+    assert len(res) >= 3
+    rels = [r["relevance"] for r in res]
+    # honest: all LOW (not a top forced to ~1.0), and the spread is SMALL (no manufactured distinction)
+    assert max(rels) < 0.9, "an all-weak set must NOT have a forced-high top (the min-max lie)"
+    assert (max(rels) - min(rels)) < 0.5, "no manufactured 1→0 spread on flat data"
+
+
+def test_99_raw_score_kept_for_transparency(wiki_db):
+    """#99: the raw bm25 ``score`` is KEPT alongside ``relevance`` (transparency — the agent can
+    audit the normalization)."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="T", content="transparency check term"))
+    r = read_server.wiki_search(q="transparency")["results"][0]
+    assert isinstance(r["score"], float) and r["score"] <= 0  # raw bm25 (≤0)
+    assert isinstance(r["relevance"], float) and 0.0 <= r["relevance"] <= 1.0
 
 
 def test_search_query_alias_equals_q(wiki_db):
