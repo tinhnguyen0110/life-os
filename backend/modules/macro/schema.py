@@ -71,7 +71,14 @@ class MacroOverview(BaseModel):
 
 
 class MacroHistory(BaseModel):
-    """A single indicator's time-series over a window (oldest→newest)."""
+    """A single indicator's time-series over a window (oldest→newest).
+
+    MACRO-HISTORY-WARNING (#56-part2): ``warning`` lets an agent tell apart an empty series that's
+    feed-less-forever (dxy: no live feed built) from one that's just not-recorded-yet (sentiment/FRED
+    awaiting the snapshot/refresh) from a real populated series (warning None). Honest-mirror: an empty
+    points list with no warning would read as "nothing to know"; the warning says WHY it's empty.
+    """
 
     indicator: str
     points: list[MacroPoint] = Field(default_factory=list)
+    warning: str | None = Field(None, description="why the series is empty/mock: feedless | not-yet-recorded | None (real data)")  # #56-part2

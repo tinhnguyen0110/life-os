@@ -309,4 +309,14 @@ def get_history(indicator: str, days: int = 365, limit: int = 1000) -> MacroHist
         MacroPoint(indicator=r["indicator"], value=float(r["value"]), ts=r["ts"], source=r["source"])
         for r in rows
     ]
-    return MacroHistory(indicator=indicator, points=points)
+    # MACRO-HISTORY-WARNING (#56-part2): an honest reason WHY a series is empty/mock, so an agent
+    # distinguishes feed-less-forever from not-yet-recorded from real data. Use the display label
+    # (DXY not dxy) — mirrors _indicator_view's feedless wording.
+    label, _unit = _LABELS.get(indicator, (indicator, ""))
+    if indicator in _FEEDLESS_INDICATORS:
+        warning: str | None = f"no live {label} feed (dedicated API not built) — mock"
+    elif not points:
+        warning = f"{label} — no points yet (the daily snapshot / FRED refresh hasn't recorded any)"
+    else:
+        warning = None
+    return MacroHistory(indicator=indicator, points=points, warning=warning)

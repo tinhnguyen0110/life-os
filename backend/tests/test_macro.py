@@ -61,6 +61,49 @@ def test_history_oldest_to_newest(macro_db):
 
 
 # --------------------------------------------------------------------------- #
+# MACRO-HISTORY-WARNING (#56-part2) — honest WHY a series is empty/mock          #
+# --------------------------------------------------------------------------- #
+def test_get_history_feedless_dxy_warns(macro_db):
+    """A feed-less indicator (dxy: no live feed built) → warning names the feedless reason (NOT None),
+    so an agent knows the empty/mock series is feed-less-FOREVER, not just not-recorded-yet."""
+    h = service.get_history("dxy")
+    assert h.warning is not None and "feed" in h.warning.lower()
+    assert "DXY" in h.warning  # display label, not the raw 'dxy'
+
+
+def test_get_history_empty_trackable_warns_not_yet(macro_db):
+    """An empty-but-trackable series (a FRED/sentiment indicator with 0 points yet) → 'no points yet'
+    warning (distinct from the feedless reason)."""
+    h = service.get_history("fear_greed")  # sentiment, nothing recorded
+    assert h.points == [] and h.warning is not None
+    assert "no points yet" in h.warning
+
+
+def test_get_history_real_points_no_warning(macro_db):
+    """THE distinguishing: a tracked (non-feedless) indicator WITH real points → warning is None.
+    An always-warn impl FAILS this; a never-warn impl FAILS the feedless/empty cases above."""
+    store.record_point("fear_greed", 50.0, "2026-06-21", "live")
+    h = service.get_history("fear_greed")
+    assert h.points and h.warning is None, "real data → no warning"
+
+
+def test_get_history_untracked_is_none(macro_db):
+    """An untracked indicator → None (the route 404s) — unchanged."""
+    assert service.get_history("not-an-indicator") is None
+
+
+def test_history_warning_rest_mcp_byte_identical(client):
+    """#24: REST GET /macro/history?indicator=dxy data == MCP macro_history('dxy').history,
+    byte-identical — the warning flows through both surfaces the same way."""
+    import json
+    from mcp_servers import read_server as rs
+    rest = client.get("/macro/history", params={"indicator": "dxy"}).json()["data"]
+    mcp = rs.macro_history("dxy")["history"]
+    assert json.dumps(rest, sort_keys=True) == json.dumps(mcp, sort_keys=True)
+    assert rest["warning"] is not None  # the warning is present in both
+
+
+# --------------------------------------------------------------------------- #
 # Fail-open fetch — no FRED key → mock                                          #
 # --------------------------------------------------------------------------- #
 def _csv_fails(monkeypatch):
