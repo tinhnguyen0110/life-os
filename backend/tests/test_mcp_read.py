@@ -888,7 +888,74 @@ def test_life_brief_market_uses_tracked_assets_and_indicators(app_db):
     assert isinstance(market["assets"], list)
     if market["assets"]:
         a = market["assets"][0]
-        assert set(a) >= {"symbol", "quote", "indicators"}
+        assert set(a) >= {"symbol", "quote", "indicators", "isMock"}  # #92: +isMock tier-1 flag
+
+
+# --------------------------------------------------------------------------- #
+# #92 — life_brief market: mock-asset tier-1 isMock flag (mirror macro.DXY)      #
+# --------------------------------------------------------------------------- #
+def _patch_market(monkeypatch, quotes: list[dict]):
+    """Make _brief_market see a known quote mix (mock + live) + the matching tracked assets, so the
+    isMock discriminator is deterministic (not network-dependent)."""
+    monkeypatch.setattr(rs, "_mkt_market", lambda: ({"quotes": quotes}, []))
+    monkeypatch.setattr(rs, "_mkt_tracked", lambda: [{"symbol": q["symbol"]} for q in quotes])
+    # neutralize the TA read (not under test here)
+    monkeypatch.setattr(rs, "_mkt_indicators", lambda *a, **k: ({"indicators": None}, []))
+
+
+def test_92_mock_asset_flagged_live_not_flagged(app_db, monkeypatch):
+    """THE distinguishing teeth: a MOCK asset (source=mock) → isMock True at the ASSET level (no
+    drilling quote.source); a LIVE asset (source=coingecko) → isMock False. A real discriminator."""
+    _patch_market(monkeypatch, [
+        {"symbol": "BTC", "source": "coingecko", "price": 60000},
+        {"symbol": "VNINDEX", "source": "mock", "price": 1200},
+    ])
+    market = rs._brief_market()
+    by_sym = {a["symbol"]: a for a in market["assets"]}
+    assert by_sym["BTC"]["isMock"] is False, "a LIVE asset must NOT be isMock"
+    assert by_sym["VNINDEX"]["isMock"] is True, "a MOCK asset MUST be isMock"
+
+
+def test_92_top_level_warning_lists_mock_assets(app_db, monkeypatch):
+    """Mirror macro.DXY: a top-level warning names the mock assets (unambiguous in one read)."""
+    _patch_market(monkeypatch, [
+        {"symbol": "BTC", "source": "coingecko"},
+        {"symbol": "VNINDEX", "source": "mock"},
+        {"symbol": "FUEVFVND", "source": "mock"},
+    ])
+    market = rs._brief_market()
+    mock_warn = [w for w in market["warnings"] if "mock" in w.lower()]
+    assert mock_warn, "a top-level mock warning must be present"
+    assert "VNINDEX" in mock_warn[0] and "FUEVFVND" in mock_warn[0]
+    assert "not live" in mock_warn[0].lower() or "not live data" in mock_warn[0].lower()
+
+
+def test_92_mock_data_not_lost(app_db, monkeypatch):
+    """honest-mirror: the mock asset's price/quote is STILL returned (marked, not removed)."""
+    _patch_market(monkeypatch, [{"symbol": "VNINDEX", "source": "mock", "price": 1234}])
+    a = rs._brief_market()["assets"][0]
+    assert a["isMock"] is True
+    assert a["quote"]["price"] == 1234, "the mock value is KEPT (tagged, not dropped)"
+
+
+def test_92_no_mock_no_warning(app_db, monkeypatch):
+    """All-live → isMock False everywhere + NO mock warning (the flag isn't a blanket)."""
+    _patch_market(monkeypatch, [
+        {"symbol": "BTC", "source": "coingecko"},
+        {"symbol": "ETH", "source": "coingecko"},
+    ])
+    market = rs._brief_market()
+    assert all(a["isMock"] is False for a in market["assets"])
+    assert not [w for w in market["warnings"] if "mock (no live feed)" in w.lower()]
+
+
+def test_92_none_quote_is_not_mock(app_db, monkeypatch):
+    """A None quote (no data at all) → isMock False (a different honest case from a mock VALUE)."""
+    monkeypatch.setattr(rs, "_mkt_market", lambda: ({"quotes": []}, []))   # no quotes
+    monkeypatch.setattr(rs, "_mkt_tracked", lambda: [{"symbol": "NOQUOTE"}])
+    monkeypatch.setattr(rs, "_mkt_indicators", lambda *a, **k: ({"indicators": None}, []))
+    a = rs._brief_market()["assets"][0]
+    assert a["quote"] is None and a["isMock"] is False  # no-quote ≠ mock-value
 
 
 # --------------------------------------------------------------------------- #

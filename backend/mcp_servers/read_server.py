@@ -927,6 +927,7 @@ def _brief_market(indicators: str = "summary", hours: int = 720) -> dict[str, An
     warnings = list(mkt_warn or [])
     names = [n.strip() for n in indicators.split(",") if n.strip()]
     per_asset: list[dict[str, Any]] = []
+    mock_symbols: list[str] = []  # #92: collect mock assets → a tier-1 top-level warning
     for asset in _mkt_tracked():
         symbol = asset.get("symbol")
         if not symbol:
@@ -939,11 +940,26 @@ def _brief_market(indicators: str = "summary", hours: int = 720) -> dict[str, An
         except Exception as exc:  # noqa: BLE001 — a bad TA read must not drop the asset
             indicators_out = None
             warnings.append(f"{symbol}: indicators failed ({type(exc).__name__}: {exc})")
+        # #92 honest-mirror (mirror macro.DXY): the mock-ness is BURIED in quote.source → lift it to
+        # a TIER-1 ``isMock`` flag so an agent reads it in ONE pass (no drilling quote.source). isMock
+        # reflects source=="mock" SPECIFICALLY (a placeholder value, no live feed). A None quote (no
+        # data at all) → isMock False — that's a different honest case (the null quote is already
+        # honest; it's not a fabricated-as-live mock VALUE). Decided + logged.
+        is_mock = bool(quote) and (quote or {}).get("source") == "mock"
+        if is_mock:
+            mock_symbols.append(symbol)
         per_asset.append({
             "symbol": symbol,
             "quote": _jsonable(quote),
             "indicators": _jsonable(indicators_out),
+            "isMock": is_mock,  # #92: tier-1 honest flag (the mock value is KEPT, just clearly tagged)
         })
+    if mock_symbols:
+        # #92: the explicit top-level warning (mirror macro.DXY's "no live feed" line) — so the mock
+        # assets are unambiguous in one read of the market section, not buried per-quote.
+        warnings.append(
+            f"mock (no live feed): {', '.join(mock_symbols)} — placeholder values, NOT live data"
+        )
     return {"assets": per_asset, "indicatorSet": names, "warnings": warnings}
 
 
