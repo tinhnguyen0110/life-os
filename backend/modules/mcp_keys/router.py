@@ -41,6 +41,20 @@ def list_keys():
     return ok(data=service.list_keys())
 
 
+@router.get("/catalog")
+def tool_catalog():
+    """#87 (folded-in): the tool/domain universe for the scope-editor (#88) — a REST wrapper over the
+    EXISTING ``read_server.list_tools_catalog()`` (which was MCP-only). ``{tools:[{name, server,
+    capability, neutral, description}], counts:{per-mount byMount}}`` — server = the DOMAIN/mount the
+    UI ticks on; name = the per-tool tick. BYTE-IDENTICAL to the MCP list_tools_catalog payload
+    (REST≡MCP #24 — same fn, no recompute; the same source filter.py + #86 _resolve_tool_count use).
+
+    Declared BEFORE no ``GET /{key}`` route exists, but kept above the PUT/DELETE/{key} block so the
+    static path is unambiguous. Honest: whatever the live catalog returns (no fabrication)."""
+    from mcp_servers.read_server import list_tools_catalog
+    return ok(data=list_tools_catalog())
+
+
 @router.put("/{key}")
 def update_key(key: str, body: KeyUpdate):
     """Partial-update a key's label/scope. 404 (agent_error) if no such key."""

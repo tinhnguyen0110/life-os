@@ -97,6 +97,13 @@ def create_app() -> FastAPI:
     # one-shot; never per-request). streamable_http_app() must be called BEFORE reading
     # .session_manager (lazy).
     mcp_servers = _build_mcp_servers()
+    # MCP-KEYS (#87): install the per-request key-aware tool filter on each server (list_tools
+    # returns only the key's scoped tools; no key → all tools). Done BEFORE streamable_http_app()
+    # so the override is the registered tools/list handler. No-op if the build was skipped (tests).
+    if mcp_servers:
+        from modules.mcp_keys.filter import install_tool_filter
+        for _srv in mcp_servers:
+            install_tool_filter(_srv)
     mcp_apps = [srv.streamable_http_app() for srv in mcp_servers]  # session_manager now exists
 
     @asynccontextmanager
@@ -187,8 +194,12 @@ def create_app() -> FastAPI:
     # MCP-HTTP: mount the streamable-http ASGI apps at distinct paths. Built above
     # (session managers entered in the lifespan). Client hits <mount>/mcp. stdio main()
     # entrypoints are untouched — this is an ADDITIONAL transport, not a replacement.
+    # MCP-KEYS (#87): wrap each mount with the key-aware ASGI middleware — reads X-MCP-Key into the
+    # request ContextVar (the filter reads it in list_tools) + short-circuits a sent-but-unknown key
+    # with the agent-readable NOT_FOUND (case 3) before it reaches FastMCP.
+    from modules.mcp_keys.filter import mcp_key_asgi_middleware
     for (path, _mod_name), sub in zip(_MCP_MOUNTS, mcp_apps):
-        app.mount(path, sub)
+        app.mount(path, mcp_key_asgi_middleware(sub))
     return app
 
 
