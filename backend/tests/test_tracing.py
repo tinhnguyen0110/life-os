@@ -211,3 +211,42 @@ def test_archive_removes_from_board_keeps_logs(db):
     act = svc.get_activity("run")
     assert act is not None and act.archived is True
     assert len(store.logs_for_activity("run")) == 1
+
+
+# --- #102 PERF: heatmap/overview at 100 act × 1yr stays within budget ------- #
+@pytest.mark.slow  # PERF #102: seeds 100 act × 365 days (~36.5k logs) — opt-in via -m slow
+def test_102_overview_perf_at_scale(db):
+    """#102 MEASURE-FIRST regression pin: the suspected _derive_heatmap cliff was measured at
+    ~46ms (overview) / ~10ms (heatmap) for 100 activities × 1 year — well within the <500ms
+    budget → YAGNI, no optimization. This test PINS that: it seeds the worst realistic scale and
+    asserts overview() stays under a generous 1.0s ceiling (10× headroom over the measured 46ms,
+    catching a real O(act×day×logs) regression while tolerating slow CI hardware) AND that the
+    heatmap still computes real per-day COUNTS (not blanked by any future 'fix'). The heatmap reads
+    all logs ONCE into a dict then loops O(84×N) — O(logs + 84×N), not O(logs×84×N)."""
+    import time
+
+    n_act, days = 100, 365
+    today = datetime.now(VN_TZ).date()
+    start = today - timedelta(days=days - 1)
+    for i in range(n_act):
+        _mk(f"act{i:03d}", goal=30.0, unit="min")
+    # bulk-seed logs straight through the store (the derive path is what we measure, not inserts)
+    for i in range(n_act):
+        aid = f"act{i:03d}"
+        for d in range(days):
+            day = (start + timedelta(days=d)).strftime("%Y-%m-%d")
+            val = 35.0 if (d + i) % 3 == 0 else 20.0  # some days meet goal(30), some don't
+            store.insert_log(activity_id=aid, date=day, ts=f"{day}T08:00:00+07:00",
+                             val=val, dur_min=30, note=None)
+
+    t = time.perf_counter()
+    ov = svc.overview()
+    elapsed = time.perf_counter() - t
+
+    assert len(ov.activities) == n_act
+    assert len(ov.heatmap12w) == 84
+    # the heatmap is a real per-day COUNT (not blanked / not all-N) — some days N met, some fewer
+    assert any(c > 0 for c in ov.heatmap12w), "heatmap must carry real counts, not all-0"
+    assert max(ov.heatmap12w) <= n_act
+    # PERF budget: measured ~46ms; 1.0s ceiling = 20× headroom, fails only on a real cliff regression
+    assert elapsed < 1.0, f"overview() at {n_act}act×{days}d took {elapsed*1000:.0f}ms (budget 1000ms)"
