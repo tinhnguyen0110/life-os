@@ -9,7 +9,7 @@
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
 - whole-app shared: **41 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
-- standalone wiki (canonical): **11 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
+- standalone wiki (canonical): **12 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
   `read` in the catalog (the honest "what THIS agent sees" view) — adds no NEW tool fns.
@@ -95,6 +95,7 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | `wiki_inbox` | wiki-read | Fleeting notes awaiting triage (oldest→newest) |
 | `wiki_get_note` | wiki-read | One note by its INTEGER id (the citation key); missing → {found: False} |
 | `wiki_context` | wiki-read | A note's full neighborhood in ONE call: {found, note_id, graph, backlinks}. Supersedes wiki_graph + wiki_backlinks (#23). |
+| `wiki_suggest_links` | wiki-read | Top 3-5 NEW link candidates for a note: {suggestedLinks:[{id,title,relevance}]} (FTS by title, self+already-linked excluded). Suggest-only (#34). |
 | `wiki_recent_ops` | wiki-read | Recent wiki mutations (op-log activity feed), newest first |
 | `wiki_clusters` | wiki-read | MOC candidates: graph-detected clusters of linked notes (W5a) |
 | `wiki_verify_citations` | wiki-read | Post-verify citations (anti-fabrication gate): verified/rejected/ungrounded/weakly_grounded |

@@ -197,9 +197,15 @@ def set_folder_meta(folder_path: str, body: FolderMetaInput):
 @router.post("/notes")
 def create_note(body: NoteCreateInput):
     """Create a note (capture → fleeting). Server-set id + timestamps. Goes through
-    the single-writer queue → 1 git commit + 1 op_log row."""
+    the single-writer queue → 1 git commit + 1 op_log row.
+
+    WIKI-SUGGEST-LINK (#34): the write-through response carries ``suggestedLinks`` — top 3-5 NEW
+    link candidates (FTS over the new content, self + already-linked excluded) so the agent can link
+    the fresh note + keep the graph connected. Suggest-only (never auto-applies)."""
     note = service.create_note(body)
-    return ok(data=note.model_dump())
+    data = note.model_dump()
+    data["suggestedLinks"] = reader.suggest_links(note.id)
+    return ok(data=data)
 
 
 @router.post("/notes/merge")
@@ -252,6 +258,19 @@ def get_context(note_id: int, depth: int = 2):
     return ok(data=reader.context(note_id, depth))
 
 
+@router.get("/notes/{note_id}/suggested-links")
+def get_suggested_links(note_id: int, limit: int = 5):
+    """WIKI-SUGGEST-LINK (#34): top 3-5 NEW link candidates for a note —
+    ``[{id, title, relevance}]`` (FTS over the note's text, self + already-linked EXCLUDED,
+    more-relevant first). The same suggestions the write-through response carries, fetchable
+    standalone (e.g. an agent that wrote via the MCP proposal-apply path, not REST). 404 if the
+    note is absent. Same ``reader.suggest_links`` the MCP ``wiki_suggest_links`` calls → MCP≡REST
+    byte-identical (#24). Suggest-only — never applies a link."""
+    if service.get_note(note_id) is None:
+        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+    return ok(data={"suggestedLinks": reader.suggest_links(note_id, limit)})
+
+
 @router.post("/notes/{note_id}/refine")
 def refine_note(note_id: int, body: NoteUpdateInput):
     """REFINE a note (C6/D9): update-path + the ≥1-link HARD GATE. 404 if absent;
@@ -263,7 +282,9 @@ def refine_note(note_id: int, body: NoteUpdateInput):
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
     except service.RefineGateError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return ok(data=note.model_dump(), warning=warning)
+    data = note.model_dump()
+    data["suggestedLinks"] = reader.suggest_links(note.id)  # #34
+    return ok(data=data, warning=warning)
 
 
 @router.put("/notes/{note_id}")
@@ -274,7 +295,9 @@ def update_note(note_id: int, body: NoteUpdateInput):
         note = service.update_note(note_id, body)
     except service.NoteNotFound:
         raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
-    return ok(data=note.model_dump())
+    data = note.model_dump()
+    data["suggestedLinks"] = reader.suggest_links(note.id)  # #34
+    return ok(data=data)
 
 
 @router.delete("/notes/{note_id}")

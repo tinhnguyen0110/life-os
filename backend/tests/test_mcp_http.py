@@ -158,11 +158,12 @@ def test_stdio_build_servers_unchanged():
     # WIKI-LINK-CORRECTNESS #19: wiki-read 11→12 (+wiki_tree, the MCP mirror of REST /wiki/tree).
     # WIKI-RETRIEVAL-3 #23 (F1=b): wiki-read 12→11 (+wiki_context, −wiki_graph −wiki_backlinks;
     # wiki_context supersets the two removed granular tools → net −1).
+    # WIKI-SUGGEST-LINK #34: wiki-read 11→12 (+wiki_suggest_links).
     wr = wrs.build_server()
     ww = wws.build_server()
     assert wr is not None and ww is not None
     # tool counts on the wiki servers (the registered-tool count)
-    assert len(wr._tool_manager.list_tools()) == 11
+    assert len(wr._tool_manager.list_tools()) == 12
     assert len(ww._tool_manager.list_tools()) == 6
 
 

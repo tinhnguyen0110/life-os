@@ -369,6 +369,7 @@ def test_server_builds_with_all_tools():
         "wiki_get_note",
         # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks REMOVED — wiki_context supersets both.
         "wiki_context",
+        "wiki_suggest_links",  # WIKI-SUGGEST-LINK #34
         "wiki_recent_ops",
         "wiki_tree",  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
         "wiki_clusters", "wiki_verify_citations",

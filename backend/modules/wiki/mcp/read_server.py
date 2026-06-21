@@ -136,6 +136,17 @@ def wiki_context(note_id: int, depth: int = 2) -> dict[str, Any]:
     return reader.context(int(note_id), int(depth))
 
 
+def wiki_suggest_links(note_id: int, limit: int = 5) -> dict[str, Any]:
+    """WIKI-SUGGEST-LINK (#34): top 3-5 NEW link candidates for a note → {suggestedLinks:
+    [{id, title, relevance}]}. FTS over the note's text, EXCLUDING the note itself + notes already
+    linked from it (resolved outbound), more-relevant first (relevance = FTS5 rank). Helps the agent
+    link a freshly-written note + keep the graph connected. DETERMINISTIC (no AI), SUGGEST-ONLY
+    (never applies a link). Missing note / no matches → {suggestedLinks: []}. Same reader.suggest_links
+    the REST GET /wiki/notes/{id}/suggested-links calls → MCP≡REST byte-identical (#24)."""
+    _audit("wiki_suggest_links", {"note_id": note_id, "limit": limit})
+    return {"suggestedLinks": reader.suggest_links(int(note_id), int(limit))}
+
+
 def wiki_recent_ops(limit: int = 50) -> dict[str, Any]:
     """Recent wiki mutations (the op-log activity feed), newest first."""
     _audit("wiki_recent_ops", {"limit": limit})
@@ -238,6 +249,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks REMOVED from the MCP surface —
     # wiki_context SUPERSETS both (graph + backlinks in one call). REST + reader fns kept.
     "wiki_context": wiki_context,
+    "wiki_suggest_links": wiki_suggest_links,  # WIKI-SUGGEST-LINK #34: top NEW link candidates
     "wiki_recent_ops": wiki_recent_ops,
     "wiki_tree": wiki_tree,  # WIKI-LINK-CORRECTNESS #19: MCP mirror of REST /wiki/tree
     "wiki_clusters": wiki_clusters,
@@ -278,6 +290,7 @@ def build_server(transport_security: Any = None, stateless_http: bool = False) -
     mcp.add_tool(wiki_get_note, description=wiki_get_note.__doc__)
     # WIKI-RETRIEVAL-3 #23 (F1=b): wiki_graph + wiki_backlinks no longer registered (wiki_context supersets).
     mcp.add_tool(wiki_context, description=wiki_context.__doc__)
+    mcp.add_tool(wiki_suggest_links, description=wiki_suggest_links.__doc__)
     mcp.add_tool(wiki_recent_ops, description=wiki_recent_ops.__doc__)
     mcp.add_tool(wiki_tree, description=wiki_tree.__doc__)  # #19: MCP mirror of REST /wiki/tree
     mcp.add_tool(wiki_clusters, description=wiki_clusters.__doc__)
