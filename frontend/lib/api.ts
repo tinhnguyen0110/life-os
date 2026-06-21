@@ -32,6 +32,8 @@ import type {
   WikiNote,
   WikiNoteCreateInput,
   WikiNoteUpdateInput,
+  WikiImportInput,
+  WikiImportResponse,
   WikiBacklinks,
   WikiInbox,
   WikiOverview,
@@ -500,6 +502,13 @@ export function getWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
 /** W3 capture — create a (default fleeting) wiki note. Returns the created note. */
 export function createWikiNote(body: WikiNoteCreateInput): Promise<ApiResponse<WikiNote>> {
   return apiPost<WikiNote>("/wiki/notes", body);
+}
+
+/** #93 import — POST /wiki/import. Multi-file, FAIL-SOFT: the response carries a
+ *  per-file {ok, noteId, title, error}; a bad file (wrong ext / empty) returns
+ *  ok:false + an agent-error (code/message/hint), it does NOT fail the whole call. */
+export function importWiki(body: WikiImportInput): Promise<ApiResponse<WikiImportResponse>> {
+  return apiPost<WikiImportResponse>("/wiki/import", body);
 }
 
 /** W2 edit — partial update (PUT /wiki/notes/{id}). Bad enum → ApiError(422) per-field. */

@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useWikiOverview } from "@/lib/useWiki";
 import { searchWiki } from "@/lib/api";
 import { Icon } from "@/lib/icons";
+import { WikiImport } from "@/components/WikiImport";
 import type {
   WikiInboxItem,
   WikiOrphan,
@@ -54,6 +55,19 @@ export default function WikiVaultPage() {
   const { overview, status, errMsg, warning, reload } = useWikiOverview();
   const router = useRouter();
 
+  /* ---- #93 import modal ----
+     onImported fires on a successful import but we do NOT reload the overview WHILE the
+     modal is open: reload() flips the page to status="loading", which re-renders the
+     tree and would remount the modal (destroying the results the user needs to read).
+     Instead we mark "vault is stale" and reload ONCE, on modal close — so results stay
+     stable in the modal AND the tree refreshes when the user is done. */
+  const [showImport, setShowImport] = useState(false);
+  const importedDirty = useRef(false);
+  const closeImport = useCallback(() => {
+    setShowImport(false);
+    if (importedDirty.current) { importedDirty.current = false; reload(); }
+  }, [reload]);
+
   /* ---- FTS quick search (debounced) ---- */
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<WikiSearchHit[]>([]);
@@ -85,15 +99,30 @@ export default function WikiVaultPage() {
     };
   }, [q, runSearch]);
 
+  // #93 — the import modal renders OUTSIDE the status-gated branches so a post-import
+  // reload() (which flips status→loading) does NOT unmount it mid-flow + destroy the
+  // results the user needs to read. It's a fixed overlay, so it sits above any state.
+  const importModal = showImport ? (
+    <WikiImport onClose={closeImport} onImported={() => { importedDirty.current = true; }} />
+  ) : null;
+
   if (status === "loading") {
-    return <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-loading">Đang tải vault…</div>;
+    return (
+      <>
+        {importModal}
+        <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-loading">Đang tải vault…</div>
+      </>
+    );
   }
   if (status === "error") {
     return (
-      <div className="hint" style={{ padding: "24px 4px", color: "var(--red)" }} data-testid="vault-error">
-        {errMsg || "Không tải được vault."}
-        <button type="button" className="btn ghost" style={{ marginLeft: 12 }} onClick={reload}>Thử lại</button>
-      </div>
+      <>
+        {importModal}
+        <div className="hint" style={{ padding: "24px 4px", color: "var(--red)" }} data-testid="vault-error">
+          {errMsg || "Không tải được vault."}
+          <button type="button" className="btn ghost" style={{ marginLeft: 12 }} onClick={reload}>Thử lại</button>
+        </div>
+      </>
     );
   }
 
@@ -104,17 +133,22 @@ export default function WikiVaultPage() {
   if (!overview || totalNotes === 0) {
     return (
       <div data-testid="vault-screen">
+        {importModal}
         <div className="vtitle">
           <h1>Vault · Tri thức</h1>
           <span className="sub">0 notes · vault còn trống</span>
           <span className="sp" style={{ flex: 1 }} />
+          {/* #93 — import is a key way to BOOTSTRAP an empty vault (the "chưa upload được" pain). */}
+          <button type="button" className="btn accent" onClick={() => setShowImport(true)} data-testid="vault-import-btn">
+            <Icon name="i-plus" /> Import .md
+          </button>
           <Link href="/wiki/inbox" className="btn" data-testid="vault-inbox-link">
             <Icon name="i-note" /> Inbox
           </Link>
         </div>
         <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-empty">
           🌱 Vault rỗng — chưa có note nào. {warning ? <span className="mut">({warning})</span> : null} Bắt đầu bằng cách
-          capture một fleeting note (command bar <code>note …</code> hoặc quick-add) rồi triage ở Inbox.
+          <b> Import .md</b> (nhập file có sẵn) hoặc capture một fleeting note (command bar <code>note …</code>) rồi triage ở Inbox.
         </div>
       </div>
     );
@@ -171,10 +205,15 @@ export default function WikiVaultPage() {
         <Link href="/wiki/graph" className="btn" data-testid="vault-graph-link">
           <Icon name="i-graph" /> Graph
         </Link>
+        <button type="button" className="btn" onClick={() => setShowImport(true)} data-testid="vault-import-btn">
+          <Icon name="i-plus" /> Import .md
+        </button>
         <Link href="/wiki/inbox" className="btn accent" data-testid="vault-newnote-link">
           <Icon name="i-plus" /> Inbox
         </Link>
       </div>
+
+      {importModal}
 
       {/* FTS search */}
       <div className="wsearch">

@@ -910,6 +910,40 @@ export interface WikiInbox {
   items: WikiInboxItem[];
 }
 
+/* ============================================================================
+   #93 Wiki import — POST /wiki/import. Multi-file, FAIL-SOFT: each file gets its own
+   {ok, noteId, title, error}; a bad file doesn't block the good ones. Mirrors the
+   FROZEN #93-BE schema. The agent-error shape is the post-#46/#70 {code,message,hint}.
+   ============================================================================ */
+
+/** One file to import — filename (for ext/type) + the raw text content (read client-
+ *  side via FileReader, or pasted). */
+export interface WikiImportFile {
+  filename: string;
+  content: string;
+}
+
+/** POST /wiki/import body. */
+export interface WikiImportInput {
+  files: WikiImportFile[];
+}
+
+/** Per-file result. ok:true → noteId+title; ok:false → error (agent-readable). */
+export interface WikiImportResult {
+  filename: string;
+  ok: boolean;
+  noteId: number | null;
+  title: string | null;
+  /** the agent-error when ok:false (unsupported ext / empty / etc.), else null. */
+  error: { code: string; message: string; hint?: string; retryable?: boolean } | null;
+}
+
+/** POST /wiki/import response data — per-file results + how many notes were created. */
+export interface WikiImportResponse {
+  imported: WikiImportResult[];
+  createdCount: number;
+}
+
 /** AI refine suggestion for an inbox item — null at M1, M4 populates. */
 export interface WikiAiSuggest {
   titleClaim: string;
