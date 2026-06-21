@@ -107,3 +107,6 @@ sprints/plan_sprint_11.md
 sprints/plan_sprint_12.md
 sprints/plan_sprint_12A.md
 sprints/plan_sprint_13.md
+
+# secret: MCP config chứa Cairn key plaintext (sec-audit F5 2026-06-21)
+.mcp.json
