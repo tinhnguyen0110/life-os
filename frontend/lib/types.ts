@@ -1970,9 +1970,28 @@ export interface McpCatalogTool {
   description: string;
 }
 
+/** Catalog counts — BE-computed (render-only). byMount = the per-DOMAIN tool count
+ *  (the audit numbers + the domains the scope ticks). `note` honestly explains the
+ *  cross-domain overlap (some domains reference-import shared fns). */
+export interface McpCatalogCounts {
+  /** distinct read-capability tools. */
+  read: number;
+  /** distinct write(propose)-capability tools. */
+  write: number;
+  total: number;
+  /** per-mount/domain listing counts (the scope-editor domains + audit counts). */
+  byMount: Record<string, number>;
+  /** total listing length across mounts (with overlaps). */
+  allMounts: number;
+  note: string;
+}
+
 /** GET /mcp_keys/catalog → the whole tool catalog (audit + scope-editor source).
- *  NOTE (#88): this REST route may not exist yet — `list_tools_catalog` is MCP-only.
- *  The scope-editor depends on it being exposed over REST. */
+ *  Live as of #87. byte-identical to the `list_tools_catalog` MCP payload. */
 export interface McpCatalog {
   tools: McpCatalogTool[];
+  counts: McpCatalogCounts;
+  /** honest per-capability safety boundary text (read/write/apply/...). Shown in the
+   *  audit view so the user understands what each capability class can/can't do. */
+  capabilityBoundary: Record<string, string>;
 }

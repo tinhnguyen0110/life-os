@@ -14,8 +14,8 @@
    change when the catalog lands (the page wires the editor into the create/edit forms).
    ============================================================ */
 import { useCallback, useEffect, useState } from "react";
-import { getMcpKeys, createMcpKey, deleteMcpKey, ApiError } from "@/lib/api";
-import type { McpKey, McpKeyCreate } from "@/lib/types";
+import { getMcpKeys, createMcpKey, updateMcpKey, deleteMcpKey, ApiError } from "@/lib/api";
+import type { McpKey, McpKeyCreate, McpKeyUpdate } from "@/lib/types";
 
 export type McpKeysStatus = "loading" | "error" | "ready";
 
@@ -26,6 +26,8 @@ export interface UseMcpKeys {
   reload: () => void;
   /** create a key; returns the new row (incl. the secret `key`). fail-closed. */
   create: (body: McpKeyCreate) => Promise<McpKey>;
+  /** update a key's label/scope (partial). fail-closed. */
+  update: (key: string, body: McpKeyUpdate) => Promise<McpKey>;
   /** delete a key by its token. fail-closed. */
   remove: (key: string) => Promise<void>;
 }
@@ -68,10 +70,16 @@ export function useMcpKeys(): UseMcpKeys {
     return res.data;
   }, [reload]);
 
+  const update = useCallback(async (key: string, body: McpKeyUpdate) => {
+    const res = await updateMcpKey(key, body); // fail-closed
+    reload();
+    return res.data;
+  }, [reload]);
+
   const remove = useCallback(async (key: string) => {
     await deleteMcpKey(key); // fail-closed
     reload();
   }, [reload]);
 
-  return { keys, status, errMsg, reload, create, remove };
+  return { keys, status, errMsg, reload, create, update, remove };
 }
