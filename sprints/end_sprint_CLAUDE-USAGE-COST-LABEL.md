@@ -1,6 +1,6 @@
 # end_sprint_CLAUDE-USAGE-COST-LABEL — lean costUSD→costUSDAllTime (Cairn #43)
 
-> Result. The MCP claude_usage LEAN output no longer juxtaposes an unlabeled lifetime cost with today-tokens — the key is now `costUSDAllTime` (clearly lifetime). Commit `<hash>` `fix(sprint-CLAUDE-USAGE-COST-LABEL)`. Status: ✅ all gates pass. backend-w3 EDITED (read_server lean projection + test); architect 4-step + committed (§3).
+> Result. The MCP claude_usage LEAN output no longer juxtaposes an unlabeled lifetime cost with today-tokens — the key is now `costUSDAllTime` (clearly lifetime). Commit `b01abce` `fix(sprint-CLAUDE-USAGE-COST-LABEL)`. Status: ✅ all gates pass. backend-w3 EDITED (read_server lean projection + test); architect 4-step + committed (§3).
 
 ## The gap (Rule#0-grounded)
 The MCP `claude_usage` LEAN output (read_server.py) put `today:211923` (token-TODAY) next to `costUSD:54956.58` — but that costUSD is the ALL-TIME LIFETIME sum (`sum(b.costUSD for b in by_model)`), NOT today's cost. An agent reads "$54,956 spent today" = absurd (211K tokens ≈ $0.5-2). Unlabeled lifetime-cost next to today-token = agent-misread (honest-mirror / agent-first-output gap).

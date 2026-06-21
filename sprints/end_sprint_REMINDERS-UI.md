@@ -1,6 +1,6 @@
 # end_sprint_REMINDERS-UI — /reminders screen (Cairn #31, the GAP-4 user-tick UI)
 
-> Result. The /reminders FE screen (list + create + tick) — the user-facing surface for the reminders module (#27-#30 BE). Commit `<hash>` `feat(sprint-REMINDERS-UI)`. Status: ✅ verified (FE agent + team-lead). frontend-w3-2 BUILT; architect committed (§3, commit-hygiene — FE-domain, not a backend 4-step). Was held-for-UI-taste (an over-gate) → committed per the user's "don't hold verified code / build the decided direction" directive.
+> Result. The /reminders FE screen (list + create + tick) — the user-facing surface for the reminders module (#27-#30 BE). Commit `d801e15` `feat(sprint-REMINDERS-UI)`. Status: ✅ verified (FE agent + team-lead). frontend-w3-2 BUILT; architect committed (§3, commit-hygiene — FE-domain, not a backend 4-step). Was held-for-UI-taste (an over-gate) → committed per the user's "don't hold verified code / build the decided direction" directive.
 
 ## What shipped (9 FE files)
 | File | Change |

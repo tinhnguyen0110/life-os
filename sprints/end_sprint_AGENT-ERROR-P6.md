@@ -1,6 +1,6 @@
 # end_sprint_AGENT-ERROR-P6 — FINAL phase, #46 PARENT CLOSED (Cairn #46 + #67)
 
-> Result. The LAST raw errors migrated → **#46 PARENT CLOSED: every agent-facing MCP+REST error in the app is now flat agent_error.** Commit `<hash>` `fix(sprint-AGENT-ERROR-P6)`. Status: ✅ all gates pass. backend-w3 EDITED (5 routers + 4 tests); architect 4-step + committed (§3). Closes #46 parent + #67.
+> Result. The LAST raw errors migrated → **#46 PARENT CLOSED: every agent-facing MCP+REST error in the app is now flat agent_error.** Commit `eb96a4d` `fix(sprint-AGENT-ERROR-P6)`. Status: ✅ all gates pass. backend-w3 EDITED (5 routers + 4 tests); architect 4-step + committed (§3). Closes #46 parent + #67.
 
 ## What shipped (21 sites — the completeness-grep caught 1 my enumeration missed)
 | File | Change |

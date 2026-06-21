@@ -1,6 +1,6 @@
 # end_sprint_AGENT-ERROR-P5 — journal-cluster REST errors → agent_error (Cairn #46 Phase 5)
 
-> Result. journal + decision_journal + reminders + notes REST errors now flat agent_error (reused the P3 helper). Commit `<hash>` `fix(sprint-AGENT-ERROR-P5)`. Status: ✅ all gates pass. backend-w3 EDITED (4 routers + 4 tests); architect 4-step + committed (§3).
+> Result. journal + decision_journal + reminders + notes REST errors now flat agent_error (reused the P3 helper). Commit `97fdf21` `fix(sprint-AGENT-ERROR-P5)`. Status: ✅ all gates pass. backend-w3 EDITED (4 routers + 4 tests); architect 4-step + committed (§3).
 
 ## What shipped
 | File | Change |

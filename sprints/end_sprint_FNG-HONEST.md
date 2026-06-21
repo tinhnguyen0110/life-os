@@ -1,6 +1,6 @@
 # end_sprint_FNG-HONEST — one honest Fear&Greed source (Cairn #44 + #54)
 
-> Result. honest-mirror fix: market_overview no longer contradicts decision/guardian/life_brief on F&G — all surfaces now read the ONE macro store. Commit `<hash>` `fix(sprint-FNG-HONEST)`. Status: ✅ all gates pass. backend-w3 EDITED (market service+schema+test); architect 4-step + committed (§3). team-lead live-verified 3-surface + the band lock.
+> Result. honest-mirror fix: market_overview no longer contradicts decision/guardian/life_brief on F&G — all surfaces now read the ONE macro store. Commit `ee96074` `fix(sprint-FNG-HONEST)`. Status: ✅ all gates pass. backend-w3 EDITED (market service+schema+test); architect 4-step + committed (§3). team-lead live-verified 3-surface + the band lock.
 
 ## The bug (Rule#0-grounded)
 TWO F&G sources used inconsistently: the REAL macro `fear_greed` store (alternative.me, ~23 live — what decision/guardian/life_brief cite) vs a HARDCODED `MacroSignal(value="38")` in market/service.py:599. So market_overview showed mock-38-as-real while every other surface cited the real ~23 = the honest-mirror breach (an agent reading 38 in one tool + 23 in another can't trust either). #54 was the same bug's market_overview=38 half.

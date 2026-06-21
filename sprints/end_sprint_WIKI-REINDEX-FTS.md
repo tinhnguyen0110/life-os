@@ -1,6 +1,6 @@
 # end_sprint_WIKI-REINDEX-FTS — reindex-rebuild resyncs FTS+links (Cairn #68)
 
-> Result. reindex_note's rebuild branch now resyncs ALL 4 secondary indexes (not just the cache row) → wiki_search + backlinks never go stale after an out-of-band md change. Commit `<hash>` `fix(sprint-WIKI-REINDEX-FTS)`. Status: ✅ all gates pass. backend-w3 EDITED (apply.py + reindex.py + __init__ + test); architect 4-step + committed (§3).
+> Result. reindex_note's rebuild branch now resyncs ALL 4 secondary indexes (not just the cache row) → wiki_search + backlinks never go stale after an out-of-band md change. Commit `5189aae` `fix(sprint-WIKI-REINDEX-FTS)`. Status: ✅ all gates pass. backend-w3 EDITED (apply.py + reindex.py + __init__ + test); architect 4-step + committed (§3).
 
 ## The bug (Rule#0-grounded)
 reindex_note's "rebuilt" branch only `upsert_note_cache` (cache row + aliases-in-row). It did NOT refresh the other 3 index-refreshes `_commit_note` does on a write (replace_aliases + _derive_links + _resolve_ghosts_for + fts_upsert). → after a reindex-rebuild (md changed out-of-band → reindex), wiki_search missed the note's new content + backlinks stale. A desync class DIFFERENT from #61 (orphan-row, fixed by reindex_all prune). The W1c "hooks in HERE" comment was never wired.

@@ -1,6 +1,6 @@
 # end_sprint_WIKI-WRITE-404 — agent-readable 404 on the 3 write note-id routes (Cairn #14)
 
-> Result. Closes the #46-agent-error cluster for the note-id surface: all 7 note-id routes (4 GET + 3 WRITE) now return the flat agent_error 404. Commit `<hash>` `fix(sprint-WIKI-WRITE-404)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki router + test); architect 4-step + committed (§3).
+> Result. Closes the #46-agent-error cluster for the note-id surface: all 7 note-id routes (4 GET + 3 WRITE) now return the flat agent_error 404. Commit `f8b9479` `fix(sprint-WIKI-WRITE-404)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki router + test); architect 4-step + committed (§3).
 
 ## The gap (from the WIKI-RECONCILE boundary)
 WIKI-RECONCILE made the 4 GET note-id routes return the flat agent_error 404; the 3 WRITE note-id routes (POST refine / PUT / DELETE) still returned raw `{"detail":...}` — an open consistency gap in the #46-agent-error cluster (an agent gets a code-to-branch-on for a GET 404 but a raw string for a write 404).

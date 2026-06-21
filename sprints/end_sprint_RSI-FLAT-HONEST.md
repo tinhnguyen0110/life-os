@@ -1,6 +1,6 @@
 # end_sprint_RSI-FLAT-HONEST — RSI on a flat series = 50 neutral, not 100 (Cairn #62)
 
-> Result. honest-mirror fix: a flat price series no longer yields RSI=100 ("extreme overbought") — it reads 50 (neutral, zero momentum). Commit `<hash>` `fix(sprint-RSI-FLAT-HONEST)`. Status: ✅ all gates pass. backend-w3 EDITED (ta.py + test); architect 4-step + committed (§3).
+> Result. honest-mirror fix: a flat price series no longer yields RSI=100 ("extreme overbought") — it reads 50 (neutral, zero momentum). Commit `9a41902` `fix(sprint-RSI-FLAT-HONEST)`. Status: ✅ all gates pass. backend-w3 EDITED (ta.py + test); architect 4-step + committed (§3).
 
 ## The bug (Rule#0-grounded — team-lead's analysis confirmed on disk)
 `ta.py:285` `_rsi_from`: `if l == 0: return 100.0`. A FLAT series (all prices equal — common from a mock-flat feed) → every delta 0 → avg_gain=0 AND avg_loss=0 → `l==0` → returns 100.0. RSI=100 = "extreme overbought", but a flat series has ZERO momentum (the opposite). Amplified by `summarize()` (RSI≥70 → `rsi_signal="overbought"`) → life_brief surfaced a fake "overbought" on flat/mock data = honest-mirror breach.

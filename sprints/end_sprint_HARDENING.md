@@ -1,6 +1,6 @@
 # end_sprint_HARDENING — wiki_clusters topMembers + macro_cycle warnings + mypy 9→0 (#39/#40/#57)
 
-> Result. 3 small diverse hardening tasks (#38 dropped — already done). Commit `<hash>` `fix(sprint-HARDENING)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki/macro/exchange/career/claude_usage + 2 tests); architect 4-step + committed (§3).
+> Result. 3 small diverse hardening tasks (#38 dropped — already done). Commit `af61fc7` `fix(sprint-HARDENING)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki/macro/exchange/career/claude_usage + 2 tests); architect 4-step + committed (§3).
 
 ## Kickoff corrections (Rule#0 — caught before dispatch)
 - **#38 DROPPED** — exchange dust-fold ALREADY applied (service.py:158 _fold_dust in get_overview path; MCP returns folded). Not a task.

@@ -1,6 +1,6 @@
 # end_sprint_AGENT-ERROR-P3 — finance+market REST errors → agent_error (Cairn #46 Phase 3)
 
-> Result. finance+market REST errors now match their MCP twins (flat agent_error), via the new reusable `agent_error_response` helper (the spine for P4+). Commit `<hash>` `fix(sprint-AGENT-ERROR-P3)`. Status: ✅ all gates pass. backend-w3 EDITED (core + finance + market + tests); architect 4-step + committed (§3).
+> Result. finance+market REST errors now match their MCP twins (flat agent_error), via the new reusable `agent_error_response` helper (the spine for P4+). Commit `f517b29` `fix(sprint-AGENT-ERROR-P3)`. Status: ✅ all gates pass. backend-w3 EDITED (core + finance + market + tests); architect 4-step + committed (§3).
 
 ## Context
 The MCP twins already returned agent_error (#46-P2). The REST routers still raised raw HTTPException(detail=str) → REST≠MCP for errors. P3 brings finance+market REST to parity (the heavily-MCP-consumed surfaces).

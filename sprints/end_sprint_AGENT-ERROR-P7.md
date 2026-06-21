@@ -1,6 +1,6 @@
 # end_sprint_AGENT-ERROR-P7 — app-level RequestValidationError → agent_error (Cairn #69)
 
-> Result. **The agent-error story is 100% COMPLETE** — the last raw-error class (FastAPI's pre-handler path/query/body validation) is now agent_error. An agent NEVER meets a raw {detail:[...]} on any error. Commit `<hash>` `fix(sprint-AGENT-ERROR-P7)`. Status: ✅ all gates pass. backend-w3 EDITED (main.py + new test); architect 4-step + committed (§3). = the #24 follow-up, prioritized as #69.
+> Result. **The agent-error story is 100% COMPLETE** — the last raw-error class (FastAPI's pre-handler path/query/body validation) is now agent_error. An agent NEVER meets a raw {detail:[...]} on any error. Commit `9b4c59b` `fix(sprint-AGENT-ERROR-P7)`. Status: ✅ all gates pass. backend-w3 EDITED (main.py + new test); architect 4-step + committed (§3). = the #24 follow-up, prioritized as #69.
 
 ## What shipped (2 files — ONE handler, all routes)
 | File | Change |

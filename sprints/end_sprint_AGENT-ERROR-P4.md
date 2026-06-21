@@ -1,6 +1,6 @@
 # end_sprint_AGENT-ERROR-P4 — projects+career REST errors → agent_error (Cairn #46 Phase 4)
 
-> Result. projects+career REST errors now flat agent_error (reused the P3 helper). Commit `<hash>` `fix(sprint-AGENT-ERROR-P4)`. Status: ✅ all gates pass. backend-w3 EDITED (projects+career router + tests); architect 4-step + committed (§3). ⚠️ INTENDED contract change: non-git register 400→422 (see below).
+> Result. projects+career REST errors now flat agent_error (reused the P3 helper). Commit `a74e02b` `fix(sprint-AGENT-ERROR-P4)`. Status: ✅ all gates pass. backend-w3 EDITED (projects+career router + tests); architect 4-step + committed (§3). ⚠️ INTENDED contract change: non-git register 400→422 (see below).
 
 ## What shipped
 | File | Change |

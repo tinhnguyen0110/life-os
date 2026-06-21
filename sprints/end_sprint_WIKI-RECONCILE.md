@@ -1,6 +1,6 @@
 # end_sprint_WIKI-RECONCILE — bulk reindex-prune + agent-readable note-404 (Cairn #53 + #61)
 
-> Result. The wiki tree no longer LIES: orphan cache rows (md gone) are pruned; note-id GET 404s are agent-readable. Commit `<hash>` `fix(sprint-WIKI-RECONCILE)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki reader/router/mcp + automation hook + tests); architect 4-step + committed (§3). team-lead pre-verified 3 routes + reconcile + tool-count; architect caught the 4th GET route pre-commit.
+> Result. The wiki tree no longer LIES: orphan cache rows (md gone) are pruned; note-id GET 404s are agent-readable. Commit `34d6bb8` `fix(sprint-WIKI-RECONCILE)`. Status: ✅ all gates pass. backend-w3 EDITED (wiki reader/router/mcp + automation hook + tests); architect 4-step + committed (§3). team-lead pre-verified 3 routes + reconcile + tool-count; architect caught the 4th GET route pre-commit.
 
 ## The bug (Rule#0-grounded — admin-lead dogfood + team-lead + architect)
 `wiki_tree`/`GET /wiki/tree` listed notes 40-51 (root) but `wiki_get_note`/`GET /notes/{id}` → 404/found:false for all. Root: `all_notes()` reads the disposable SQLite `wiki_notes` cache; `read_note_file()` reads the md. The 40-51 .md files were GONE (test-writes deleting .md without `_apply_delete`) but the cache rows stayed → the tree listed phantom notes an agent then 404s on = honest-mirror breach in the memory layer. (Delete-PATH itself was already fixed — `_apply_delete` apply.py:183 deletes file+cache; the 40-51 were pre-fix orphans needing reconcile.)

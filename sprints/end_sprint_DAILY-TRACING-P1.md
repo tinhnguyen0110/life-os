@@ -1,6 +1,6 @@
 # end_sprint_DAILY-TRACING-P1 — BE store + service + API + derivations (Cairn #65 Phase 1)
 
-> Result. Net-new `modules/tracing/` (G-HABIT) — the BE foundation: raw sessions stored, all metrics DERIVED server-side (VN-day). Commit `<hash>` `fix(sprint-DAILY-TRACING-P1)`. Status: ✅ all gates pass. backend-w3 BUILT (6 module files + test); architect 4-step + committed (§3). Phase 1 of 4 (P1 BE → P2 MCP → P3 FE → P4 brief).
+> Result. Net-new `modules/tracing/` (G-HABIT) — the BE foundation: raw sessions stored, all metrics DERIVED server-side (VN-day). Commit `333054a` `fix(sprint-DAILY-TRACING-P1)`. Status: ✅ all gates pass. backend-w3 BUILT (6 module files + test); architect 4-step + committed (§3). Phase 1 of 4 (P1 BE → P2 MCP → P3 FE → P4 brief).
 
 ## What shipped (6 new module files + test, 952 lines)
 | File | Change |
