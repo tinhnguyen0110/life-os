@@ -351,6 +351,12 @@ def scan(days: int = _DEFAULT_DAYS) -> dict:
                                      "first": None, "last": None})
     seen_shas: set[str] = set()  # P2 dedup: a commit counted (local or remote) goes here once
     scanned = 0
+    # #85: the set of repo NAMES this scan actually touched (basename = the `repo` column). The
+    # scan is AUTHORITATIVE for (since_day..today × these repos); we delete their stale rows before
+    # re-upserting so an attribution change (e.g. #84 'other'→'you') leaves NO orphan source row.
+    # Includes a LOCAL repo even if it had 0 commits this window (it was scanned → a now-empty
+    # (date,repo) stale row must still be cleared); remote repo names are added from the agg keys.
+    scanned_repos: set[str] = set()
     # --- LOCAL scan first (records shas into seen_shas for the remote dedup) ---
     for root in roots:
         repos = _find_repos(root)
@@ -359,6 +365,7 @@ def scan(days: int = _DEFAULT_DAYS) -> dict:
             continue
         for repo_path in repos:
             _scan_repo(repo_path, since_day, emails, agg, seen_shas)
+            scanned_repos.add(os.path.basename(repo_path.rstrip("/")))  # scanned even if 0 commits
             scanned += 1
     warnings.extend(agg.pop("_warnings", []))
 
@@ -377,17 +384,24 @@ def scan(days: int = _DEFAULT_DAYS) -> dict:
         _fold_remote(_bitbucket_commits(host, bu, bp, since_dt, warnings), emails, agg, seen_shas,
                      "bitbucket")
 
-    rows = 0
-    your_commits = 0
-    for (date, repo, source), a in agg.items():
-        store.upsert_day(
-            date=date, repo=repo, source=source, commits=a["commits"],
-            loc_added=a["loc_add"], loc_deleted=a["loc_del"],
-            first_ts=a["first"], last_ts=a["last"],
-        )
-        rows += 1
-        if source == "you":
-            your_commits += a["commits"]
+    # #85: the agg keys also name every REMOTE repo this scan re-derived (GitHub/Bitbucket repo
+    # names) — union them into the authoritative scanned set so their stale rows are cleared too.
+    scanned_repos.update(repo for (_d, repo, _s) in agg.keys())
+
+    # #85 shape (a) — ATOMIC authoritative-window replace: in ONE transaction, DELETE the stale
+    # rows for (date >= since_day × scanned_repos) THEN upsert the fresh aggregates. So an
+    # attribution change (#84 'other'→'you') leaves NO orphan source row, AND a flaky/partial scan
+    # rolls back instead of leaving a wiped-not-refilled window (#72-incident-level safety; the
+    # delete is SCOPED to the repos scanned this run → a 0-commit/unreachable scan wipes nothing).
+    aggregates = [
+        {"date": date, "repo": repo, "source": source, "commits": a["commits"],
+         "loc_added": a["loc_add"], "loc_deleted": a["loc_del"],
+         "first_ts": a["first"], "last_ts": a["last"]}
+        for (date, repo, source), a in agg.items()
+    ]
+    store.replace_window(since_day, scanned_repos, aggregates)
+    rows = len(aggregates)
+    your_commits = sum(a["commits"] for a in aggregates if a["source"] == "you")
 
     # DEV-ACTIVITY-STORE (#77): stamp the scan time so the read path surfaces honest freshness.
     # Stamped even on a 0-row scan (a scan DID run — "scanned, found nothing" ≠ "never scanned").

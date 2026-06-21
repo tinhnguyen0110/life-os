@@ -67,6 +67,74 @@ def upsert_day(*, date: str, repo: str, source: str, commits: int, loc_added: in
         conn.commit()
 
 
+def delete_window(since_date: str, repos: list[str] | set[str]) -> int:
+    """#85: SCOPED delete — remove dev_activity rows on/after ``since_date`` for ONLY the given
+    ``repos`` (a scan re-derives these, so it is AUTHORITATIVE for that (date-window × repo) and
+    must leave no stale row from a prior attribution). Returns the rowcount deleted.
+
+    🔴 SCOPED, never blanket (the snapshot-wipe lesson #72): bounded to BOTH date>=since AND
+    repo IN the explicit scanned set. ``repos`` EMPTY → delete NOTHING (return 0) — a 0-commit /
+    all-roots-unreachable scan must NOT wipe the store. Repos NOT scanned this run keep their rows
+    (honest: we didn't re-derive them, so we don't touch them)."""
+    repo_list = list(repos)
+    if not repo_list:
+        return 0  # nothing scanned → delete nothing (NEVER a blanket wipe)
+    init_dev_activity_tables()
+    conn = db.get_conn()
+    placeholders = ",".join("?" for _ in repo_list)
+    with _lock:
+        cur = conn.execute(
+            f"DELETE FROM dev_activity WHERE date >= ? AND repo IN ({placeholders})",  # noqa: S608 (params bound)
+            (since_date, *repo_list),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def replace_window(since_date: str, repos: list[str] | set[str],
+                   aggregates: list[dict]) -> int:
+    """#85 shape (a) — ATOMIC authoritative-window replace: in ONE transaction, DELETE the stale
+    rows for (date>=since_date × scanned ``repos``) THEN upsert the fresh ``aggregates``. Returns
+    the number of aggregate rows upserted.
+
+    🔴 #72-INCIDENT-LEVEL SAFETY (dev_activity is live runtime SQLite, no backup — same data-class
+    as portfolio_snapshot):
+      - SCOPED: the DELETE pins BOTH date>=since_date AND repo IN the explicit scanned set (never a
+        blanket / date-only delete). ``repos`` EMPTY → DELETE NOTHING (a 0-commit / unreachable-root
+        scan can NOT wipe the store).
+      - ATOMIC (belt-and-suspenders): the delete + all upserts run in ONE transaction; if ANY upsert
+        raises, the WHOLE thing ROLLS BACK → the store is left UNTOUCHED. A flaky/partial scan never
+        leaves a wiped-but-not-refilled window.
+
+    Each aggregate dict: {date, repo, source, commits, loc_added, loc_deleted, first_ts, last_ts}."""
+    init_dev_activity_tables()
+    conn = db.get_conn()
+    repo_list = list(repos)
+    with _lock:
+        try:
+            if repo_list:  # SCOPED + non-empty: a 0-repo scan deletes nothing (never a wipe)
+                placeholders = ",".join("?" for _ in repo_list)
+                conn.execute(
+                    f"DELETE FROM dev_activity WHERE date >= ? AND repo IN ({placeholders})",  # noqa: S608 (params bound)
+                    (since_date, *repo_list),
+                )
+            for a in aggregates:
+                conn.execute(
+                    "INSERT INTO dev_activity(date, repo, source, commits, loc_added, loc_deleted, "
+                    "first_ts, last_ts) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(date, repo, source) DO UPDATE SET commits=excluded.commits, "
+                    "loc_added=excluded.loc_added, loc_deleted=excluded.loc_deleted, "
+                    "first_ts=excluded.first_ts, last_ts=excluded.last_ts",
+                    (a["date"], a["repo"], a["source"], a["commits"], a["loc_added"],
+                     a["loc_deleted"], a["first_ts"], a["last_ts"]),
+                )
+            conn.commit()  # ONE commit — delete + all upserts land together, or not at all
+        except Exception:
+            conn.rollback()  # any failure → store UNTOUCHED (never a wiped-not-refilled window)
+            raise
+    return len(aggregates)
+
+
 def rows_since(since_date: str) -> list[sqlite3.Row]:
     """All aggregate rows on/after ``since_date`` (YYYY-MM-DD), newest-day-first. The reader's
     derive source. Returns raw rows (the reader maps + fail-opens on a malformed row)."""

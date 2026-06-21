@@ -131,6 +131,129 @@ def test_comma_emails_tag_you_end_to_end(tmp_path, isolated_paths, monkeypatch):
     assert result["yourCommits"] == 1, "the comma-list email must match → tag 'you' (was 0 with split ':')"
 
 
+# --- #85: authoritative-window delete — stale rows from an attribution change are cleared ---- #
+def test_scan_clears_stale_other_row_after_attribution_flip(temp_repo, monkeypatch):
+    """#85 THE TEETH: the (date,repo) had a stale 'other' row (pre-#84 artifact); a re-scan that
+    re-derives it as 'you' (now that the email matches) DELETES the stale 'other' row — no orphan,
+    no double-count. Revert delete_window → the stale 'other' survives (RED)."""
+    import datetime
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    repo_name = "myrepo"  # temp_repo's basename (root/myrepo)
+    # SEED the stale 'other' row (simulate the pre-#84 colon-split artifact)
+    store.upsert_day(date=today, repo=repo_name, source="other", commits=5, loc_added=5,
+                     loc_deleted=0, first_ts="09:00", last_ts="09:00")
+    # a real commit by the identity-email → re-derives as 'you'
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="mine")
+
+    service.scan(days=30)
+    rows = store.rows_since("2000-01-01")
+    others = [r for r in rows if r["source"] == "other" and r["repo"] == repo_name]
+    yous = [r for r in rows if r["source"] == "you" and r["repo"] == repo_name]
+    assert others == [], "the stale 'other' row must be DELETED by the authoritative-window scan"
+    assert yous and yous[0]["commits"] == 1, "the commit is now attributed to 'you' (real count)"
+
+
+def test_scan_no_date_repo_has_both_sources(temp_repo, monkeypatch):
+    """#85: after a scan, no (date,repo) pair carries BOTH 'you' AND 'other' from a single
+    identity's commits (the double-count signature). Here all commits are mine → only 'you'."""
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="c1")
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=2\n"}, msg="c2")
+    service.scan(days=30)
+    rows = store.rows_since("2000-01-01")
+    by_date_repo: dict = {}
+    for r in rows:
+        by_date_repo.setdefault((r["date"], r["repo"]), set()).add(r["source"])
+    both = {k: v for k, v in by_date_repo.items() if v == {"you", "other"}}
+    assert not both, f"no (date,repo) should have BOTH sources for a single-identity repo: {both}"
+
+
+def test_delete_window_scoped_does_not_wipe_unscanned_repos(isolated_paths):
+    """#85 SCOPED-DELETE SAFETY (snapshot-wipe guard): delete_window only touches the named repos
+    + date-window. A row for a DIFFERENT repo (not in the scanned set) SURVIVES."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-20", repo="scanned-repo", source="other", commits=3,
+                     loc_added=3, loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    store.upsert_day(date="2026-06-20", repo="OTHER-repo", source="you", commits=2,
+                     loc_added=2, loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    deleted = store.delete_window("2026-06-01", {"scanned-repo"})
+    assert deleted == 1
+    survivors = {(r["repo"], r["source"]) for r in store.rows_since("2000-01-01")}
+    assert survivors == {("OTHER-repo", "you")}, "only the scanned repo's rows deleted; others survive"
+
+
+def test_delete_window_empty_repos_deletes_nothing(isolated_paths):
+    """#85 SCOPED-DELETE SAFETY: an EMPTY scanned set (0-commit / unreachable-root scan) deletes
+    NOTHING — never a blanket wipe of the whole store."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-20", repo="r", source="you", commits=1, loc_added=1,
+                     loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    deleted = store.delete_window("2026-06-01", set())
+    assert deleted == 0
+    assert len(store.rows_since("2000-01-01")) == 1, "an empty-set delete must NOT wipe rows"
+
+
+def test_scan_unreachable_root_does_not_wipe_existing(tmp_path, isolated_paths, monkeypatch):
+    """#85 SCOPED-DELETE SAFETY e2e: a scan whose root is unreachable (nothing scanned) must NOT
+    delete pre-existing rows — scanned_repos is empty → delete_window is a no-op."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-20", repo="old-repo", source="you", commits=9, loc_added=9,
+                     loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    monkeypatch.setenv("DEV_TRACING_ROOTS", str(tmp_path / "does-not-exist"))
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "me@example.com")
+    service.scan(days=30)
+    rows = store.rows_since("2000-01-01")
+    assert any(r["repo"] == "old-repo" and r["commits"] == 9 for r in rows), \
+        "an unreachable-root scan must NOT wipe pre-existing rows (snapshot-wipe guard)"
+
+
+def test_replace_window_atomic_rollback_leaves_store_untouched(isolated_paths):
+    """#85 shape-(a) ATOMICITY (the #72-level guard): if the upsert phase RAISES mid-replace, the
+    WHOLE transaction ROLLS BACK — the pre-existing rows are UNTOUCHED (never wiped-not-refilled).
+    Feed a malformed aggregate (missing key) → KeyError mid-loop → assert the old rows survive."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-20", repo="r1", source="you", commits=7, loc_added=7,
+                     loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    bad_aggregates = [{"date": "2026-06-21", "repo": "r1", "source": "you"}]  # missing commits/loc → KeyError
+    import pytest as _pt
+    with _pt.raises(KeyError):
+        store.replace_window("2026-06-01", {"r1"}, bad_aggregates)
+    # the DELETE was in the same txn as the failing upsert → rolled back → r1's old row SURVIVES
+    rows = store.rows_since("2000-01-01")
+    assert any(r["repo"] == "r1" and r["commits"] == 7 for r in rows), \
+        "a failed replace must roll back the delete — the store stays untouched (no wipe)"
+
+
+def test_replace_window_empty_repos_deletes_nothing_but_upserts(isolated_paths):
+    """#85 shape-(a): empty scanned set → NO delete (no wipe), but the aggregates still upsert."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-20", repo="keep", source="you", commits=1, loc_added=1,
+                     loc_deleted=0, first_ts="09:00", last_ts="10:00")
+    store.replace_window("2026-06-01", set(), [])  # nothing scanned, nothing to write
+    assert len(store.rows_since("2000-01-01")) == 1, "empty-repo replace must NOT wipe existing rows"
+
+
+def test_replace_window_clears_stale_then_writes_fresh(isolated_paths):
+    """#85 shape-(a) happy path: a stale 'other' row for (date,repo) + a fresh 'you' aggregate for
+    the same (date,repo) → after replace, ONLY the fresh 'you' row remains (atomic delete+upsert)."""
+    store.init_dev_activity_tables()
+    store.upsert_day(date="2026-06-21", repo="repoA", source="other", commits=9, loc_added=9,
+                     loc_deleted=0, first_ts="08:00", last_ts="08:30")
+    fresh = [{"date": "2026-06-21", "repo": "repoA", "source": "you", "commits": 3,
+              "loc_added": 3, "loc_deleted": 0, "first_ts": "09:00", "last_ts": "09:30"}]
+    store.replace_window("2026-06-01", {"repoA"}, fresh)
+    rows = {(r["repo"], r["source"], r["commits"]) for r in store.rows_since("2000-01-01")}
+    assert rows == {("repoA", "you", 3)}, "stale 'other' cleared; only the fresh 'you' row remains"
+
+
+def test_scan_idempotent_no_double_count_on_rescan(temp_repo):
+    """#85: scanning the SAME repo twice → counts UNCHANGED (the authoritative delete+upsert is
+    idempotent — the 2nd scan re-derives + replaces, never accumulates)."""
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="c1")
+    r1 = service.scan(days=30)
+    r2 = service.scan(days=30)
+    assert r1["yourCommits"] == r2["yourCommits"] == 1, "re-scan must not double-count"
+
+
 # --- LOC_SKIP: a lockfile + a real file → LOC counts ONLY the real file --------------------- #
 def test_loc_skip_excludes_lockfile(temp_repo):
     _commit(temp_repo, email="me@example.com", name="Me",
