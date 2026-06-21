@@ -1744,3 +1744,88 @@ export interface Activity {
   created: string;
   archived: boolean;
 }
+
+/* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----
+   Mirrors the FROZEN backend dev_activity/schema.py (P1). "what did I code, which
+   project, when" derived FROM git (commits/LOC/active-span per date×repo). RENDER-ONLY:
+   the BE computes everything. "you" = commits attributed via DEV_TRACING_EMAILS;
+   everything else is "other" (team context, NOT in your totals). LOC is informational
+   (Goodhart) — secondary, NOT the headline. */
+
+/** One repo's activity on one VN-day. source "you" = attributed to you, "other" = team. */
+export interface RepoDay {
+  /** VN-day "YYYY-MM-DD". */
+  date: string;
+  repo: string;
+  source: "you" | "other";
+  commits: number;
+  locAdded: number;
+  locDeleted: number;
+  /** first commit time "HH:MM" (VN), else null. */
+  firstTs: string | null;
+  /** last commit time "HH:MM" (VN), else null. */
+  lastTs: string | null;
+  /** first→last span "Hh Mm", "" when <2 commits. */
+  activeSpan: string;
+}
+
+/** One VN-day's roll-up — repos active that day + YOUR totals (your-only). */
+export interface DayView {
+  date: string;
+  /** every repo with activity that day (you + other). */
+  repos: RepoDay[];
+  /** YOUR commits that day (source="you" only). 0 when none attributed. */
+  totalCommits: number;
+  /** count of YOUR active repos that day. */
+  activeRepos: number;
+}
+
+/** A repo's roll-up over the whole range (YOUR activity). */
+export interface RepoSummary {
+  repo: string;
+  commits: number;
+  locAdded: number;
+  locDeleted: number;
+  activeDays: number;
+  /** last VN-day you touched it, else null. */
+  lastActive: string | null;
+}
+
+/** The whole-range YOUR-activity summary (the KPI strip). */
+export interface DevActivitySummary {
+  totalCommits: number;
+  activeDays: number;
+  activeRepos: number;
+  locAdded: number;
+  locDeleted: number;
+  /** ≤5 repos by your commits, desc. [] when no "you" attribution. */
+  topRepos: RepoSummary[];
+}
+
+/** GET /dev_activity → the dev-activity board (render-only). honest-empty "you":
+ *  DEV_TRACING_EMAILS unset → summary all-0, byRepo [], everything in otherRepos
+ *  (tagged "other") + a warning. Render the empty-state-for-you + STILL show
+ *  otherRepos as team context. */
+export interface DevActivityOverview {
+  /** the range covered (days), e.g. 90. */
+  rangeDays: number;
+  /** per-day, newest-first. */
+  byDay: DayView[];
+  /** YOUR repos, commits-desc. [] when no attribution. */
+  byRepo: RepoSummary[];
+  /** team-context rows (source "other") — tagged, NOT in your totals. */
+  otherRepos: RepoDay[];
+  summary: DevActivitySummary;
+  scannedRepos: number;
+  /** honest notices (e.g. "DEV_TRACING_EMAILS not set …"). Shown verbatim. */
+  warnings: string[];
+}
+
+/** POST /dev_activity/scan → re-scan result. */
+export interface DevScanResult {
+  scannedRepos: number;
+  days: number;
+  rowsUpserted: number;
+  yourCommits: number;
+  warnings: string[];
+}

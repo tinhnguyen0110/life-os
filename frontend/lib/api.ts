@@ -73,6 +73,8 @@ import type {
   TracingLogInput,
   ActivityInput,
   ActivityPatch,
+  DevActivityOverview,
+  DevScanResult,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -801,6 +803,23 @@ export function updateActivity(id: string, body: ActivityPatch): Promise<ApiResp
  *  its logged sessions survive. Returns {archived:id}. 404 if unknown. */
 export function archiveActivity(id: string): Promise<ApiResponse<{ archived: string }>> {
   return apiDelete<{ archived: string }>(`/tracing/activities/${encodeURIComponent(id)}`);
+}
+
+/* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----
+   Backend REST is shipped + FROZEN (P1); FE consumes only. Errors are the
+   post-#46/#70 {error:{code,message,hint}} shape (errorFromBody/ApiError). */
+
+/** GET /dev_activity?days=N — the dev-activity board (default 90 days).
+ *  honest-empty "you" when DEV_TRACING_EMAILS unset (summary all-0 + everything
+ *  in otherRepos + a warning). */
+export function getDevActivity(days = 90): Promise<ApiResponse<DevActivityOverview>> {
+  return apiGet<DevActivityOverview>(`/dev_activity?days=${days}`);
+}
+
+/** POST /dev_activity/scan?days=N — re-scan the tracked repos now. Returns the
+ *  scan result (scannedRepos/rowsUpserted/yourCommits/warnings). */
+export function scanDevActivity(days = 90): Promise<ApiResponse<DevScanResult>> {
+  return apiPost<DevScanResult>(`/dev_activity/scan?days=${days}`);
 }
 
 export const apiBase = BASE;
