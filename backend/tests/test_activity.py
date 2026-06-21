@@ -463,60 +463,51 @@ def test_routine_name_resolves_known_catalog_entry():
 
 
 # =========================================================================== #
-# SECTION B — API (skip-guarded: server at :8686 WITH activity module loaded)   #
+# SECTION B — API (in-process TestClient, #74)                                  #
 # =========================================================================== #
-
-# NOTE: `requests` is imported LAZILY (not via a module-level importorskip).
-# A module-scope `pytest.importorskip("requests")` raises Skipped at import time,
-# which skips the ENTIRE module — including Section A's service unit tests that do
-# not need `requests` at all. That made all ~24 service tests silently vanish and
-# left modules/activity/service.py at ~19% coverage. Import inside the fixture so a
-# missing `requests` only skips Section B (the live-server API tests).
-try:
-    import requests  # noqa: E402
-except ImportError:  # pragma: no cover — env without requests
-    requests = None
-
-BASE = "http://localhost:8686"
+# #74: was 15 @pytest.mark.slow tests hitting a LIVE :8686 server via `requests`
+# (skip-guarded + flaky under contention → #58 marked them slow → they vanished
+# from the DEFAULT suite, masking the flake). Now in-process TestClient(app):
+# fast, deterministic, NO live server, runs in DEFAULT. The 2 value-by-value tests
+# that asserted REAL S10A run_log rows now SEED their own rows + assert against the
+# seed (a TestClient app starts with an EMPTY db — a naive convert would make them
+# vacuous, a silent coverage loss). _seed (Section A) → db.record_run on the app's
+# isolated db; assert value-by-value against what was seeded.
+from fastapi.testclient import TestClient  # noqa: E402
 
 
-def _server_up() -> bool:
-    if requests is None:
-        return False
-    try:
-        return requests.get(f"{BASE}/health", timeout=2).status_code == 200
-    except Exception:
-        return False
+@pytest.fixture
+def app_client(tmp_path, monkeypatch):
+    """Real app via in-process TestClient against an isolated tmp db (scheduler OFF →
+    routines register but never fire; project_repos empty → no real repo scan). The db
+    starts EMPTY — tests that need run_log rows SEED them via db.record_run (Section A's
+    _seed writes to this same isolated db once the app is up)."""
+    from core.config import settings
+    from store import db
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    monkeypatch.setattr(settings, "db_path", tmp_path / "store" / "test.db")
+    monkeypatch.setattr(settings, "scheduler_enabled", False)  # no timers in tests
+    monkeypatch.setattr(settings, "project_repos", {})
+    monkeypatch.setattr(db, "DB_PATH", None)
+    db.close_db()
+    import main as main_mod
+    app = main_mod.create_app()
+    with TestClient(app) as c:
+        yield c
+    db.close_db()
 
 
-@pytest.fixture(scope="module")
-def server():
-    """Skip API section if server not up OR pre-T1 (activity module not registered)."""
-    if requests is None:
-        pytest.skip("requests not installed — live-server API tests skipped")
-    if not _server_up():
-        pytest.skip("BE server not running at :8686 — API tests skipped")
-    try:
-        r = requests.get(f"{BASE}/health", timeout=2)
-        modules = r.json()["data"].get("modules", [])
-        if "activity" not in modules:
-            pytest.skip("Server predates S10B-T1 — restart needed for /activity")
-    except Exception:
-        pytest.skip("Could not determine server module list")
-
-
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_health_includes_activity(server):
+def test_api_health_includes_activity(app_client):
     """GET /health lists 'activity' in loaded modules."""
-    modules = requests.get(f"{BASE}/health", timeout=5).json()["data"].get("modules", [])
+    modules = app_client.get("/health").json()["data"].get("modules", [])
     assert "activity" in modules, f"'activity' not in modules: {modules}"
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_get_activity_envelope(server):
+def test_api_get_activity_envelope(app_client):
     """GET /activity → {success:true, data:{runs[], count, runsToday, okCount, warnCount,
     errorCount, successRate, avgDurationMs, byRoutine[]}}."""
-    r = requests.get(f"{BASE}/activity", timeout=5)
+    r = app_client.get("/activity")
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is True
@@ -527,108 +518,118 @@ def test_api_get_activity_envelope(server):
     assert isinstance(d["runs"], list) and isinstance(d["count"], int)
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_get_activity_real_s10a_rows(server):
-    """LIVE value-by-value: GET /activity contains real S10A run_log rows.
-    At minimum: market-poll ok and idle-hunter warn rows exist from S10A verification."""
-    runs = requests.get(f"{BASE}/activity", timeout=5).json()["data"]["runs"]
-    assert len(runs) > 0, "Expected S10A runs in run_log, got empty feed"
+def test_api_get_activity_real_s10a_rows(app_client):
+    """value-by-value: SEED a market-poll OK row + an idle-hunter WARN row → GET /activity
+    returns them with the full ActivityRun shape. (#74: seeded — NOT a vacuous >=0 check.
+    Revert the seed → this goes RED, the teeth-proof.)"""
+    _seed("market-poll", "ok", started_offset=0, finished_offset=1, detail="checked 5 prices")
+    _seed("idle-hunter", "warn", started_offset=10, finished_offset=12, detail="2 idle projects")
+
+    runs = app_client.get("/activity").json()["data"]["runs"]
+    assert len(runs) == 2, f"seeded 2 rows, feed has {len(runs)}"
 
     routine_ids = {run["routineId"] for run in runs}
-    assert "market-poll" in routine_ids or "idle-hunter" in routine_ids, \
-        f"Expected S10A routine ids, got: {routine_ids}"
+    assert routine_ids == {"market-poll", "idle-hunter"}, \
+        f"expected the 2 seeded routine ids, got: {routine_ids}"
 
-    # ActivityRun shape
+    # ActivityRun shape — every field present, on a real seeded row
     run = runs[0]
     for field in ("id", "routineId", "routineName", "status", "detail",
                   "startedAt", "finishedAt", "durationMs"):
         assert field in run, f"ActivityRun missing field '{field}'"
     assert run["status"] in ("ok", "warn", "error")
     assert run["routineName"]
+    # newest-first: idle-hunter (offset 10) is newer than market-poll (offset 0)
+    assert run["routineId"] == "idle-hunter" and run["status"] == "warn"
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_successrate_is_percentage(server):
-    """LIVE: successRate is a percentage (0–100), not a fraction."""
-    d = requests.get(f"{BASE}/activity", timeout=5).json()["data"]
-    sr = d["successRate"]
-    if sr is not None:
-        assert 0.0 <= sr <= 100.0, \
-            f"successRate should be 0-100 (percentage), got {sr}"
-        # Extra sanity: if all runs are ok, should be 100.0
-        if d["okCount"] == d["count"] and d["count"] > 0:
-            assert sr == 100.0
+def test_api_successrate_is_percentage(app_client):
+    """successRate is a PERCENTAGE (0–100), not a fraction. SEED 4 ok + 1 warn → 80.0
+    (distinguishing: a fraction would be 0.8). All-ok subset would be 100.0."""
+    for i in range(4):
+        _seed("market-poll", "ok", started_offset=i, finished_offset=i + 1)
+    _seed("market-poll", "warn", started_offset=20, finished_offset=21, detail="rate-limited")
+
+    d = app_client.get("/activity").json()["data"]
+    assert d["count"] == 5 and d["okCount"] == 4 and d["warnCount"] == 1
+    assert d["successRate"] == 80.0, f"4/5 ok must be 80.0 (percentage), got {d['successRate']}"
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_by_routine(server):
-    """GET /activity?routine=market-poll returns only market-poll rows."""
-    runs = requests.get(f"{BASE}/activity?routine=market-poll", timeout=5).json()["data"]["runs"]
-    if runs:
-        assert all(r["routineId"] == "market-poll" for r in runs)
+def test_api_successrate_all_ok_is_100(app_client):
+    """All-ok feed → successRate == 100.0 (the percentage upper bound, not 1.0)."""
+    for i in range(3):
+        _seed("market-poll", "ok", started_offset=i, finished_offset=i + 1)
+    d = app_client.get("/activity").json()["data"]
+    assert d["okCount"] == d["count"] == 3
+    assert d["successRate"] == 100.0
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_status_warn(server):
-    """GET /activity?status=warn returns only warn rows."""
-    runs = requests.get(f"{BASE}/activity?status=warn", timeout=5).json()["data"]["runs"]
-    if runs:
-        assert all(r["status"] == "warn" for r in runs)
+def test_api_filter_by_routine(app_client):
+    """GET /activity?routine=market-poll returns ONLY market-poll rows (seed a mix)."""
+    _seed("market-poll", "ok", started_offset=0, finished_offset=1)
+    _seed("idle-hunter", "warn", started_offset=5, finished_offset=6, detail="idle")
+    runs = app_client.get("/activity?routine=market-poll").json()["data"]["runs"]
+    assert runs, "filtered feed should have the seeded market-poll row"
+    assert all(r["routineId"] == "market-poll" for r in runs)
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_status_garbage_is_200_lenient(server):
+def test_api_filter_status_warn(app_client):
+    """GET /activity?status=warn returns ONLY warn rows (seed ok + warn)."""
+    _seed("market-poll", "ok", started_offset=0, finished_offset=1)
+    _seed("idle-hunter", "warn", started_offset=5, finished_offset=6, detail="idle")
+    runs = app_client.get("/activity?status=warn").json()["data"]["runs"]
+    assert runs, "filtered feed should have the seeded warn row"
+    assert all(r["status"] == "warn" for r in runs)
+
+
+def test_api_filter_status_garbage_is_200_lenient(app_client):
     """GET /activity?status=garbage → 200 (lenient — ignored, NOT 422)."""
-    r = requests.get(f"{BASE}/activity?status=garbage", timeout=5)
+    r = app_client.get("/activity?status=garbage")
     assert r.status_code == 200, \
         f"invalid status should return 200 (lenient), got {r.status_code}"
     assert r.json()["success"] is True
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_range_today_200(server):
+def test_api_filter_range_today_200(app_client):
     """GET /activity?range=today → 200."""
-    r = requests.get(f"{BASE}/activity?range=today", timeout=5)
+    r = app_client.get("/activity?range=today")
     assert r.status_code == 200
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_range_7d_200(server):
+def test_api_filter_range_7d_200(app_client):
     """GET /activity?range=7d → 200."""
-    assert requests.get(f"{BASE}/activity?range=7d", timeout=5).status_code == 200
+    assert app_client.get("/activity?range=7d").status_code == 200
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_filter_range_garbage_is_200_lenient(server):
+def test_api_filter_range_garbage_is_200_lenient(app_client):
     """GET /activity?range=garbage → 200 (lenient — ignored, NOT 422)."""
-    r = requests.get(f"{BASE}/activity?range=garbage", timeout=5)
+    r = app_client.get("/activity?range=garbage")
     assert r.status_code == 200, \
         f"invalid range should return 200 (lenient), got {r.status_code}"
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_byRoutine_fields(server):
-    """GET /activity byRoutine entries have all RoutineBreakdown fields.
-    Field is 'routine' (id), NOT 'routineId'."""
-    by = requests.get(f"{BASE}/activity", timeout=5).json()["data"]["byRoutine"]
-    if by:
-        entry = by[0]
-        for field in ("routine", "routineName", "count", "okCount",
-                      "warnCount", "errorCount", "lastRun"):
-            assert field in entry, f"byRoutine entry missing '{field}'"
-        assert "routineId" not in entry, \
-            "byRoutine must use 'routine' (not 'routineId') per schema"
+def test_api_byRoutine_fields(app_client):
+    """GET /activity byRoutine entries have all RoutineBreakdown fields. Field is
+    'routine' (id), NOT 'routineId'. Seed a row so byRoutine is non-empty (real check)."""
+    _seed("market-poll", "ok", started_offset=0, finished_offset=1)
+    by = app_client.get("/activity").json()["data"]["byRoutine"]
+    assert by, "byRoutine should have the seeded routine"
+    entry = by[0]
+    for field in ("routine", "routineName", "count", "okCount",
+                  "warnCount", "errorCount", "lastRun"):
+        assert field in entry, f"byRoutine entry missing '{field}'"
+    assert "routineId" not in entry, \
+        "byRoutine must use 'routine' (not 'routineId') per schema"
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_get_run_by_id(server):
-    """GET /activity/{id} for a real row → 200 + ActivityRun shape."""
-    runs = requests.get(f"{BASE}/activity", timeout=5).json()["data"]["runs"]
-    if not runs:
-        pytest.skip("No runs in feed")
+def test_api_get_run_by_id(app_client):
+    """GET /activity/{id} for a seeded row → 200 + ActivityRun matching the list row."""
+    _seed("market-poll", "ok", started_offset=0, finished_offset=1, detail="real row")
+    runs = app_client.get("/activity").json()["data"]["runs"]
+    assert runs, "seeded feed must be non-empty"
     run_id = runs[0]["id"]
 
-    r = requests.get(f"{BASE}/activity/{run_id}", timeout=5)
+    r = app_client.get(f"/activity/{run_id}")
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["id"] == run_id
@@ -636,26 +637,27 @@ def test_api_get_run_by_id(server):
     assert data["status"] == runs[0]["status"]
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_get_run_unknown_404(server):
+def test_api_get_run_unknown_404(app_client):
     """GET /activity/999999999 → 404."""
-    assert requests.get(f"{BASE}/activity/999999999", timeout=5).status_code == 404
+    assert app_client.get("/activity/999999999").status_code == 404
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_get_run_non_int_422(server):
+def test_api_get_run_non_int_422(app_client):
     """GET /activity/not-an-int → 422 (FastAPI auto-validates int path param)."""
-    assert requests.get(f"{BASE}/activity/not-an-int", timeout=5).status_code == 422
+    assert app_client.get("/activity/not-an-int").status_code == 422
 
 
-@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
-def test_api_idle_hunter_warn_has_detail(server):
-    """LIVE: idle-hunter warn row has non-empty detail mentioning idle projects (S10A)."""
-    runs = requests.get(
-        f"{BASE}/activity?routine=idle-hunter&status=warn", timeout=5
+def test_api_idle_hunter_warn_has_detail(app_client):
+    """SEED an idle-hunter WARN row WITH non-empty detail → GET /activity?routine=idle-hunter
+    &status=warn returns it with the detail intact. (#74: seeded — revert seed → RED.)"""
+    _seed("idle-hunter", "warn", started_offset=0, finished_offset=1,
+          detail="3 idle projects: alpha, beta, gamma")
+    runs = app_client.get(
+        "/activity?routine=idle-hunter&status=warn"
     ).json()["data"]["runs"]
-    if runs:
-        assert runs[0]["detail"], "idle-hunter warn row should have non-empty detail"
+    assert len(runs) == 1, f"seeded 1 idle-hunter warn row, got {len(runs)}"
+    assert runs[0]["detail"] == "3 idle projects: alpha, beta, gamma", \
+        "idle-hunter warn row should carry its non-empty detail"
 
 
 # =========================================================================== #
