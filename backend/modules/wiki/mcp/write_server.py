@@ -169,10 +169,15 @@ def _enqueue(kind: ProposalKind, *, target_id: int | None, payload: dict[str, An
 # ``rationale`` is OPTIONAL. Names kept (propose_*) for the stable tool contract.  #
 # --------------------------------------------------------------------------- #
 def propose_note(title: str, content: str, rationale: str | None = None,
-                 tags: list[str] | None = None) -> dict[str, Any]:
+                 tags: list[str] | None = None, folder: str | None = None) -> dict[str, Any]:
     """Create a NEW note (kind=note_create). WIKI-WRITE-THROUGH: writes NOW (default) → returns
-    the real ``noteId`` (get it to confirm); toggle OFF → pending. ``rationale`` optional."""
-    payload = {"title": title, "content": content, "tags": tags or []}
+    the real ``noteId`` (get it to confirm); toggle OFF → pending. ``rationale`` optional.
+    ``folder`` (#80): the virtual folder to file the note under (e.g. "Repos" for a repo-memory
+    note); None/'' = root (back-compat — existing callers unaffected). Lets an agent file a note in
+    a folder via MCP (was silently dropped before → landed at root) — matches the REST create."""
+    payload: dict[str, Any] = {"title": title, "content": content, "tags": tags or []}
+    if folder:  # only thread a non-empty folder (None/'' → root, the back-compat default)
+        payload["folder"] = folder
     return _enqueue("note_create", target_id=None, payload=payload,
                     rationale=rationale, tool="propose_note")
 
@@ -220,11 +225,14 @@ def propose_merge(source_id: int, target_id: int, rationale: str | None = None) 
                     rationale=rationale, tool="propose_merge")
 
 
-def propose_moc(title: str, content: str, rationale: str | None = None) -> dict[str, Any]:
+def propose_moc(title: str, content: str, rationale: str | None = None,
+                folder: str | None = None) -> dict[str, Any]:
     """Create a Map-of-Content note (kind=moc) — a note whose body links members + articulates a
     throughline. WIKI-WRITE-THROUGH: writes NOW (default) → returns ``noteId``; OFF → pending.
-    ``rationale`` optional."""
-    payload = {"title": title, "content": content}
+    ``rationale`` optional. ``folder`` (#80): the virtual folder; None/'' = root (back-compat)."""
+    payload: dict[str, Any] = {"title": title, "content": content}
+    if folder:
+        payload["folder"] = folder
     return _enqueue("moc", target_id=None, payload=payload,
                     rationale=rationale, tool="propose_moc")
 

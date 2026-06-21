@@ -63,6 +63,46 @@ def test_propose_note_writes_through_returns_noteid(wiki_db):
     assert note.author == "mcp:writer"  # provenance: the agent-authored note carries the actor
 
 
+# --------------------------------------------------------------------------- #
+# MCP-PROPOSE-FOLDER (#80): propose_note/propose_moc thread `folder` into the    #
+# note so an agent can file a foldered note (e.g. Repos/ for #64-P2 repo_memory) #
+# — was silently dropped (landed at root). folder=None → root (back-compat).      #
+# --------------------------------------------------------------------------- #
+def test_propose_note_folder_lands_in_folder(wiki_db):
+    """#80: propose_note(folder="Repos") → the note LANDS at folder="Repos" (was '' before the fix).
+    Verify on the stored note, not just the payload (behavior-test)."""
+    r = write_server.propose_note("myrepo", "# myrepo\nmemo", folder="Repos")
+    assert r["applied"] is True and r["noteId"] is not None
+    note = wsvc.get_note(r["noteId"])
+    assert note is not None and note.folder == "Repos", f"folder dropped — got {note.folder!r}"
+
+
+def test_propose_note_no_folder_is_root_backcompat(wiki_db):
+    """folder omitted → root (''), existing propose_note calls unaffected."""
+    r = write_server.propose_note("rootnote", "body")
+    note = wsvc.get_note(r["noteId"])
+    assert note is not None and note.folder == ""  # back-compat: root
+
+
+def test_propose_moc_folder_lands(wiki_db):
+    """propose_moc also threads folder (#80)."""
+    r = write_server.propose_moc("MyMOC", "links...", folder="Maps")
+    note = wsvc.get_note(r["noteId"])
+    assert note is not None and note.folder == "Maps" and note.noteType == "moc"
+
+
+def test_repo_memory_round_trip_via_mcp_propose(wiki_db):
+    """THE #64-P2 round-trip #80 unblocks: an agent proposes a Repos/<name> note via the MCP
+    write-through → it AUTO-LANDS in Repos/ → repo_memory(<name>) FINDS it (end-to-end via the MCP
+    write, not the REST-seed workaround). This is the gap the dropped-folder caused."""
+    from modules.code_insight import reader as ci_reader
+    r = write_server.propose_note("cairn", "# cairn\nstack: node\ndecisions: agent-first", folder="Repos")
+    assert r["applied"] is True
+    mem = ci_reader.get_memory("cairn")
+    assert mem.found is True and mem.note is not None, "repo_memory must find the MCP-landed Repos/ note"
+    assert "agent-first" in mem.note.body
+
+
 def test_propose_edit_writes_through(wiki_db):
     nid = _seed_note()
     r = write_server.propose_edit(nid, title="new title", rationale="clarify")
