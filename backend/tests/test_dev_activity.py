@@ -84,6 +84,53 @@ def test_unconfigured_emails_tags_all_other_with_warning(tmp_path, isolated_path
     assert any("DEV_TRACING_EMAILS not set" in w for w in result["warnings"])
 
 
+# --- #84: DEV_TRACING_EMAILS is COMMA-separated (the "you=0" bug — was split(":")) ---------- #
+def test_your_emails_comma_separated(monkeypatch):
+    """#84 CORE: a comma-separated DEV_TRACING_EMAILS parses into N elements (not 1).
+    DISTINGUISHING: split(":") on a comma list = 1 huge element → no match → you=0 (the bug).
+    split(",") = the real set → matches → you>0."""
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "a@b.com,c@d.com,nick3")
+    assert service.your_emails() == {"a@b.com", "c@d.com", "nick3"}  # 3 elements, lowercased
+
+
+def test_your_emails_colon_in_value_is_one_element_not_split(monkeypatch):
+    """REGRESSION GUARD: a value with a colon (the OLD separator) is NOT split on ':' anymore —
+    a single colon-joined string is ONE element (proves we switched to comma, the real format)."""
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "a@b.com:c@d.com")  # old colon format = now 1 elem
+    assert service.your_emails() == {"a@b.com:c@d.com"}  # NOT {a@b.com, c@d.com}
+
+
+def test_your_emails_single_and_empty(monkeypatch):
+    """Single email (no comma) → 1-element set; unset → empty set."""
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "solo@x.com")
+    assert service.your_emails() == {"solo@x.com"}
+    monkeypatch.delenv("DEV_TRACING_EMAILS", raising=False)
+    assert service.your_emails() == set()
+
+
+def test_roots_stay_colon_separated(monkeypatch):
+    """#84 GUARD: ROOTS are still COLON-separated (paths) — the fix touched ONLY emails."""
+    monkeypatch.setenv("DEV_TRACING_ROOTS", "/a:/b:/c")
+    assert service.scan_roots() == ["/a", "/b", "/c"]  # colon split unchanged
+
+
+def test_comma_emails_tag_you_end_to_end(tmp_path, isolated_paths, monkeypatch):
+    """#84 e2e: a COMMA-list DEV_TRACING_EMAILS → the matching commit tags 'you' (yourCommits>0),
+    proving the fix lights up the feature. With the OLD split(':') this would be 0 (the bug)."""
+    root = tmp_path / "r"
+    repo = root / "repo"
+    repo.mkdir(parents=True)
+    _git(str(repo), "init", "-b", "main")
+    # a real multi-email comma list — the 2nd entry matches the commit author
+    monkeypatch.setenv("DEV_TRACING_ROOTS", str(root))
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "first@x.com,me@example.com,third@y.com")
+    store.init_dev_activity_tables()
+    _commit(str(repo), email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="mine")
+    _commit(str(repo), email="other@team.com", name="T", files={"b.py": "z=1\n"}, msg="theirs")
+    result = service.scan(days=30)
+    assert result["yourCommits"] == 1, "the comma-list email must match → tag 'you' (was 0 with split ':')"
+
+
 # --- LOC_SKIP: a lockfile + a real file → LOC counts ONLY the real file --------------------- #
 def test_loc_skip_excludes_lockfile(temp_repo):
     _commit(temp_repo, email="me@example.com", name="Me",

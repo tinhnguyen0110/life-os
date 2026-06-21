@@ -73,10 +73,15 @@ def scan_roots() -> list[str]:
 
 
 def your_emails() -> set[str]:
-    """The identity-map (colon-separated `DEV_TRACING_EMAILS`, lowercased). Empty/unset → empty set
-    → every commit tags "other" + a warning (NEVER silently count all as "you")."""
+    """The identity-map (COMMA-separated `DEV_TRACING_EMAILS`, lowercased). Empty/unset → empty set
+    → every commit tags "other" + a warning (NEVER silently count all as "you").
+
+    #84: emails are COMMA-separated (the env value is a comma list of git author emails/names) —
+    NOT colon-separated like DEV_TRACING_ROOTS (filesystem paths, colon-separated). split(":") here
+    collapsed the whole list into ONE element so no commit email matched → yourCommits=0 (the
+    dev-tracing "you=0" bug). ROOTS keeps split(":") (paths); ONLY emails are comma-split."""
     raw = os.environ.get("DEV_TRACING_EMAILS", "").strip()
-    return {e.strip().lower() for e in raw.split(":") if e.strip()} if raw else set()
+    return {e.strip().lower() for e in raw.split(",") if e.strip()} if raw else set()
 
 
 def _find_repos(root: str) -> list[str]:

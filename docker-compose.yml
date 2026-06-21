@@ -70,6 +70,15 @@ services:
       # other identity-map); unset → the scan tags all commits "other" + warns (never silently "you").
       DEV_TRACING_ROOTS: ${DEV_TRACING_ROOTS:-/tinhdev:/devscan/PSA:/devscan/inmobi}
       DEV_TRACING_EMAILS: ${DEV_TRACING_EMAILS:-}
+      # DEV-TRACING (#84): remote-host commit creds for the dev-activity scan (GitHub/Bitbucket
+      # contribution counts). ${VAR:-} INTERPOLATION ONLY — the real values live in the repo-root
+      # .env (gitignored) and are injected at compose-up; NEVER hardcode a secret value here
+      # (this file is tracked+committed). Unset → the scan honest-skips the remote count + warns.
+      GITHUB_PAT: ${GITHUB_PAT:-}
+      GITHUB_USER: ${GITHUB_USER:-}
+      BITBUCKET_HOST: ${BITBUCKET_HOST:-}
+      BITBUCKET_USER: ${BITBUCKET_USER:-}
+      BITBUCKET_PASS: ${BITBUCKET_PASS:-}
     # Resource caps — safety against host-takedown. The host hit load 188 once
     # (multiple apps + a uvicorn reload-storm). These caps confine any future
     # leak/storm to THIS container (OOM-killed in isolation), never the host.
