@@ -315,7 +315,7 @@ def refine_note(note_id: int, body: NoteUpdateInput):
     try:
         note, warning = service.refine_note(note_id, body)
     except service.NoteNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     except service.RefineGateError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     data = note.model_dump()
@@ -330,7 +330,7 @@ def update_note(note_id: int, body: NoteUpdateInput):
     try:
         note = service.update_note(note_id, body)
     except service.NoteNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     data = note.model_dump()
     data["suggestedLinks"] = reader.suggest_links(note.id)  # #34
     return ok(data=data)
@@ -343,7 +343,7 @@ def delete_note(note_id: int):
     try:
         service.delete_note(note_id)
     except service.NoteNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki note {note_id} not found")
+        return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     return ok(data={"deleted": note_id})
 
 

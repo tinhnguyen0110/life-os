@@ -167,6 +167,43 @@ def test_mcp_get_note_found_false_unchanged(wiki_db):
 
 
 # --------------------------------------------------------------------------- #
+# WIKI-WRITE-404 (#14) — the 3 WRITE note-id routes use the SAME flat 404 shape  #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("method,path,body", [
+    ("put", "/wiki/notes/99999", {"content": "x"}),
+    ("delete", "/wiki/notes/99999", None),
+    ("post", "/wiki/notes/99999/refine", {"content": "x"}),
+], ids=["put", "delete", "refine"])
+def test_write_route_404_is_agent_error_shape(wiki_db, method, path, body):
+    """#14: the 3 WRITE note-id routes (PUT/DELETE/refine) on a bad id → 404 with the FLAT agent-first
+    {error:{code:NOT_FOUND,hint,retryable:false}} — NOT raw {"detail"} — closing the #46-agent-error
+    cluster (the GET routes already do this; this makes write consistent). The route RETURNS the
+    JSONResponse from the except block (not raise — it's a Response)."""
+    from fastapi.testclient import TestClient
+    from main import create_app
+    api = TestClient(create_app())
+    resp = api.request(method.upper(), path, json=body) if body is not None else api.request(method.upper(), path)
+    assert resp.status_code == 404
+    j = resp.json()
+    assert "detail" not in j, "write-route 404 must be flat {error}, not raw {'detail'}"
+    e = j["error"]
+    assert e["code"] == "NOT_FOUND" and e["retryable"] is False
+    assert "99999" in e["message"] and e["hint"]
+
+
+def test_conflict_sync_404s_unchanged_boundary(wiki_db):
+    """BOUNDARY (#14 stays OUT of these): the merge route (different-entity 404) is NOT converted —
+    it keeps its own shape. (proves the change is scoped to note-id routes, no creep.)"""
+    from fastapi.testclient import TestClient
+    from main import create_app
+    api = TestClient(create_app())
+    # merge with a nonexistent source → 404 but NOT the agent_error note-shape (different entity/path)
+    t = api.post("/wiki/notes", json={"title": "T", "content": "x"}).json()["data"]["id"]
+    r = api.post("/wiki/notes/merge", json={"sourceId": 99999, "targetId": t})
+    assert r.status_code == 404  # still 404; shape is the merge route's own (out of #14 scope)
+
+
+# --------------------------------------------------------------------------- #
 # REST POST /wiki/reindex == MCP wiki_reindex (byte-identical #24)               #
 # --------------------------------------------------------------------------- #
 def test_rest_reindex_endpoint(wiki_db):
