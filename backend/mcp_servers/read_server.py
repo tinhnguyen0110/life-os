@@ -1017,6 +1017,30 @@ def _brief_reminders() -> dict[str, Any]:
     }
 
 
+def _brief_tracing() -> dict[str, Any]:
+    """DAILY-TRACING-P4 (#65): the habit board for "what's on my plate today" — LEAN, agent-first.
+    Reuses the derived tracing_overview (no new derivation). Surfaces today's done/total + the
+    AT-RISK streaks (streak ≥3 + today not done = hard-won + about to break), the same signal the
+    daily_brief _tracing_priority rule fires on — so life_brief carries it too (the both-consumers
+    requirement; life_brief composes its OWN sections, it does NOT reuse daily_brief's priorities).
+    Honest-empty → {atRisk:[], doneToday:0, total:0} (never omitted/fabricated). source by _section."""
+    ov = _tracing_overview()  # the tracing reader → a TracingOverview model (already-derived)
+    # sort the MODELS by streak desc (typed int) BEFORE projecting to dicts — longest streak (most
+    # to lose) first; sorting the dicts would make mypy infer the value type as `object`.
+    at_risk_models = sorted(
+        (a for a in ov.activities if a.streak >= 3 and a.today.done is False),
+        key=lambda a: -a.streak,
+    )
+    at_risk = [{"id": a.id, "name": a.name, "streak": a.streak} for a in at_risk_models]
+    return {
+        "atRisk": at_risk,
+        "atRiskCount": len(at_risk),
+        "doneToday": ov.score.done,
+        "total": ov.score.total,
+        "topStreak": ov.score.topStreak,
+    }
+
+
 def _brief_macro() -> dict[str, Any]:
     """Neutral macro snapshot (R2-G1): latest Fed funds rate / US CPI / DXY + a
     DESCRIPTIVE trend. From modules/macro (get_overview → (data, warnings)). NEUTRAL —
@@ -1080,6 +1104,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
       - ``wiki``      (wiki): vault overview — stats / inbox / orphans (R2-G1)
       - ``decision``  (decision tower): W (weight) + verdict band + bindingConstraint +
         macro phase + the top guardian alert (FINANCE-FINISH G1 — the assistant's tip)
+      - ``reminders`` (reminders): what's on the plate — un-done overdue/today/week (#30)
+      - ``tracing``   (tracing): habit board — at-risk streaks (≥3 + undone today) + done/total (#65)
 
     NEUTRAL: aggregates DATA only — NO advice, NO buy/sell signal, NO prioritisation.
     The agent reads this and decides. An empty / unconfigured app still returns a
@@ -1099,6 +1125,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
             "decision": _section("decision", _brief_decision),
             # REMINDERS-4 (#30): what's on the user's plate (overdue+today+week un-done), fail-soft.
             "reminders": _section("reminders", _brief_reminders),
+            # DAILY-TRACING-P4 (#65): habit board — at-risk streaks + today's done/total, fail-soft.
+            "tracing": _section("tracing", _brief_tracing),
         }
     }
 

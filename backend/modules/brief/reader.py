@@ -27,6 +27,7 @@ class Sources:
     market: dict | None = None            # {quotes, triggers, macro}
     claude: object | None = None          # ClaudeUsage
     reminders: list | None = None         # REMINDERS-4 (#30): list[Reminder] un-done (week+overdue)
+    tracing: object | None = None         # DAILY-TRACING-P4 (#65): TracingOverview (for streak-at-risk)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -79,5 +80,15 @@ def pull() -> Sources:
     except Exception as exc:
         logger.error("brief: reminders read failed: %s", exc)
         src.warnings.append(f"reminders nguồn lỗi ({type(exc).__name__})")
+
+    try:
+        # DAILY-TRACING-P4 (#65): the habit board for the streak-at-risk rule. Reuse the SAME
+        # derived overview GET /tracing + the MCP tracing_overview wrap — no new read path, no
+        # new derivation (the brief READS the already-derived streak/today.done).
+        from modules.tracing import reader as trc
+        src.tracing = trc.get_overview()
+    except Exception as exc:
+        logger.error("brief: tracing read failed: %s", exc)
+        src.warnings.append(f"tracing nguồn lỗi ({type(exc).__name__})")
 
     return src

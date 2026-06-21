@@ -60,8 +60,9 @@ def test_full_agent_loop_decision(app_db):
     # the brief must be a real, fully-shaped snapshot — not a fabricated empty stub.
     # R2-G1: life_brief folds in macro + news + wiki context.
     # FINANCE-FINISH G1: + the decision tower section (9th). REMINDERS-4 (#30): + reminders (10th).
+    # DAILY-TRACING-P4 (#65): + tracing (11th — the habit board / at-risk streaks).
     assert set(brief) == {"portfolio", "market", "projects", "claude", "decisions",
-                          "macro", "news", "wiki", "decision", "reminders"}
+                          "macro", "news", "wiki", "decision", "reminders", "tracing"}
     assert all("source" in section for section in brief.values()), \
         "every brief section must carry its source tag (traceable data)"
     # finance has default holdings → totalValue is a real number the agent can reason on

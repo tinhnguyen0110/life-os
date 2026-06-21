@@ -588,6 +588,8 @@ BRIEF_SECTIONS = {
     "decision": "decision",
     # REMINDERS-4 (#30): what's on the user's plate (overdue+today+week un-done).
     "reminders": "reminders",
+    # DAILY-TRACING-P4 (#65): habit board — at-risk streaks + today's done/total.
+    "tracing": "tracing",
 }
 
 

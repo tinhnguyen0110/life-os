@@ -33,14 +33,16 @@ HISTORY_DIR = "brief"  # md_store brief/<date>.md (T2 owns the write side)
 # Severity rank for the display sort (higher = shown first).
 _SEV_RANK = {"urgent": 3, "warn": 2, "info": 1}
 # Rule order = generation order = stable tiebreak within a severity (architect Logic).
-_RULE_ORDER = {"market": 1, "projects": 2, "claude": 3, "finance": 4, "alerts": 5, "reminders": 6}
+_RULE_ORDER = {"market": 1, "projects": 2, "claude": 3, "finance": 4, "alerts": 5,
+               "reminders": 6, "tracing": 7}  # DAILY-TRACING-P4 (#65)
 
 LADDER_NEAR_PCT = 2.0   # next rung within ≤2% → info ("sắp chạm rung")
 CLAUDE_URGENT_PCT = 90.0
 CLAUDE_WARN_PCT = 75.0
 IDLE_DAYS = 7
 BUILD90_PROGRESS = 90
-PRIORITY_CAP = 6  # REMINDERS-4 (#30): +reminders rule → 6 rules, cap 6 so none is silently dropped
+STREAK_AT_RISK_MIN = 3  # DAILY-TRACING-P4 (#65): a streak ≥3 days is hard-won → at-risk if undone today
+PRIORITY_CAP = 7  # DAILY-TRACING-P4 (#65): +tracing rule → 7 rules, cap 7 so none is silently dropped (#30 was 6)
 
 
 def _now_iso() -> str:
@@ -112,6 +114,26 @@ def _reminders_priority(reminders: list | None) -> Priority | None:
         return Priority(n=0, source="reminders", severity="warn",
                         text=f"{len(due_today)} nhắc nhở đến hạn hôm nay.")
     return None
+
+
+def _tracing_priority(tracing: object | None) -> Priority | None:
+    """DAILY-TRACING-P4 (#65) — a hard-won streak about to break → WARN (today-actionable nudge,
+    NOT urgent: nothing is past-due, the day isn't over). At-risk = an activity whose streak ≥
+    STREAK_AT_RISK_MIN AND today is NOT yet done. None if no source / no activities / none at-risk
+    (honest, no crash). READS the already-derived streak + today.done (no new derivation)."""
+    if tracing is None:
+        return None
+    activities = getattr(tracing, "activities", None)
+    if not activities:
+        return None
+    at_risk = [a for a in activities
+               if a.streak >= STREAK_AT_RISK_MIN and a.today.done is False]
+    if not at_risk:
+        return None
+    top = max(a.streak for a in at_risk)
+    return Priority(n=0, source="tracing", severity="warn",
+                    text=(f"{len(at_risk)} chuỗi sắp đứt (dài nhất {top} ngày) — "
+                          f"hoàn thành hôm nay để giữ streak."))
 
 
 def _quota_pct(claude) -> float | None:
@@ -242,7 +264,7 @@ def generate_brief() -> Brief:
     generated_at = _now_iso()
     src = reader.pull()
 
-    # Run the 5 rules (each fail-soft — a rule raising must not abort the brief). Each
+    # Run the rules (each fail-soft — a rule raising must not abort the brief). Each
     # thunk wraps one rule so a single failure is contained + the brief still assembles.
     rules = [
         ("market", lambda: _market_priority(src.market)),
@@ -251,6 +273,7 @@ def generate_brief() -> Brief:
         ("finance", lambda: _finance_priority(src.finance)),
         ("alerts", lambda: _alerts_priority(src.market)),
         ("reminders", lambda: _reminders_priority(src.reminders)),  # REMINDERS-4 (#30)
+        ("tracing", lambda: _tracing_priority(src.tracing)),        # DAILY-TRACING-P4 (#65)
     ]
     candidates: list[Priority] = []
     for name, thunk in rules:

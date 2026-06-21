@@ -16,8 +16,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Severity = Literal["info", "warn", "urgent"]
-# REMINDERS-4 (#30): +reminders (the priority rule's source).
-PrioritySource = Literal["market", "projects", "claude", "finance", "alerts", "reminders"]
+# REMINDERS-4 (#30): +reminders. DAILY-TRACING-P4 (#65): +tracing (the streak-at-risk rule's source).
+PrioritySource = Literal["market", "projects", "claude", "finance", "alerts", "reminders", "tracing"]
 
 
 class Priority(BaseModel):
