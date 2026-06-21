@@ -69,12 +69,19 @@ class NoteCreateInput(BaseModel):
     Capture = raw dump → status defaults ``fleeting``; title/links come at REFINE
     (a fleeting note legitimately has no title). ``author`` recorded so W2/M4
     agent writes slot in unchanged.
+
+    #45: ``trustTier`` is settable here (was MISSING → silently dropped → every note born
+    "verified", a bug). ``extra="forbid"`` so a future unknown kwarg 422s instead of vanishing
+    (the silent-drop is exactly what hid the missing-trustTier bug — a dropped field is a silent lie).
     """
+
+    model_config = {"extra": "forbid"}  # #45: unknown field → 422, never a silent drop
 
     content: str = ""
     title: str = Field(default="", max_length=200)
     status: Status = "fleeting"
     noteType: NoteType = "concept"
+    trustTier: TrustTier = "verified"  # #45: was missing → dropped; default unchanged when omitted
     tags: list[str] = Field(default_factory=list)
     author: str = "human"
     # Where this capture came from (mock inbox field). command_bar | quick_add |

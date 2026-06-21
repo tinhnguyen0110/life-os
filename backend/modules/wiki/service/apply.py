@@ -77,7 +77,7 @@ def _apply_create(op: Op) -> Note:
     inp: NoteCreateInput = op.payload["input"]
     note = Note(
         id=note_id, title=inp.title, aliases=[], status=inp.status,
-        noteType=inp.noteType, trustTier="verified", author=inp.author,
+        noteType=inp.noteType, trustTier=inp.trustTier, author=inp.author,  # #45: honor input (was hardcoded "verified")
         tags=inp.tags, content=inp.content, folder=inp.folder, created=now, updated=now,
         contentHash=_body_hash(inp.content),
     )
