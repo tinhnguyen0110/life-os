@@ -366,11 +366,18 @@ def test_api_reject_then_accept_is_409(client):
     pid = client.post("/wiki/proposals", json={"kind": "note_create",
                                                "payload": {"title": "x"}}).json()["data"]["id"]
     assert client.post(f"/wiki/proposals/{pid}/reject").status_code == 200
-    assert client.post(f"/wiki/proposals/{pid}/accept").status_code == 409
+    r = client.post(f"/wiki/proposals/{pid}/accept")
+    assert r.status_code == 409
+    # #46-P6 the CONFLICT distinguishing: already-decided → flat {error:CONFLICT}, NOT {detail}
+    j = r.json()
+    assert "detail" not in j and j["error"]["code"] == "CONFLICT" and j["error"]["retryable"] is False
 
 
 def test_api_accept_missing_is_404(client):
-    assert client.post("/wiki/proposals/424242/accept").status_code == 404
+    r = client.post("/wiki/proposals/424242/accept")
+    assert r.status_code == 404
+    j = r.json()  # #46-P6: flat agent_error NOT_FOUND (distinct code from the 409 above)
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND"
 
 
 def test_api_accept_bad_payload_is_422(client):

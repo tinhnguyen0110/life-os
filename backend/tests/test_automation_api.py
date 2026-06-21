@@ -72,7 +72,10 @@ def test_patch_toggle(app_client):
 
 
 def test_patch_unknown_404(app_client):
-    assert app_client.patch("/routines/ghost", json={"enabled": True}).status_code == 404
+    r = app_client.patch("/routines/ghost", json={"enabled": True})
+    assert r.status_code == 404
+    j = r.json()  # #46-P6: flat agent_error NOT_FOUND, not {detail}
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 def test_post_run_records(app_client):

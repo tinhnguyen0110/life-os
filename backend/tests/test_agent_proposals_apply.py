@@ -215,8 +215,11 @@ def test_endpoint_reject_then_audit(client):
 
 
 def test_endpoint_unknown_id_404(client):
-    assert client.post("/agent-proposals/999999/accept").status_code == 404
-    assert client.get("/agent-proposals/999999").status_code == 404
+    for resp in (client.post("/agent-proposals/999999/accept"),
+                 client.get("/agent-proposals/999999")):
+        assert resp.status_code == 404
+        j = resp.json()  # #46-P6: flat agent_error NOT_FOUND, not {detail}
+        assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 def test_endpoint_accept_project_update_warns(client):

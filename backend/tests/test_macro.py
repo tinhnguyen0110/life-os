@@ -293,6 +293,9 @@ def test_endpoint_history(client):
 def test_endpoint_history_unknown_404(client):
     resp = client.get("/macro/history", params={"indicator": "NOPE"})
     assert resp.status_code == 404
+    j = resp.json()  # #46-P6: flat agent_error NOT_FOUND (not {detail}), hint lists valid ids
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
+    assert j["error"]["retryable"] is False  # deterministic → never retryable
 
 
 # --------------------------------------------------------------------------- #

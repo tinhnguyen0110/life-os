@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P6 (#46): flat REST error parity
 from core.base import BaseModule, Routine
 from core.responses import ok
 
@@ -45,10 +46,9 @@ def macro_history(indicator: str, days: int = 365):
     hist = service.get_history(indicator, days=days)
     if hist is None:
         tracked = ", ".join(service.tracked_indicators())
-        raise HTTPException(
-            status_code=404,
-            detail=f"macro indicator {indicator!r} not tracked (valid: {tracked})",
-        )
+        return agent_error_response(
+            "NOT_FOUND", f"macro indicator {indicator!r} not tracked",
+            hint=f"valid indicators: {tracked}")
     return ok(data=hist.model_dump())
 
 

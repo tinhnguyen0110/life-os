@@ -7,18 +7,21 @@ ONLY wiring needed — no edit to ``core/`` or ``main.py`` (registry auto-discov
 W1a scope = identity + store + single-writer queue + CRUD. Links/FTS/graph are
 W1b/W1c. This router is HTTP shape + status codes only — all mutation logic lives
 in ``service.py`` (every write goes through the single-writer changes-queue).
-Envelope: ``core.responses.ok`` → ``{success, data, warning?}``. Errors via
-``HTTPException`` (404 missing note; 422 validation is FastAPI/Pydantic auto).
+Envelope: ``core.responses.ok`` → ``{success, data, warning?}``. Errors are the flat
+agent-first shape ``{error:{code,message,hint,retryable}}`` via ``agent_error_response``
+(AGENT-ERROR #46): 404 NOT_FOUND (missing note/proposal), 409 CONFLICT (already-decided
+proposal), 422 INVALID_INPUT (merge/refine/apply gate). Raw body/path 422s are still
+FastAPI/Pydantic auto (the #24 follow-up will normalize those app-wide).
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from core.agent_errors import agent_error  # WIKI-RECONCILE/#61 item#3: agent-readable 404 shape
+from core.agent_errors import agent_error, agent_error_response  # #61 item#3 + AGENT-ERROR-P6 (#46)
 from core.base import BaseModule
 from core.responses import ok
 
@@ -101,7 +104,8 @@ def graph(note: int | None = None, depth: int = 2):
         return ok(data=reader.global_graph())
     g = reader.ego_graph(note, depth)
     if g is None:
-        raise HTTPException(status_code=404, detail=f"wiki note {note} not found")
+        return agent_error_response("NOT_FOUND", f"wiki note {note} not found",
+                                    hint="check the id via wiki_tree or wiki_search")
     return ok(data=g)
 
 
@@ -150,16 +154,17 @@ def resolve_conflict(conflict_id: int, body: ConflictResolveInput):
     being open, so resolving an absent/already-resolved conflict never mutates the
     vault (the old order wrote the note first, then 404'd — a stray write)."""
     if not sync_store.conflict_is_open(conflict_id):
-        raise HTTPException(status_code=404,
-                            detail=f"conflict {conflict_id} not found or already resolved")
+        return agent_error_response("NOT_FOUND", f"conflict {conflict_id} not found or already resolved",
+                                    hint="GET /wiki/sync/conflicts for open conflicts")
     try:
         service.update_note(body.noteId, NoteUpdateInput(content=body.content))
     except service.NoteNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki note {body.noteId} not found")
+        return agent_error_response("NOT_FOUND", f"wiki note {body.noteId} not found",
+                                    hint="check the id via wiki_tree or wiki_search")
     # mark resolved (guarded UPDATE — still atomic-safe if a race slipped through).
     if not sync_store.resolve_conflict(conflict_id, _now_iso()):
-        raise HTTPException(status_code=404,
-                            detail=f"conflict {conflict_id} not found or already resolved")
+        return agent_error_response("NOT_FOUND", f"conflict {conflict_id} not found or already resolved",
+                                    hint="GET /wiki/sync/conflicts for open conflicts")
     return ok(data={"resolved": conflict_id})
 
 
@@ -252,9 +257,11 @@ def merge_notes(body: MergeInput):
     try:
         note = service.merge_notes(body.sourceId, body.targetId)
     except service.MergeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        return agent_error_response("INVALID_INPUT", str(exc),
+                                    hint="source and target must be different existing note ids")
     except service.NoteNotFound as exc:
-        raise HTTPException(status_code=404, detail=f"wiki note {exc} not found")
+        return agent_error_response("NOT_FOUND", f"wiki note {exc} not found",
+                                    hint="check both ids via wiki_tree or wiki_search")
     return ok(data=note.model_dump(),
               warning=f"merged #{body.sourceId} into #{body.targetId}")
 
@@ -317,7 +324,8 @@ def refine_note(note_id: int, body: NoteUpdateInput):
     except service.NoteNotFound:
         return _note_not_found(note_id)  # #14: agent-readable 404 (return Response, not raise)
     except service.RefineGateError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        return agent_error_response("INVALID_INPUT", str(exc),
+                                    hint="a refined note needs ≥1 link (past cold-start) — add a [[link]]")
     data = note.model_dump()
     data["suggestedLinks"] = reader.suggest_links(note.id)  # #34
     return ok(data=data, warning=warning)
@@ -385,7 +393,8 @@ def get_proposal(proposal_id: int):
     """One proposal. 404 if absent."""
     p = proposals_service.get_proposal(proposal_id)
     if p is None:
-        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"wiki proposal {proposal_id} not found",
+                                    hint="GET /wiki/proposals for valid ids")
     return ok(data=p)
 
 
@@ -398,11 +407,14 @@ def accept_proposal(proposal_id: int, body: DecideInput | None = None):
     try:
         p = proposals_service.accept_proposal(proposal_id, decided_by=decided_by)
     except proposals_service.ProposalNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"wiki proposal {proposal_id} not found",
+                                    hint="GET /wiki/proposals for valid ids")
     except proposals_service.AlreadyDecided as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        return agent_error_response("CONFLICT", str(exc),
+                                    hint="this proposal is already accepted/rejected — it can't be decided again")
     except proposals_service.ApplyError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        return agent_error_response("INVALID_INPUT", str(exc),
+                                    hint="the proposal payload/mutation is invalid — it stays pending to retry")
     return ok(data=p, warning=f"applied proposal #{proposal_id} → note #{p['appliedNoteId']}")
 
 
@@ -413,9 +425,11 @@ def reject_proposal(proposal_id: int, body: DecideInput | None = None):
     try:
         p = proposals_service.reject_proposal(proposal_id, decided_by=decided_by)
     except proposals_service.ProposalNotFound:
-        raise HTTPException(status_code=404, detail=f"wiki proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"wiki proposal {proposal_id} not found",
+                                    hint="GET /wiki/proposals for valid ids")
     except proposals_service.AlreadyDecided as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        return agent_error_response("CONFLICT", str(exc),
+                                    hint="this proposal is already accepted/rejected — it can't be decided again")
     return ok(data=p)
 
 

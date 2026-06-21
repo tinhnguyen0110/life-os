@@ -14,8 +14,9 @@ NOT a 422. A typo'd filter returns data, never an error (locked w/ tester scaffo
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P6 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -42,7 +43,8 @@ def get_activity_run(run_id: int):
     """One run by its run_log PK. 404 if no such run. (FastAPI 422s a non-int id.)"""
     run = service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+        return agent_error_response("NOT_FOUND", f"run {run_id} not found",
+                                    hint="GET /activity for valid run ids")
     return ok(data=run.model_dump())
 
 

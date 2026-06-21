@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P6 (#46): flat REST error parity
 from core.base import BaseModule, Routine
 from core.responses import ok
 
@@ -34,7 +35,8 @@ def patch_routine(routine_id: str, body: ToggleInput):
     """Toggle a routine enabled/disabled (persisted in md_store). 404 if unknown."""
     info = service.set_enabled(routine_id, body.enabled)
     if info is None:
-        raise HTTPException(status_code=404, detail=f"routine {routine_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"routine {routine_id!r} not found",
+                                    hint="GET /routines for valid ids")
     return ok(data=info.model_dump())
 
 
@@ -47,7 +49,8 @@ def run_routine(routine_id: str):
     """
     run = service.run_routine(routine_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"routine {routine_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"routine {routine_id!r} not found",
+                                    hint="GET /routines for valid ids")
     return ok(data=run.model_dump())
 
 

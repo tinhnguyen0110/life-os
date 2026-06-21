@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P6 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -48,7 +49,8 @@ def get_agent_proposal(proposal_id: int):
     """One proposal by id. 404 if unknown."""
     proposal = svc.get_proposal(proposal_id)
     if proposal is None:
-        raise HTTPException(status_code=404, detail=f"proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"proposal {proposal_id} not found",
+                                    hint="GET /agent-proposals for valid ids")
     return ok(data=proposal)
 
 
@@ -56,7 +58,8 @@ def get_agent_proposal(proposal_id: int):
 def get_agent_proposal_audit(proposal_id: int):
     """The accept/reject audit trail for one proposal (who/what/when)."""
     if svc.get_proposal(proposal_id) is None:
-        raise HTTPException(status_code=404, detail=f"proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"proposal {proposal_id} not found",
+                                    hint="GET /agent-proposals for valid ids")
     return ok(data={"audit": svc.list_audit(proposal_id=proposal_id)})
 
 
@@ -69,7 +72,8 @@ def accept_agent_proposal(proposal_id: int, decided_by: str = "user"):
     try:
         result = svc.accept(proposal_id, decided_by=decided_by)
     except svc.ProposalNotFound:
-        raise HTTPException(status_code=404, detail=f"proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"proposal {proposal_id} not found",
+                                    hint="GET /agent-proposals for valid ids")
     warning = result.get("applyError")
     return ok(data=result, warning=warning)
 
@@ -80,7 +84,8 @@ def reject_agent_proposal(proposal_id: int, decided_by: str = "user"):
     try:
         result = svc.reject(proposal_id, decided_by=decided_by)
     except svc.ProposalNotFound:
-        raise HTTPException(status_code=404, detail=f"proposal {proposal_id} not found")
+        return agent_error_response("NOT_FOUND", f"proposal {proposal_id} not found",
+                                    hint="GET /agent-proposals for valid ids")
     return ok(data=result)
 
 
