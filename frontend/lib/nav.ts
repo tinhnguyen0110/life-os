@@ -66,6 +66,7 @@ export const NAV: NavGroup[] = [
     items: [
       // badge.text "—" = honest fallback; Sidebar.tsx may wire the live undone-count.
       { route: "/reminders", label: "Nhắc nhở", icon: "i-bell", screen: "REM", badge: { text: "—", cls: "a" } },
+      { route: "/tracing", label: "Daily Tracing", icon: "i-check", screen: "TRACE" },
       { route: "/claude-usage", label: "Claude Usage", icon: "i-cpu", screen: "S9", badge: { text: "—", cls: "r" } },
       { route: "/notes", label: "Ghi chú", icon: "i-note", screen: "S10" },
       { route: "/decision-journal", label: "Quyết định", icon: "i-journal", screen: "DJ" },
@@ -121,6 +122,7 @@ export const CRUMB: Record<string, string> = {
   "/news": "Tin tức",
   "/exchange": "OKX Exchange",
   "/reminders": "Nhắc nhở",
+  "/tracing": "Daily Tracing",
   "/claude-usage": "Claude Usage",
   "/notes": "Ghi chú",
   "/decision-journal": "Nhật ký quyết định",

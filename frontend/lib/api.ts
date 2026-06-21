@@ -67,6 +67,12 @@ import type {
   Reminder,
   ReminderInput,
   ReminderList,
+  TracingOverview,
+  ActivityView,
+  Activity,
+  TracingLogInput,
+  ActivityInput,
+  ActivityPatch,
 } from "./types";
 
 // In-container the compose env sets NEXT_PUBLIC_API_BASE=:8686. The fallback is for
@@ -761,6 +767,40 @@ export function tickReminder(id: number): Promise<ApiResponse<Reminder>> {
 /** Delete a reminder (DELETE /reminders/{id}). 200 + {deleted:id}. 404 if absent. */
 export function deleteReminder(id: number): Promise<ApiResponse<{ deleted: number }>> {
   return apiDelete<{ deleted: number }>(`/reminders/${id}`);
+}
+
+/* ---- Daily Tracing (#65 · G-HABIT) — the habit board ----
+   Backend REST is shipped + FROZEN (P1/P2); FE consumes only (no backend change).
+   Errors are the post-#46/#70 {error:{code,message,hint,retryable}} shape — handled
+   centrally by errorFromBody/ApiError above. */
+
+/** GET /tracing — the whole habit board (date + activities + heatmap12w + score).
+ *  honest-empty when 0 activities (activities:[], heatmap all-0, score all-0). */
+export function getTracing(): Promise<ApiResponse<TracingOverview>> {
+  return apiGet<TracingOverview>("/tracing");
+}
+
+/** Log a session against an activity (POST /tracing/{id}/log). val<0 → ApiError(422)
+ *  with .fieldErrors().val. Returns the activity's UPDATED ActivityView (re-render). */
+export function logTracingSession(id: string, body: TracingLogInput): Promise<ApiResponse<ActivityView>> {
+  return apiPost<ActivityView>(`/tracing/${encodeURIComponent(id)}/log`, body);
+}
+
+/** Add an activity (POST /tracing/activities). Dup id → ApiError(409); blank/neg → 422.
+ *  Returns the bare Activity (caller refetches GET /tracing for the derived board). */
+export function createActivity(body: ActivityInput): Promise<ApiResponse<Activity>> {
+  return apiPost<Activity>("/tracing/activities", body);
+}
+
+/** Partial edit (PUT /tracing/activities/{id}). 404 if unknown, 422 on bad field. */
+export function updateActivity(id: string, body: ActivityPatch): Promise<ApiResponse<Activity>> {
+  return apiPut<Activity>(`/tracing/activities/${encodeURIComponent(id)}`, body);
+}
+
+/** Archive an activity (DELETE /tracing/activities/{id}). SOFT — the card disappears,
+ *  its logged sessions survive. Returns {archived:id}. 404 if unknown. */
+export function archiveActivity(id: string): Promise<ApiResponse<{ archived: string }>> {
+  return apiDelete<{ archived: string }>(`/tracing/activities/${encodeURIComponent(id)}`);
 }
 
 export const apiBase = BASE;

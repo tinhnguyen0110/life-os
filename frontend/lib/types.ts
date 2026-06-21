@@ -1633,3 +1633,114 @@ export interface ReminderList {
   /** the filter the server applied (today|week|undone|all). */
   filter: string;
 }
+
+/* ---- Daily Tracing (#65 · G-HABIT) — the day-to-day life-logging module ----
+   Mirrors the FROZEN backend tracing/schema.py (P1/P2). RENDER-ONLY: the backend
+   computes ALL derived metrics (streak, pct, week, history, heatmap, score) over
+   VN-day buckets — the FE displays them + POSTs raw sessions, never recomputes. */
+
+/** An activity's TODAY rollup (Σ of today's VN-day sessions). */
+export interface TracingToday {
+  /** today's Σval ≥ goal. */
+  done: boolean;
+  /** Σ of today's sessions' val. */
+  val: number;
+  /** Σ today duration, "Hh Mm" / "Mm" (e.g. "5m", "1h 20m"). */
+  dur: string;
+  /** Σ today duration in minutes. */
+  durMin: number;
+  /** the latest today session's note, else null. */
+  note: string | null;
+  /** today's progress toward goal, 0-100 (backend-clamped). */
+  pct: number;
+  /** count of today's sessions. */
+  sessions: number;
+}
+
+/** One activity with its backend-derived views (the GET /tracing activities[] item
+ *  and the POST log response). */
+export interface ActivityView {
+  id: string;
+  name: string;
+  emoji: string;
+  icon: string;
+  unit: string;
+  /** daily target in the activity's unit. */
+  goal: number;
+  /** hex accent for the card/bars. */
+  color: string;
+  today: TracingToday;
+  /** consecutive goal-met VN-days (today-at-risk does NOT break it). */
+  streak: number;
+  /** last 7 VN-days Σval, Mon→Sun (index 6 = today). */
+  week: number[];
+  /** last 84 VN-days (12w×7) Σval, oldest→newest. */
+  history12w: number[];
+}
+
+/** The day's score panel (backend-computed roll-up). */
+export interface TracingScore {
+  /** number of active (non-archived) activities. */
+  total: number;
+  /** how many met their goal today. */
+  done: number;
+  /** done/total as 0-100. */
+  pct: number;
+  /** Σ today all sessions' dur, "Hh Mm". */
+  timeActive: string;
+  /** best streak across all activities. */
+  topStreak: number;
+}
+
+/** GET /tracing → the whole habit board (render-only). honest-empty: 0 activities
+ *  → activities:[], heatmap12w all-0, score all-0. */
+export interface TracingOverview {
+  /** today's VN-day, "YYYY-MM-DD". */
+  date: string;
+  activities: ActivityView[];
+  /** 84 cells (12w×7), per-day COUNT of activities that MET their goal that VN-day
+   *  (0..total — NOT a boolean, NOT capped at 4). oldest→newest. */
+  heatmap12w: number[];
+  score: TracingScore;
+}
+
+/** POST /tracing/{id}/log body — one raw session. val<0 → 422. */
+export interface TracingLogInput {
+  val: number;
+  dur_min?: number | null;
+  note?: string | null;
+}
+
+/** POST /tracing/activities body — define a new activity. dup id → 409, blank/neg → 422. */
+export interface ActivityInput {
+  id: string;
+  name: string;
+  goal: number;
+  unit?: string;
+  emoji?: string;
+  icon?: string;
+  color?: string;
+}
+
+/** PUT /tracing/activities/{id} body — partial edit (all fields optional). */
+export interface ActivityPatch {
+  name?: string;
+  goal?: number;
+  unit?: string;
+  emoji?: string;
+  icon?: string;
+  color?: string;
+}
+
+/** The bare stored activity (POST/PUT activities response — NOT the derived view). */
+export interface Activity {
+  id: string;
+  name: string;
+  emoji: string;
+  icon: string;
+  unit: string;
+  goal: number;
+  color: string;
+  created: string;
+  archived: boolean;
+}

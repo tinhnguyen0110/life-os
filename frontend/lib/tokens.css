@@ -926,3 +926,48 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .news-row-summary { font-size:11.5px; line-height:1.5; margin-top:4px; }
 .news-row-meta { font-family:var(--mono); font-size:10px; margin-top:6px; display:flex; align-items:center; flex-wrap:wrap; }
 .news-src { color:var(--tx-1); }
+
+/* ============================================================
+   S14 Daily Tracing (#65-P3) — PORTED VERBATIM from mock
+   template/Life Command/app/screens.css (.act-card / .ac-* / .tl-* /
+   heatmap). Do NOT redesign (ARCH §8 / SPEC §5).
+   ============================================================ */
+.act-card { background:var(--bg-1); border:1px solid var(--line); border-radius:var(--r); padding:14px 15px; display:flex; flex-direction:column; gap:6px; transition:border-color .15s; }
+.act-card:hover { border-color:var(--line-2); }
+.act-card.pending { opacity:.75; }
+.ac-head { display:flex; align-items:flex-start; gap:10px; }
+.ac-emoji { font-size:22px; line-height:1; margin-top:2px; }
+.ac-meta { flex:1; min-width:0; }
+.ac-name { font-size:13.5px; font-weight:600; }
+.ac-goal { font-family:var(--mono); font-size:10px; margin-top:2px; }
+.ac-streak { text-align:center; flex-shrink:0; cursor:default; }
+.ac-today { display:flex; align-items:baseline; gap:8px; margin-top:4px; }
+.ac-week { display:flex; gap:4px; align-items:flex-end; height:32px; margin-top:10px; }
+.ac-wbar { display:flex; flex-direction:column; align-items:center; gap:3px; flex:1; height:100%; justify-content:flex-end; }
+.ac-wbar-fill { width:100%; border-radius:2px; transition:height .3s ease; min-height:4px; }
+.ac-wday { font-family:var(--mono); font-size:8.5px; color:var(--tx-2); }
+.ac-wday.today { color:var(--accent); font-weight:700; }
+/* the per-card "+ Log" affordance (not in the static mock — the FE needs a per-card log entry) */
+.ac-logbtn { margin-top:8px; align-self:flex-start; }
+
+/* today timeline (adapted: BE exposes a per-activity today rollup, NOT per-session
+   timestamps — render one row per activity that has today activity, honest to the API) */
+.tl-list { padding:10px 14px 12px; display:flex; flex-direction:column; gap:0; }
+.tl-row { display:flex; gap:12px; align-items:flex-start; padding:10px 0; position:relative; }
+.tl-row:not(:last-child)::after { content:''; position:absolute; left:52px; top:26px; bottom:-2px; width:1px; background:var(--line); }
+.tl-time { font-size:11px; color:var(--tx-2); width:36px; flex-shrink:0; padding-top:2px; font-family:var(--mono); }
+.tl-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; margin-top:3px; box-shadow:0 0 8px -2px currentColor; }
+.tl-body { flex:1; line-height:1.4; padding-top:0; }
+.tl-row.pending-row .tl-dot { opacity:.4; }
+.tl-row.pending-row .tl-body { opacity:.5; }
+
+/* heatmap (12 weeks · per-day COUNT of activities met — band by count, NOT capped 0-4) */
+.heatmap-wrap { display:flex; gap:6px; }
+.hm-days { display:flex; flex-direction:column; gap:3px; padding-top:2px; }
+.hm-day { font-family:var(--mono); font-size:8.5px; color:var(--tx-2); height:11px; display:flex; align-items:center; }
+.hm-grid { display:grid; grid-template-rows:repeat(7,11px); grid-auto-flow:column; gap:3px; }
+.hc { width:11px; height:11px; border-radius:2px; }
+.hm-legend { display:flex; align-items:center; gap:5px; margin-top:10px; font-family:var(--mono); font-size:9.5px; color:var(--tx-2); }
+.hm-legend .hc { width:10px; height:10px; }
+.hm-acts { display:flex; flex-direction:column; gap:8px; }
+.hma-row { display:flex; align-items:center; gap:8px; font-size:12px; }

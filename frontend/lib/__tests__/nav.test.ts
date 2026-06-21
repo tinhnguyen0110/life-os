@@ -38,7 +38,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("FE-5-news");
     expect(screens).toContain("DEC"); // Decision Cockpit (FINANCE-UI)
     expect(screens).toContain("REM"); // Reminders (#31 GAP-4) under "Hằng ngày"
-    expect(unique.size).toBe(26);
+    expect(screens).toContain("TRACE"); // Daily Tracing (#65-P3 G-HABIT) under "Hằng ngày"
+    expect(unique.size).toBe(27);
   });
 
   it("every nav route has a breadcrumb entry", () => {
