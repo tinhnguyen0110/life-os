@@ -1,0 +1,173 @@
+"""modules/tracing/store.py — tracing persistence (DAILY-TRACING-P1, #65).
+
+Two module-owned SQLite tables on the shared connection (same init-on-first-use pattern as
+reminders/news/macro — NOT in core db.py SCHEMA, kept module-scoped):
+  - ``tracing_activities`` — habit defs (id slug PK, goal, archive flag).
+  - ``tracing_logs``       — raw sessions (time-series; the derive source). Index (activity_id, date).
+
+Defs are structured + logs are time-series/derive-heavy → SQLite, not md_store (md is for
+git-versioned prose). Single-user; a module-level lock serialises writes on the shared connection.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+import threading
+
+from store import db
+
+_lock = threading.Lock()
+
+TRACING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tracing_activities (
+    id        TEXT    PRIMARY KEY,          -- caller-chosen stable slug, e.g. 'run'
+    name      TEXT    NOT NULL,
+    emoji     TEXT    NOT NULL DEFAULT '',
+    icon      TEXT    NOT NULL DEFAULT '',
+    unit      TEXT    NOT NULL DEFAULT '',
+    goal      REAL    NOT NULL DEFAULT 0,
+    color     TEXT    NOT NULL DEFAULT '',
+    created   TEXT    NOT NULL,
+    archived  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS tracing_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id TEXT    NOT NULL,           -- FK → tracing_activities.id (not enforced; single-user)
+    date        TEXT    NOT NULL,           -- YYYY-MM-DD, VN-day bucket
+    ts          TEXT    NOT NULL,           -- ISO-8601 of the session
+    val         REAL    NOT NULL,           -- measured value in the activity's unit
+    dur_min     INTEGER,                    -- session duration in minutes, or NULL
+    note        TEXT                        -- optional session note
+);
+CREATE INDEX IF NOT EXISTS idx_tracing_logs_act_date ON tracing_logs(activity_id, date);
+"""
+
+_ACT_COLS = "id, name, emoji, icon, unit, goal, color, created, archived"
+_LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
+
+
+def init_tracing_tables() -> sqlite3.Connection:
+    """Register the tracing tables on the shared connection. Idempotent; safe after a test
+    rebinds ``db.DB_PATH`` (each store fn calls this first, like reminders)."""
+    conn = db.get_conn()
+    with _lock:
+        conn.executescript(TRACING_SCHEMA)
+        conn.commit()
+    return conn
+
+
+# --------------------------------------------------------------------------- #
+# Activity defs                                                                 #
+# --------------------------------------------------------------------------- #
+def get_activity(activity_id: str) -> sqlite3.Row | None:
+    """One activity def by id (incl. archived), or None if absent."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_ACT_COLS} FROM tracing_activities WHERE id = ?", (activity_id,)
+        ).fetchone()
+
+
+def list_activities(include_archived: bool = False) -> list[sqlite3.Row]:
+    """All activity defs, created-order. Excludes archived unless ``include_archived``."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    where = "" if include_archived else "WHERE archived = 0"
+    with _lock:
+        return conn.execute(
+            f"SELECT {_ACT_COLS} FROM tracing_activities {where} ORDER BY created ASC, id ASC"
+        ).fetchall()
+
+
+def create_activity(*, id: str, name: str, emoji: str, icon: str, unit: str, goal: float,
+                    color: str, created: str) -> None:
+    """Insert an activity def. Raises sqlite3.IntegrityError on a duplicate id (caller maps → 409)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO tracing_activities(id, name, emoji, icon, unit, goal, color, created, "
+            "archived) VALUES (?,?,?,?,?,?,?,?,0)",
+            (id, name, emoji, icon, unit, goal, color, created),
+        )
+        conn.commit()
+
+
+def update_activity(activity_id: str, fields: dict) -> bool:
+    """Update the supplied columns of an activity def. Returns False if no such row. ``fields``
+    keys are a trusted subset of the column names (the service builds it from the validated input)."""
+    init_tracing_tables()
+    if not fields:
+        return get_activity(activity_id) is not None
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    params = list(fields.values()) + [activity_id]
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            f"UPDATE tracing_activities SET {cols} WHERE id = ?", params
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def archive_activity(activity_id: str) -> bool:
+    """Soft-delete: set archived=1. Returns False if no such row. (DELETE = archive, never a hard
+    delete — the logs stay for history; single-user, reversible.)"""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE tracing_activities SET archived = 1 WHERE id = ?", (activity_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+# Logs (raw sessions — the derive source)                                       #
+# --------------------------------------------------------------------------- #
+def insert_log(*, activity_id: str, date: str, ts: str, val: float,
+               dur_min: int | None, note: str | None) -> int:
+    """Insert one raw session. Returns the new log id. Multiple per day accumulate (the service
+    sums them at derive time — this just appends the raw row)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO tracing_logs(activity_id, date, ts, val, dur_min, note) "
+            "VALUES (?,?,?,?,?,?)",
+            (activity_id, date, ts, val, dur_min, note),
+        )
+        conn.commit()
+        lid = cur.lastrowid
+        assert lid is not None
+        return int(lid)
+
+
+def logs_for_activity(activity_id: str, *, since_date: str | None = None) -> list[sqlite3.Row]:
+    """Raw sessions for one activity, oldest→newest (by ts). Optional ``since_date`` (inclusive,
+    YYYY-MM-DD) windows to recent days (the 12-week derive only needs the last 84 days)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    where = "WHERE activity_id = ?"
+    params: list = [activity_id]
+    if since_date is not None:
+        where += " AND date >= ?"
+        params.append(since_date)
+    with _lock:
+        return conn.execute(
+            f"SELECT {_LOG_COLS} FROM tracing_logs {where} ORDER BY ts ASC, id ASC", params
+        ).fetchall()
+
+
+def logs_since(since_date: str) -> list[sqlite3.Row]:
+    """ALL sessions on/after ``since_date`` (YYYY-MM-DD), across every activity — the heatmap's
+    derive source (it needs all activities' daily sums together). Oldest→newest."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_LOG_COLS} FROM tracing_logs WHERE date >= ? ORDER BY ts ASC, id ASC",
+            (since_date,),
+        ).fetchall()
