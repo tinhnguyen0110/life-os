@@ -76,6 +76,7 @@ from .crud import (
     refine_note,
     update_note,
 )
+from .import_notes import import_files, import_one  # #93 wiki import (.md/.txt → note)
 
 __all__ = [
     # errors
@@ -85,6 +86,8 @@ __all__ = [
     # public CRUD
     "create_note", "get_note", "update_note", "delete_note", "merge_notes",
     "refine_note",
+    # #93 import (.md/.txt → note)
+    "import_files", "import_one",
     # read
     "resolve_note",
     # link parsing (tests + citations use parse_wikilinks)

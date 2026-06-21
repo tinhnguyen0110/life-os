@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from core.agent_errors import agent_error, agent_error_response  # #61 item#3 + AGENT-ERROR-P6 (#46)
@@ -52,6 +52,7 @@ from .schema import (
     ConflictResolveInput,
     DeviceRegisterInput,
     FolderMetaInput,
+    ImportInput,
     MergeInput,
     NoteCreateInput,
     NoteUpdateInput,
@@ -248,6 +249,44 @@ def create_note(body: NoteCreateInput):
     data = note.model_dump()
     data["suggestedLinks"] = reader.suggest_links(note.id)
     return ok(data=data)
+
+
+@router.post("/import")
+async def import_notes(request: Request):
+    """#93: import .md/.txt → wiki note(s), reusing create_note (→ 1 git commit + [[link]] resolve).
+    Supports BOTH (content-type sniffed, logged to Assumptions):
+      - JSON ``{files:[{filename, content}]}`` (paste path — the FE's primary).
+      - multipart ``UploadFile[]`` (file upload — any field name; each part's filename + decoded text).
+    Returns ``{success, data:{imported:[result rows], createdCount}}``. Per-file fail-soft: a bad
+    file yields its agent_error row, the good ones still import (batch never fails wholesale)."""
+    ctype = request.headers.get("content-type", "")
+    files: list[tuple[str, str]] = []
+    if ctype.startswith("multipart/form-data"):
+        form = await request.form()
+        for value in form.values():
+            # UploadFile parts only (skip plain form fields); decode bytes → text (utf-8, lenient).
+            if hasattr(value, "filename") and hasattr(value, "read"):
+                raw = await value.read()
+                text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                files.append((value.filename or "upload", text))
+        if not files:
+            return agent_error_response(
+                "INVALID_INPUT", "no files in the multipart upload",
+                hint="attach at least one .md or .txt file")
+    else:
+        # JSON paste path — validate via ImportInput (≥1 file; 422 on a malformed body).
+        try:
+            payload = await request.json()
+        except Exception:
+            return agent_error_response("INVALID_INPUT", "request body is not valid JSON",
+                                        hint="send {files:[{filename, content}]} or a multipart upload")
+        try:
+            parsed = ImportInput.model_validate(payload)
+        except Exception as exc:
+            return agent_error_response("INVALID_INPUT", f"bad import body: {exc}",
+                                        hint="send {files:[{filename, content}]} with ≥1 file")
+        files = [(f.filename, f.content) for f in parsed.files]
+    return ok(data=service.import_files(files))
 
 
 @router.post("/notes/merge")

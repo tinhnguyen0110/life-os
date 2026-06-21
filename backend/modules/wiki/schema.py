@@ -16,7 +16,7 @@ suggestion fields are LATER sprints (W1b/W1c/W2) and intentionally absent here.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -198,6 +198,35 @@ class NoteUpdateInput(BaseModel):
 # WHY a human overrode its note (so it writes less junk). Self-describing,       #
 # agent-readable: every field carries its meaning; reason is the CLOSED enum.    #
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# WIKI IMPORT (#93) — upload/paste .md/.txt → note(s). The paste-JSON shape; the  #
+# multipart UploadFile path adapts to the same (filename, content) pairs.          #
+# --------------------------------------------------------------------------- #
+class ImportFile(BaseModel):
+    """One file to import (paste path): a filename (for type/title fallback) + its raw text."""
+
+    filename: str = Field(..., min_length=1, max_length=300, description=".md or .txt name")
+    content: str = Field(..., description="the raw file text (md frontmatter+body, or plain txt)")
+
+
+class ImportInput(BaseModel):
+    """``POST /wiki/import`` JSON body (paste path) — one or more files. The multipart UploadFile[]
+    path produces the same (filename, content) pairs server-side."""
+
+    files: list[ImportFile] = Field(..., min_length=1, description="files to import (≥1)")
+
+
+class ImportResultRow(BaseModel):
+    """Per-file import result (FROZEN — FE-#93 mirrors). ``ok`` → noteId+title set, error None; a bad
+    file → ok False, error carries the agent_error {code,message,hint,retryable}, noteId None."""
+
+    filename: str
+    ok: bool
+    noteId: int | None = None
+    title: str | None = None
+    error: dict[str, Any] | None = None
+
+
 class FeedbackRow(BaseModel):
     """One override-feedback entry (#35): a human edited/deleted an AGENT-written note
     and recorded why. Read-back lean shape for an agent to self-correct."""
