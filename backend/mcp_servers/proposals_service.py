@@ -60,60 +60,33 @@ class ProposalNotFound(Exception):
 # this module doesn't pull every module's service at import time (and so the      #
 # capability surface is obvious: only these handlers reach a module write).       #
 # --------------------------------------------------------------------------- #
+# A1: the payload→Input BUILDERS are the SINGLE source of shaping (in mcp_servers/payload_builders.py
+# — a pure module, so write_server can import it for propose-time validation WITHOUT importing this
+# apply layer, preserving the no-mutate gate). The apply handlers below build + create; write_server
+# builds-only to validate. Same builder → no drift (esp the journal action case-coercion).
+from mcp_servers.payload_builders import (
+    build_decision_input,
+    build_journal_input,
+    build_note_input,
+)
+
+
 def _apply_decision_create(payload: dict[str, Any]) -> str:
-    from modules.decision_journal.schema import DecisionInput
     from modules.decision_journal.service import create_entry
 
-    body = DecisionInput(
-        decision=payload["decision"],
-        confidence=int(payload["confidence"]),
-        domain=payload["domain"],
-        thesis=payload.get("thesis"),
-        falsificationCondition=payload.get("falsificationCondition"),
-        predicted=payload.get("predicted"),
-    )
-    return create_entry(body).id
+    return create_entry(build_decision_input(payload)).id
 
 
 def _apply_note_create(payload: dict[str, Any]) -> str:
-    from modules.notes.schema import NoteInput
     from modules.notes.service import create_note
 
-    body = NoteInput(
-        title=payload["title"],
-        body=payload.get("body", ""),
-        tags=payload.get("tags", []),
-    )
-    return create_note(body).id
+    return create_note(build_note_input(payload)).id
 
 
 def _apply_journal_create(payload: dict[str, Any]) -> str:
-    from typing import cast
-
-    from modules.journal.schema import Action, JournalInput
     from modules.journal.service import create_entry
 
-    # WRITE-LOOP-E2E (#51): the agent's propose_journal stores ``action`` AS SENT (lowercase
-    # "buy"/"sell"), but JournalInput.action is Literal["BUY","SELL"] (uppercase only) → a
-    # raw pass-through pydantic-fails on accept and the trade never lands. Normalize at the
-    # APPLY boundary (NOT by widening the journal schema): upper-case whatever case the agent
-    # sent. Fixes already-queued AND future journal_create proposals; defensive vs any case.
-    # ``cast`` only satisfies the type-checker — pydantic still VALIDATES the Literal at
-    # runtime (a non-BUY/SELL value raises, surfacing as an honest apply_error, not a crash).
-    action = cast(Action, str(payload["action"]).upper())
-    # #57: date + outcome have defaults (None) on JournalInput — the [call-arg] is the
-    # no-pydantic-mypy-plugin gotcha (mypy reads defaulted fields as required), NOT a missing-required.
-    # run-the-red confirmed: JournalInput.date/outcome = Field(None,...). Scoped ignore, not a bug-fix.
-    body = JournalInput(  # type: ignore[call-arg]
-        action=action,
-        asset=payload["asset"],
-        reason=payload["reason"],
-        size=payload.get("size", ""),
-        px=payload.get("px", ""),
-        tag=payload.get("tag", ""),
-        confidence=payload.get("confidence"),
-    )
-    return create_entry(body).id
+    return create_entry(build_journal_input(payload)).id
 
 
 # kind → apply handler. A kind WITHOUT a handler (e.g. project_update) accepts but

@@ -39,6 +39,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+# A1: agent_error is a pure error-BUILDER (not a module-mutation fn) → gate-safe to import here.
+from core.agent_errors import agent_error
+# A1: PAYLOAD_BUILDERS = the kind→Input-model builders (pure pydantic shaping, the SINGLE source the
+# apply path ALSO uses) — for PROPOSE-TIME validation. From mcp_servers.payload_builders (a PURE
+# module, NOT a *.service nor the apply layer) → gate-safe: the builders lazy-import only the SCHEMA,
+# never create_entry/create_note, and this keeps write_server from importing proposals_service.
+from mcp_servers.payload_builders import PAYLOAD_BUILDERS as _PAYLOAD_BUILDERS
 # ENQUEUE-ONLY import (the capability gate — see module docstring + the no-mutate test).
 # enqueue records INTENT only; the store exposes no apply/mutate-the-target fn, so this
 # is the entire write surface the agent channel has.
@@ -77,12 +84,50 @@ def _require_rationale(rationale: str) -> str:
 
 def _propose(*, module: str, kind: str, payload: dict[str, Any],
              rationale: str) -> dict[str, Any]:
-    """Shared path: validate rationale → enqueue a PENDING proposal. Returns the stored
-    proposal dict (status='pending'). NOTHING is applied to any module."""
+    """Shared path: validate rationale → VALIDATE the payload against the apply-time model (A1) →
+    enqueue a PENDING proposal. Returns the stored proposal dict (status='pending'), OR an
+    agent-error dict if the payload is bad.
+
+    A1: a propose_* used to enqueue a payload WITHOUT checking it against the apply-time pydantic
+    model → a bad field (a free-string ``domain``, an out-of-range ``confidence``, a bad enum) landed
+    PENDING with NO warning = identical to a valid call → the agent thought it worked but it failed
+    LATER at human-accept with a raw pydantic error the agent never saw (deferred false-success). Now
+    we build the SAME Input model the apply path uses (proposals_service.PAYLOAD_BUILDERS — single
+    source, can't drift, incl the journal action case-coercion) at propose-time: a ValidationError →
+    an agent-readable error NOW (which field + why + the valid values), NOT a false pending-success."""
     r = _require_rationale(rationale)
+    builder = _PAYLOAD_BUILDERS.get(kind)
+    if builder is not None:  # project_update has no builder (no-op-flag kind) → skip validation
+        try:
+            builder(payload)  # build-only (discard) — just to VALIDATE; raises on a bad payload
+        except Exception as exc:  # noqa: BLE001 — pydantic ValidationError (+ KeyError on a missing field)
+            return _payload_agent_error(kind, exc)
     return _enqueue(
         module=module, kind=kind, payload=payload, rationale=r,
         actor=ACTOR, correlation_id=SESSION_ID, created=_now_iso(),
+    )
+
+
+def _payload_agent_error(kind: str, exc: Exception) -> dict[str, Any]:
+    """A1: turn a propose-time payload ValidationError into an agent-readable error (NOT a raw
+    pydantic dump, NOT a false pending-success). code = INVALID_INPUT (the canonical closed-enum code;
+    NOTE the dispatch said 'INVALID_PAYLOAD' but that's not in the agent_errors.ErrorCode enum →
+    INVALID_INPUT, →422, retryable=False per the enum invariant: a malformed payload is deterministic,
+    the agent must FIX the field not retry the same). The field + reason are summarized for the agent."""
+    from pydantic import ValidationError
+
+    if isinstance(exc, ValidationError):
+        errs = exc.errors()
+        first: dict[str, Any] = dict(errs[0]) if errs else {}
+        loc = ".".join(str(p) for p in first.get("loc", []))
+        why = first.get("msg", "invalid")
+        message = f"{kind}: bad payload — {loc}: {why}" if loc else f"{kind}: {why}"
+    else:  # a missing required key (KeyError) etc.
+        message = f"{kind}: bad payload — missing/invalid field {exc}"
+    return agent_error(
+        "INVALID_INPUT", message,
+        hint="fix the field to match the model (e.g. confidence = int 0-100; journal action = BUY|SELL) "
+             "then re-propose",
     )
 
 

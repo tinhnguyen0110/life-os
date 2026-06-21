@@ -65,6 +65,57 @@ def test_propose_journal_enqueues_pending(queue_db):
     assert p["payload"]["action"] == "buy"
 
 
+# --------------------------------------------------------------------------- #
+# A1 — propose-time payload validation (a bad payload → agent-error NOW, not a   #
+# deferred false-pending-success at human-accept). The shaping is the SINGLE      #
+# source (payload_builders) both propose + apply use → no drift.                  #
+# --------------------------------------------------------------------------- #
+def test_A1_bad_confidence_is_agent_error_not_pending(queue_db):
+    """A1: an out-of-range confidence → agent-error {code,message,hint}, NOT a pending false-success
+    (DecisionInput rejects it at propose-time now, not later at accept)."""
+    r = ws.propose_decision("x", 999, "macro", "rationale")  # confidence out of 0-100
+    assert "error" in r, "a bad payload must return an agent-error, NOT pending"
+    err = r["error"]
+    assert err["code"] == "INVALID_INPUT"
+    assert "confidence" in err["message"].lower()
+    assert err["hint"]            # names the valid type/range
+    assert r.get("status") != "pending"  # NOT a false pending-success
+
+
+def test_A1_decision_string_field_violation_is_agent_error(queue_db):
+    """A1 the team-lead real case: a free-STRING field that DecisionInput constrains (or a missing
+    required field) → agent-error, not a silent pending. (Here: empty decision → DecisionInput rejects.)"""
+    # an empty `decision` violates DecisionInput's min_length → propose-time agent-error
+    r = ws.propose_decision("", 50, "macro", "rationale")
+    assert "error" in r and r["error"]["code"] == "INVALID_INPUT"
+    assert r.get("status") != "pending"
+
+
+def test_A1_journal_buy_coercion_still_works(queue_db):
+    """A1 THE load-bearing regression guard: a VALID lowercase journal action ('buy') must STILL
+    enqueue pending (the propose-time validation uses the SAME case-coercion the apply path uses →
+    no newly-rejected valid input)."""
+    p = ws.propose_journal("buy", "BTC", "DCA per plan", "fits the ladder")
+    assert "error" not in p, "lowercase 'buy' is VALID (coercion) — must NOT be newly-rejected"
+    assert p["status"] == "pending" and p["payload"]["action"] == "buy"  # stored as-sent; coerced at build
+
+
+def test_A1_journal_bad_action_is_agent_error(queue_db):
+    """A1: a journal action that isn't BUY/SELL (after upper-casing) → agent-error at propose-time."""
+    r = ws.propose_journal("hodl", "BTC", "reason", "rationale")
+    assert "error" in r and r["error"]["code"] == "INVALID_INPUT"
+    assert r.get("status") != "pending"
+
+
+def test_A1_valid_proposes_still_pending(queue_db):
+    """A1 happy path unchanged: a VALID propose of each kind still enqueues pending."""
+    assert ws.propose_decision("go", 70, "macro", "r")["status"] == "pending"
+    assert ws.propose_quicknote("t", "r", body="b")["status"] == "pending"
+    assert ws.propose_journal("SELL", "ETH", "reason", "r")["status"] == "pending"
+    # project_update has no builder → propose-time skips validation → still pending
+    assert ws.propose_project_update("p1", "r", progress=50)["status"] == "pending"
+
+
 def test_propose_project_update_enqueues_only_given_fields(queue_db):
     p = ws.propose_project_update("life-os", "progress moved this week", progress=40)
     assert p["status"] == "pending"
