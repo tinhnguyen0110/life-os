@@ -5,12 +5,16 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
    actually calls — NOT lower-level apiGet (memory: vitest-mock-named-api). */
 const getWikiOverview = vi.fn();
 const searchWiki = vi.fn();
+const bulkDeleteWikiNotes = vi.fn();
+const getWikiTrash = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
     ...actual,
     getWikiOverview: (...a: unknown[]) => getWikiOverview(...a),
     searchWiki: (...a: unknown[]) => searchWiki(...a),
+    bulkDeleteWikiNotes: (...a: unknown[]) => bulkDeleteWikiNotes(...a),
+    getWikiTrash: (...a: unknown[]) => getWikiTrash(...a),
   };
 });
 vi.mock("next/link", () => ({
@@ -131,5 +135,86 @@ describe("W1 Vault Overview", () => {
     fireEvent.change(screen.getByTestId("vault-search-input"), { target: { value: "zzz" } });
     await waitFor(() => expect(screen.getByTestId("vault-search-empty")).toBeInTheDocument());
     expect(screen.queryByTestId("vault-search-hit")).toBeNull();
+  });
+});
+
+/* ---- #94 trash button + bulk soft-delete ---- */
+const MULTI_ORPHAN: WikiOverview = {
+  ...FULL,
+  orphans: [
+    { id: 12, title: "Orphan A", status: "evergreen", degree: 0, lastTouched: "2026-04-01" },
+    { id: 13, title: "Orphan B", status: "fleeting", degree: 0, lastTouched: "2026-04-02" },
+    { id: 14, title: "Orphan C", status: "developing", degree: 0, lastTouched: "2026-04-03" },
+  ],
+};
+
+describe("W1 Vault — #94 trash + bulk soft-delete", () => {
+  it("has a Trash button opening the trash modal", async () => {
+    getWikiOverview.mockResolvedValueOnce(ok(FULL));
+    searchWiki.mockResolvedValue(ok([]));
+    getWikiTrash.mockResolvedValue(ok({ trash: [], count: 0 }));
+    render(<WikiVaultPage />);
+    await waitFor(() => expect(screen.getByTestId("vault-trash-btn")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("vault-trash-btn"));
+    await waitFor(() => expect(screen.getByTestId("wiki-trash")).toBeInTheDocument());
+  });
+
+  it("bulk-mode → checkboxes on orphans; select 2 → bulk-delete (IN-PAGE confirm) → POST {ids}", async () => {
+    getWikiOverview.mockResolvedValue(ok(MULTI_ORPHAN)); // resolved (not Once) — survives reload-after-delete
+    searchWiki.mockResolvedValue(ok([]));
+    bulkDeleteWikiNotes.mockResolvedValue(ok({ results: [{ id: 12, ok: true, error: null }, { id: 13, ok: true, error: null }], deletedCount: 2 }));
+    render(<WikiVaultPage />);
+    await waitFor(() => expect(screen.getByTestId("vault-orphan-list")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("bulk-mode-btn"));
+    // checkboxes appear (no navigation)
+    await waitFor(() => expect(screen.getByTestId("bulk-check-12")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-check-12"));
+    fireEvent.click(screen.getByTestId("bulk-check-13"));
+    expect(screen.getByTestId("bulk-count")).toHaveTextContent("2 đã chọn");
+
+    // delete → IN-PAGE confirm (no window.confirm)
+    const confirmSpy = vi.spyOn(window, "confirm");
+    fireEvent.click(screen.getByTestId("bulk-delete-btn"));
+    expect(screen.getByTestId("bulk-confirm-yes")).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("bulk-confirm-yes"));
+    await waitFor(() => expect(bulkDeleteWikiNotes).toHaveBeenCalledWith([12, 13]));
+    // result surface
+    await waitFor(() => expect(screen.getByTestId("bulk-result")).toHaveTextContent("2 đã chuyển"));
+    confirmSpy.mockRestore();
+  });
+
+  it("bulk-delete fail-soft → shows the per-id errors (no crash)", async () => {
+    getWikiOverview.mockResolvedValue(ok(MULTI_ORPHAN));
+    searchWiki.mockResolvedValue(ok([]));
+    bulkDeleteWikiNotes.mockResolvedValue(ok({
+      results: [{ id: 12, ok: true, error: null }, { id: 13, ok: false, error: { code: "NOT_FOUND", message: "no note #13" } }],
+      deletedCount: 1,
+    }));
+    render(<WikiVaultPage />);
+    await waitFor(() => expect(screen.getByTestId("vault-orphan-list")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-mode-btn"));
+    await waitFor(() => expect(screen.getByTestId("bulk-check-12")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-check-12"));
+    fireEvent.click(screen.getByTestId("bulk-check-13"));
+    fireEvent.click(screen.getByTestId("bulk-delete-btn"));
+    fireEvent.click(screen.getByTestId("bulk-confirm-yes"));
+    await waitFor(() => expect(screen.getByTestId("bulk-errors")).toHaveTextContent("no note #13"));
+    expect(screen.getByTestId("bulk-result")).toHaveTextContent("1 đã chuyển");
+  });
+
+  it("bulk confirm can be cancelled (no POST)", async () => {
+    getWikiOverview.mockResolvedValueOnce(ok(MULTI_ORPHAN));
+    searchWiki.mockResolvedValue(ok([]));
+    render(<WikiVaultPage />);
+    await waitFor(() => expect(screen.getByTestId("vault-orphan-list")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-mode-btn"));
+    await waitFor(() => expect(screen.getByTestId("bulk-check-12")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-check-12"));
+    fireEvent.click(screen.getByTestId("bulk-delete-btn"));
+    fireEvent.click(screen.getByTestId("bulk-confirm-no"));
+    expect(screen.queryByTestId("bulk-confirm-yes")).toBeNull();
+    expect(bulkDeleteWikiNotes).not.toHaveBeenCalled();
   });
 });

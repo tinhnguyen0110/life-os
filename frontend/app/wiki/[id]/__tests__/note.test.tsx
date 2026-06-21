@@ -180,17 +180,21 @@ describe("W2 Note view/edit", () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
-  it("confirm → DELETEs the note then navigates to /wiki", async () => {
+  // #94 — delete is now SOFT (recoverable): navigates to /wiki?trashed=<id> so the vault
+  // shows the "moved to trash · restore" toast (NOT a scary permanent delete).
+  it("confirm → SOFT-deletes the note then navigates to /wiki?trashed=<id> (recoverable)", async () => {
     getWikiNote.mockResolvedValueOnce(ok(NOTE));
     getWikiBacklinks.mockResolvedValueOnce(ok(BL));
-    deleteWikiNote.mockResolvedValueOnce(ok(NOTE));
+    deleteWikiNote.mockResolvedValueOnce(ok({ deleted: 47, deletedAt: "2026-06-21T10:00:00Z" }));
     render(<WikiNotePage params={{ id: "47" }} />);
     await screen.findByTestId("wiki-id");
 
     await userEvent.click(screen.getByTestId("wiki-delete-btn"));      // arm
+    // the confirm copy reflects soft-delete ("thùng rác"), not a scary "xoá"
+    expect(screen.getByTestId("wiki-delete-confirm")).toHaveTextContent(/thùng rác/i);
     await userEvent.click(screen.getByTestId("wiki-delete-confirm"));  // confirm
     await waitFor(() => expect(deleteWikiNote).toHaveBeenCalledWith(47));
-    await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/wiki"));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/wiki?trashed=47"));
   });
 
   it("cancel disarms the delete (note NOT deleted)", async () => {

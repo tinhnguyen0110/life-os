@@ -1031,6 +1031,16 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .dev-repo-name { font-family:var(--mono); color:var(--tx-0); }
 
 /* ============================================================
+   #94 Wiki trash/restore + bulk-delete.
+   ============================================================ */
+.wtrash-list { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+.wtrash-row { display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:7px; border:1px solid var(--line-1); }
+.wtrash-row:hover { background:var(--bg-1); }
+.wtrash-meta { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+.wtrash-title { color:var(--tx-0); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wbulk-bar { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--bg-1); border-radius:7px; margin:6px 0; flex-wrap:wrap; }
+
+/* ============================================================
    #93 Wiki import modal.
    ============================================================ */
 .wimport-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:grid; place-items:center; z-index:50; padding:20px; }

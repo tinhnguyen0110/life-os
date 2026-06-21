@@ -126,9 +126,10 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
     setDeleteErr("");
     setBusy(true);
     try {
-      await remove(); // DELETE /wiki/notes/{id} (inbound links → ghost server-side)
-      // Gone → leave the now-404 note page for the vault (list/explorer refetch there).
-      router.push("/wiki");
+      await remove(); // #94 SOFT delete → moves to trash (recoverable via restore)
+      // Soft-deleted → go to the vault with a "moved to trash · restore" signal so the
+      // user can immediately undo (the "xoá nhầm" rollback). NOT a scary permanent delete.
+      router.push(`/wiki?trashed=${id}`);
     } catch (e) {
       // fail-closed: surface the error, stay on the note (still exists).
       setConfirmingDelete(false);
@@ -174,7 +175,7 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
                   disabled={busy}
                   data-testid="wiki-delete-confirm"
                 >
-                  {busy ? "Đang xoá…" : "Xác nhận xoá?"}
+                  {busy ? "Đang chuyển…" : "Chuyển vào thùng rác?"}
                 </button>
                 <button
                   type="button"

@@ -18,9 +18,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useWikiOverview } from "@/lib/useWiki";
-import { searchWiki } from "@/lib/api";
+import { searchWiki, ApiError } from "@/lib/api";
 import { Icon } from "@/lib/icons";
 import { WikiImport } from "@/components/WikiImport";
+import { WikiTrash } from "@/components/WikiTrash";
 import type {
   WikiInboxItem,
   WikiOrphan,
@@ -68,6 +69,45 @@ export default function WikiVaultPage() {
     if (importedDirty.current) { importedDirty.current = false; reload(); }
   }, [reload]);
 
+  /* ---- #94 trash modal + "moved to trash" toast (from ?trashed=<id>) ---- */
+  const [showTrash, setShowTrash] = useState(false);
+  const trashedDirty = useRef(false);
+  const closeTrash = useCallback(() => {
+    setShowTrash(false);
+    if (trashedDirty.current) { trashedDirty.current = false; reload(); }
+  }, [reload]);
+  // the note-detail soft-delete navigates to /wiki?trashed=<id> → show a recover toast.
+  const trashedId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("trashed") : null;
+  const [toastDismissed, setToastDismissed] = useState(false);
+
+  /* ---- #94 bulk-select (orphan list) → bulk soft-delete ---- */
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ deletedCount: number; errors: { id: number; msg: string }[] } | null>(null);
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }, []);
+  const exitBulk = useCallback(() => { setBulkMode(false); setSelectedIds(new Set()); setBulkConfirm(false); setBulkResult(null); }, []);
+  async function onBulkDelete() {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true); setBulkResult(null);
+    try {
+      const { bulkDeleteWikiNotes } = await import("@/lib/api");
+      const res = await bulkDeleteWikiNotes([...selectedIds]);
+      const errors = res.data.results.filter((r) => !r.ok).map((r) => ({ id: r.id, msg: r.error?.message ?? "lỗi" }));
+      setBulkResult({ deletedCount: res.data.deletedCount, errors });
+      setBulkConfirm(false);
+      setSelectedIds(new Set());
+      reload(); // refresh the tree (the soft-deleted notes leave the orphan list)
+    } catch (e) {
+      setBulkResult({ deletedCount: 0, errors: [{ id: -1, msg: e instanceof ApiError ? e.message : (e as Error).message }] });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   /* ---- FTS quick search (debounced) ---- */
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<WikiSearchHit[]>([]);
@@ -106,10 +146,26 @@ export default function WikiVaultPage() {
     <WikiImport onClose={closeImport} onImported={() => { importedDirty.current = true; }} />
   ) : null;
 
+  // #94 — trash modal (same hoist rationale as the import modal: survive a reload).
+  const trashModal = showTrash ? (
+    <WikiTrash onClose={closeTrash} onRestored={() => { trashedDirty.current = true; }} />
+  ) : null;
+
+  // #94 — "moved to trash · restore" toast after a soft-delete (the undo affordance).
+  const trashedToast = trashedId && !toastDismissed ? (
+    <div className="panel" style={{ padding: "10px 14px", borderColor: "var(--accent)", display: "flex", alignItems: "center", gap: 10 }} data-testid="trashed-toast">
+      <span className="hint">🗑 Đã chuyển note vào thùng rác.</span>
+      <button type="button" className="btn sm acc" onClick={() => { setShowTrash(true); setToastDismissed(true); }} data-testid="toast-open-trash">↩ Khôi phục</button>
+      <button type="button" className="btn sm ghost" onClick={() => setToastDismissed(true)} data-testid="toast-dismiss">Bỏ qua</button>
+    </div>
+  ) : null;
+
+  const overlays = <>{importModal}{trashModal}</>;
+
   if (status === "loading") {
     return (
       <>
-        {importModal}
+        {overlays}
         <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-loading">Đang tải vault…</div>
       </>
     );
@@ -117,7 +173,7 @@ export default function WikiVaultPage() {
   if (status === "error") {
     return (
       <>
-        {importModal}
+        {overlays}
         <div className="hint" style={{ padding: "24px 4px", color: "var(--red)" }} data-testid="vault-error">
           {errMsg || "Không tải được vault."}
           <button type="button" className="btn ghost" style={{ marginLeft: 12 }} onClick={reload}>Thử lại</button>
@@ -133,7 +189,7 @@ export default function WikiVaultPage() {
   if (!overview || totalNotes === 0) {
     return (
       <div data-testid="vault-screen">
-        {importModal}
+        {overlays}
         <div className="vtitle">
           <h1>Vault · Tri thức</h1>
           <span className="sub">0 notes · vault còn trống</span>
@@ -142,10 +198,15 @@ export default function WikiVaultPage() {
           <button type="button" className="btn accent" onClick={() => setShowImport(true)} data-testid="vault-import-btn">
             <Icon name="i-plus" /> Import .md
           </button>
+          {/* #94 — trash access even when the vault is empty (e.g. soft-deleted the last note). */}
+          <button type="button" className="btn" onClick={() => setShowTrash(true)} data-testid="vault-trash-btn">
+            🗑 Thùng rác
+          </button>
           <Link href="/wiki/inbox" className="btn" data-testid="vault-inbox-link">
             <Icon name="i-note" /> Inbox
           </Link>
         </div>
+        {trashedToast}
         <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-empty">
           🌱 Vault rỗng — chưa có note nào. {warning ? <span className="mut">({warning})</span> : null} Bắt đầu bằng cách
           <b> Import .md</b> (nhập file có sẵn) hoặc capture một fleeting note (command bar <code>note …</code>) rồi triage ở Inbox.
@@ -171,16 +232,32 @@ export default function WikiVaultPage() {
     </Link>
   );
 
-  const orphanRow = (o: WikiOrphan) => (
-    <Link key={o.id} href={`/wiki/${o.id}`} className="wlist-row clickable" data-testid="vault-orphan-row">
-      <span className="worphan-deg">{o.degree}</span>
-      <div className="wlr-body">
-        <div className="wlr-t">{o.title ?? <span className="faint">#{o.id}</span>}</div>
-      </div>
-      <span className={`wstatus ${o.status}`}>{o.status}</span>
-      <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10 }}>{o.lastTouched}</span>
-    </Link>
-  );
+  const orphanRow = (o: WikiOrphan) =>
+    bulkMode ? (
+      // #94 bulk-mode: a checkbox row (no navigation) to multi-select for soft-delete.
+      <label key={o.id} className="wlist-row" style={{ cursor: "pointer" }} data-testid={`vault-orphan-row-bulk-${o.id}`}>
+        <input
+          type="checkbox"
+          checked={selectedIds.has(o.id)}
+          onChange={() => toggleSelect(o.id)}
+          data-testid={`bulk-check-${o.id}`}
+          style={{ marginRight: 6 }}
+        />
+        <span className="worphan-deg">{o.degree}</span>
+        <div className="wlr-body"><div className="wlr-t">{o.title ?? <span className="faint">#{o.id}</span>}</div></div>
+        <span className={`wstatus ${o.status}`}>{o.status}</span>
+        <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10 }}>{o.lastTouched}</span>
+      </label>
+    ) : (
+      <Link key={o.id} href={`/wiki/${o.id}`} className="wlist-row clickable" data-testid="vault-orphan-row">
+        <span className="worphan-deg">{o.degree}</span>
+        <div className="wlr-body">
+          <div className="wlr-t">{o.title ?? <span className="faint">#{o.id}</span>}</div>
+        </div>
+        <span className={`wstatus ${o.status}`}>{o.status}</span>
+        <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10 }}>{o.lastTouched}</span>
+      </Link>
+    );
 
   const actRow = (a: WikiActivity, i: number) => {
     const op = OP[a.op] ?? { lbl: a.op, color: "var(--tx-1)" };
@@ -208,12 +285,16 @@ export default function WikiVaultPage() {
         <button type="button" className="btn" onClick={() => setShowImport(true)} data-testid="vault-import-btn">
           <Icon name="i-plus" /> Import .md
         </button>
+        <button type="button" className="btn" onClick={() => setShowTrash(true)} data-testid="vault-trash-btn">
+          🗑 Thùng rác
+        </button>
         <Link href="/wiki/inbox" className="btn accent" data-testid="vault-newnote-link">
           <Icon name="i-plus" /> Inbox
         </Link>
       </div>
 
-      {importModal}
+      {overlays}
+      {trashedToast}
 
       {/* FTS search */}
       <div className="wsearch">
@@ -300,8 +381,52 @@ export default function WikiVaultPage() {
           <div className="phead">
             <span className="kicker">Orphan sweep</span>
             <span className="wstatus" style={{ color: "var(--red)", background: "var(--red-dim)" }}>{orphans.length} cô lập</span>
-            <Link className="link" href="/wiki/graph" style={{ marginLeft: "auto" }}>xem graph →</Link>
+            {/* #94 bulk-select toggle */}
+            {orphans.length > 0 && (
+              bulkMode ? (
+                <button type="button" className="btn sm ghost" style={{ marginLeft: "auto" }} onClick={exitBulk} data-testid="bulk-exit">Xong</button>
+              ) : (
+                <button type="button" className="btn sm" style={{ marginLeft: "auto" }} onClick={() => setBulkMode(true)} data-testid="bulk-mode-btn">Chọn nhiều</button>
+              )
+            )}
           </div>
+
+          {/* #94 bulk action bar — soft-delete the selected, IN-PAGE confirm (no JS dialog) */}
+          {bulkMode && (
+            <div className="wbulk-bar" data-testid="bulk-bar">
+              <span className="hint" data-testid="bulk-count">{selectedIds.size} đã chọn</span>
+              {bulkConfirm ? (
+                <>
+                  <span className="hint neg">Chuyển {selectedIds.size} note vào thùng rác?</span>
+                  <button type="button" className="btn sm neg" disabled={bulkBusy} onClick={onBulkDelete} data-testid="bulk-confirm-yes">
+                    {bulkBusy ? "Đang xoá…" : "Xác nhận"}
+                  </button>
+                  <button type="button" className="btn sm" onClick={() => setBulkConfirm(false)} data-testid="bulk-confirm-no">Huỷ</button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn sm"
+                  style={{ color: "var(--red)" }}
+                  disabled={selectedIds.size === 0}
+                  onClick={() => { setBulkResult(null); setBulkConfirm(true); }}
+                  data-testid="bulk-delete-btn"
+                >
+                  🗑 Xoá đã chọn
+                </button>
+              )}
+            </div>
+          )}
+          {/* fail-soft bulk result */}
+          {bulkResult && (
+            <div className="hint" style={{ padding: "6px 10px" }} data-testid="bulk-result">
+              <span className="pos">{bulkResult.deletedCount} đã chuyển vào thùng rác</span>
+              {bulkResult.errors.length > 0 && (
+                <span className="neg" data-testid="bulk-errors"> · {bulkResult.errors.length} lỗi: {bulkResult.errors.map((e) => e.msg).join("; ")}</span>
+              )}
+            </div>
+          )}
+
           <div className="wlist" data-testid="vault-orphan-list">
             {orphans.length === 0
               ? <div className="wlist-empty" data-testid="vault-orphan-empty">Không có orphan — mọi note đều có liên kết.</div>

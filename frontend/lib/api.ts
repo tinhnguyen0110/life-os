@@ -34,6 +34,9 @@ import type {
   WikiNoteUpdateInput,
   WikiImportInput,
   WikiImportResponse,
+  WikiTrash,
+  WikiSoftDeleteResult,
+  WikiBulkDeleteResult,
   WikiBacklinks,
   WikiInbox,
   WikiOverview,
@@ -516,9 +519,26 @@ export function updateWikiNote(id: number, body: WikiNoteUpdateInput): Promise<A
   return apiPut<WikiNote>(`/wiki/notes/${id}`, body);
 }
 
-/** Delete a wiki note (inbound links become ghost server-side). 404 if unknown. */
-export function deleteWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
-  return apiDelete<WikiNote>(`/wiki/notes/${id}`);
+/** #94 SOFT-delete a wiki note → moves to trash (recoverable via restore). Returns
+ *  `{deleted, deletedAt}`. Inbound links become ghost server-side. 404 if unknown. */
+export function deleteWikiNote(id: number): Promise<ApiResponse<WikiSoftDeleteResult>> {
+  return apiDelete<WikiSoftDeleteResult>(`/wiki/notes/${id}`);
+}
+
+/** #94 GET /wiki/trash — the soft-deleted notes (newest-deleted-first) + count. */
+export function getWikiTrash(): Promise<ApiResponse<WikiTrash>> {
+  return apiGet<WikiTrash>("/wiki/trash");
+}
+
+/** #94 POST /wiki/notes/{id}/restore — bring a soft-deleted note back. Returns the note. */
+export function restoreWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
+  return apiPost<WikiNote>(`/wiki/notes/${id}/restore`, {});
+}
+
+/** #94 POST /wiki/notes/bulk-delete — soft-delete many. FAIL-SOFT: per-id results
+ *  ({id, ok, error}); a bad id returns ok:false + agent-error, doesn't fail the batch. */
+export function bulkDeleteWikiNotes(ids: number[]): Promise<ApiResponse<WikiBulkDeleteResult>> {
+  return apiPost<WikiBulkDeleteResult>("/wiki/notes/bulk-delete", { ids });
 }
 
 /** W2 — a note's connections: linked + unlinked mentions + outbound (resolved/ghost). */

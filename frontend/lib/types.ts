@@ -823,6 +823,54 @@ export interface WikiNote {
   created: string;
   updated: string;
   contentHash: string;
+  /** #94 soft-delete: ISO timestamp when soft-deleted (in trash), else null/absent. */
+  deletedAt?: string | null;
+}
+
+/* ============================================================================
+   #94 Wiki soft-delete (trash/restore/bulk). Delete is now RECOVERABLE — a deleted
+   note moves to the trash (GET /wiki/trash) + can be restored. Mirrors the FROZEN
+   #94-BE schema. The "xoá nhầm → rollback" recovery the user asked for.
+   ============================================================================ */
+
+/** A trash item (GET /wiki/trash) — a LEAN view of a soft-deleted note (not the full
+ *  body; enough to identify + restore). newest-deleted-first. */
+export interface WikiTrashItem {
+  id: number;
+  title: string;
+  /** ISO timestamp it was soft-deleted. */
+  deletedAt: string;
+  folder: string;
+}
+
+/** GET /wiki/trash → the soft-deleted notes + count. */
+export interface WikiTrash {
+  trash: WikiTrashItem[];
+  count: number;
+}
+
+/** DELETE /wiki/notes/{id} (now SOFT) → confirms the move to trash. */
+export interface WikiSoftDeleteResult {
+  deleted: number;
+  deletedAt: string;
+}
+
+/** POST /wiki/notes/bulk-delete body. */
+export interface WikiBulkDeleteInput {
+  ids: number[];
+}
+
+/** Per-id bulk-delete result. ok:false → the agent-error (e.g. NOT_FOUND). FAIL-SOFT. */
+export interface WikiBulkDeleteItem {
+  id: number;
+  ok: boolean;
+  error: { code: string; message: string; hint?: string; retryable?: boolean } | null;
+}
+
+/** POST /wiki/notes/bulk-delete → per-id results + how many were soft-deleted. */
+export interface WikiBulkDeleteResult {
+  results: WikiBulkDeleteItem[];
+  deletedCount: number;
 }
 
 /** POST /wiki/notes body — mirrors `NoteCreateInput`. id/timestamps server-assigned.
