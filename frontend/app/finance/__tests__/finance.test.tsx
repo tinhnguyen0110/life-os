@@ -133,6 +133,39 @@ describe("S5 Finance Overview", () => {
     expect(screen.queryByText(/NaN/)).toBeNull();
   });
 
+  // #81 teeth — net-worth day-change is 3-way + honest (shared deltaGlyph).
+  // change=null (no prior point) → ▬/faint, NOT a green ▲ pos (the F1 false-green bug).
+  it("change=null → net-worth delta ▬ / faint, NOT a green ▲ pos", async () => {
+    apiGet.mockResolvedValueOnce({
+      success: true,
+      data: { totalValue: 1000, change: null, holdings: [], series: [], dryPowder: 0, pnlTotal: { cost: 1000, current: 1000, abs: 0, pct: null }, allocations: [] },
+    });
+    render(<FinancePage />);
+    const nw = await screen.findByTestId("finance-networth");
+    const delta = nw.querySelector(".nwd .num") as HTMLElement;
+    expect(delta).toBeTruthy();
+    expect(delta.textContent).toContain("▬");
+    expect(delta.className).toContain("faint");
+    expect(delta.className).not.toContain("pos"); // teeth: not green-up on no-data
+    expect(delta.textContent).not.toContain("▲");
+  });
+
+  // FLAT day (change.abs === 0) → ▬/faint, NOT a green ▲ (the F1 false-gain bug).
+  it("change.abs=0 (flat) → net-worth delta ▬ / faint, NOT a green ▲ pos", async () => {
+    apiGet.mockResolvedValueOnce({
+      success: true,
+      data: { totalValue: 1000, change: { abs: 0, pct: 0 }, holdings: [], series: [], dryPowder: 0, pnlTotal: { cost: 1000, current: 1000, abs: 0, pct: null }, allocations: [] },
+    });
+    render(<FinancePage />);
+    const nw = await screen.findByTestId("finance-networth");
+    const delta = nw.querySelector(".nwd .num") as HTMLElement;
+    expect(delta).toBeTruthy();
+    expect(delta.textContent).toContain("▬");
+    expect(delta.className).toContain("faint");
+    expect(delta.className).not.toContain("pos"); // teeth: flat is not a gain
+    expect(delta.textContent).not.toContain("▲");
+  });
+
   it("API error → friendly error state, no white-screen", async () => {
     const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
     apiGet.mockRejectedValueOnce(new (ApiError as any)(0, "Network error"));

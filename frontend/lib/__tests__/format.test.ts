@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { relativeTime, idleDays, orDash, fmtUSD, fmtSign, fmtPct } from "../format";
+import { relativeTime, idleDays, orDash, fmtUSD, fmtSign, fmtPct, deltaGlyph } from "../format";
 
 describe("relativeTime", () => {
   beforeEach(() => {
@@ -98,5 +98,45 @@ describe("fmtPct", () => {
   it("null/NaN → fallback", () => {
     expect(fmtPct(null)).toBe("—");
     expect(fmtPct(undefined, "—")).toBe("—");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #81 — deltaGlyph: the SINGLE 3-way honest delta rule shared by every delta
+// widget (Home/Finance net-worth, EquityCurve, MarketChart). These are the
+// DISTINGUISHING cases a 2-way `up ? pos : neg` gets WRONG — they are the teeth
+// that go RED if any widget (or this helper) regresses to 2-way.
+// ---------------------------------------------------------------------------
+describe("deltaGlyph (3-way honest delta — #81)", () => {
+  it("a real LOSS (< 0) → ▼ / neg (red-down)", () => {
+    expect(deltaGlyph(-12.5)).toEqual({ arrow: "▼", cls: "neg" });
+    expect(deltaGlyph(-0.01)).toEqual({ arrow: "▼", cls: "neg" });
+  });
+
+  it("a real GAIN (> 0) → ▲ / pos (green-up)", () => {
+    expect(deltaGlyph(8.3)).toEqual({ arrow: "▲", cls: "pos" });
+    expect(deltaGlyph(0.01)).toEqual({ arrow: "▲", cls: "pos" });
+  });
+
+  // THE teeth #1 — flat must NOT be a green gain.
+  it("FLAT (=== 0) → ▬ / faint — NOT a green ▲ pos (the false-gain bug)", () => {
+    const g = deltaGlyph(0);
+    expect(g).toEqual({ arrow: "▬", cls: "faint" });
+    expect(g.cls).not.toBe("pos"); // explicit: a flat 0.00% is never green-up
+    expect(g.arrow).not.toBe("▲");
+  });
+
+  // THE teeth #2 — no data must NOT fabricate a direction.
+  it("null / undefined / NaN → ▬ / faint — NOT a fabricated arrow/color", () => {
+    for (const v of [null, undefined, NaN]) {
+      const g = deltaGlyph(v as number | null | undefined);
+      expect(g).toEqual({ arrow: "▬", cls: "faint" });
+      expect(["pos", "neg"]).not.toContain(g.cls); // never green/red on no-data
+    }
+  });
+
+  it("the neutral tone is NEVER pos/neg (so it can't render green/red)", () => {
+    expect(["pos", "neg"]).not.toContain(deltaGlyph(0).cls);
+    expect(["pos", "neg"]).not.toContain(deltaGlyph(null).cls);
   });
 });

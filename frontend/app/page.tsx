@@ -16,7 +16,7 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { HomeClaudeTile } from "@/components/HomeClaudeTile";
 import { HomeActivityTile } from "@/components/HomeActivityTile";
 import { HomeBriefTile } from "@/components/HomeBriefTile";
-import { fmtUSD, fmtSign, fmtPct, orDash } from "@/lib/format";
+import { fmtUSD, fmtSign, fmtPct, orDash, deltaGlyph } from "@/lib/format";
 import { spark } from "@/lib/spark";
 import type { ProjectStatus } from "@/lib/types";
 
@@ -32,14 +32,15 @@ function pnlCell(abs: number | null | undefined): { text: string; cls: string } 
   return { text: fmtSign(abs), cls: abs < 0 ? "neg" : "pos" };
 }
 
-/** #72-FE — day-change render, 3-way + honest-null. A FLAT/$0 day must read NEUTRAL
- *  (▬, faint, "$0"), NOT a green ▲ "+$0" (the old `< 0 ? neg : pos` made 0 → green-up,
- *  presenting flat as a gain). No prior-day point (null) → "—"/neutral, never a fake
- *  arrow or fabricated number. Returns the arrow + tone class + the honest amount text. */
+/** #72-FE / #81 — day-change render, 3-way + honest-null. The arrow + tone now come
+ *  from the SHARED `deltaGlyph` (lib/format) so the rule can't drift per-widget; this
+ *  wrapper only adds the honest AMOUNT text: null → "—", FLAT → "$0" (NOT "+$0"), else
+ *  the signed amount. (deltaGlyph already maps null/0 → ▬/faint, so a flat/no-data day
+ *  reads neutral, never a green ▲ presenting flat as a gain.) */
 function dayDelta(abs: number | null | undefined): { arrow: string; cls: string; amount: string } {
-  if (abs == null || !Number.isFinite(abs)) return { arrow: "▬", cls: "faint", amount: "—" };
-  if (abs === 0) return { arrow: "▬", cls: "faint", amount: "$0" };
-  return abs < 0 ? { arrow: "▼", cls: "neg", amount: fmtSign(abs) } : { arrow: "▲", cls: "pos", amount: fmtSign(abs) };
+  const { arrow, cls } = deltaGlyph(abs);
+  const amount = abs == null || !Number.isFinite(abs) ? "—" : abs === 0 ? "$0" : fmtSign(abs);
+  return { arrow, cls, amount };
 }
 
 /** A tile that failed → compact inline error (fail-open: doesn't blank the screen). */

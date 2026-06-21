@@ -92,6 +92,20 @@ describe("MarketChart", () => {
     expect(screen.getByTestId("mchart-delta").className).toContain("neg");
   });
 
+  // #81 teeth — a FLAT series (first === last → 0.00%) must read NEUTRAL on the delta
+  // chip, not a green ▲ pos. Reverting the chip to `up ? pos : neg` (0 → up) → RED here.
+  // (The chart line/area fill staying binary `up`-green is intentional & out of scope.)
+  it("FLAT 0.00% delta chip → ▬ / faint, NOT green ▲ pos (false-gain bug)", () => {
+    withClosesData([100, 100]); // exactly flat → deltaPct === 0
+    render(<MarketChart symbol="BTC" />);
+    const delta = screen.getByTestId("mchart-delta");
+    expect(delta).toHaveTextContent("0.00%");
+    expect(delta).toHaveTextContent("▬");
+    expect(delta.className).toContain("faint");
+    expect(delta.className).not.toContain("pos"); // the teeth: not green-up
+    expect(delta.textContent).not.toContain("▲");
+  });
+
   it("hover shows a tooltip with price + ts + crosshair", () => {
     withClosesData([100, 105, 102]);
     render(<MarketChart symbol="BTC" />);

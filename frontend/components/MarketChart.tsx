@@ -17,6 +17,7 @@ import {
   buildScale, linePoints, areaPath, xAt, yAt, indexAtX,
   resampleSeries, linePointsSparse, hasAnyValue, extendScaleRange,
 } from "@/lib/chart-geometry";
+import { deltaGlyph } from "@/lib/format";
 
 const VIEW_W = 720;
 const VIEW_H = 240;
@@ -140,7 +141,10 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
     firstClose != null && lastClose != null && firstClose !== 0
       ? ((lastClose - firstClose) / firstClose) * 100
       : null;
-  const up = (deltaPct ?? 0) >= 0;
+  const up = (deltaPct ?? 0) >= 0; // drives the line/area/hover-dot fill color (binary, intentional)
+  // #81 — the DELTA CHIP uses the shared honest 3-way glyph so a FLAT 0.00% reads ▬/faint,
+  // not a green ▲ (was `up ? ▲pos : ▼neg`, 0 → false-green). Chart fill stays binary `up`.
+  const dg = deltaGlyph(deltaPct);
 
   const hoverC = hoverIdx != null ? candles[hoverIdx] : null;
   const hoverX = hoverIdx != null ? xAt(hoverIdx, scale) : 0;
@@ -154,8 +158,8 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
           <span className="mchart-last" data-testid="mchart-last">
             {priceLabel(lastClose)}
             {deltaPct != null && (
-              <span className={`mchart-delta ${up ? "pos" : "neg"}`} data-testid="mchart-delta">
-                {up ? "▲" : "▼"} {Math.abs(deltaPct).toFixed(2)}%
+              <span className={`mchart-delta ${dg.cls}`} data-testid="mchart-delta">
+                {dg.arrow} {Math.abs(deltaPct).toFixed(2)}%
               </span>
             )}
           </span>

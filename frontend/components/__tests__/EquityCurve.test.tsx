@@ -100,6 +100,19 @@ describe("EquityCurve", () => {
     expect(screen.getByTestId("ecurve-delta").className).toContain("neg");
   });
 
+  // #81 teeth — a literally-FLAT curve (first === last → 0.00%) must read NEUTRAL,
+  // not a green ▲ pos. Reverting the widget to `up ? pos : neg` (0 → up) turns this RED.
+  it("FLAT 0.00% delta → ▬ / faint, NOT green ▲ pos (false-gain bug)", () => {
+    withData([10000, 10000]); // exactly flat → deltaPct === 0
+    render(<EquityCurve />);
+    const delta = screen.getByTestId("ecurve-delta");
+    expect(delta).toHaveTextContent("0.00%");
+    expect(delta).toHaveTextContent("▬");
+    expect(delta.className).toContain("faint");
+    expect(delta.className).not.toContain("pos"); // the teeth: not green-up
+    expect(delta.textContent).not.toContain("▲");
+  });
+
   it("hover shows tooltip with value + day + crosshair", () => {
     withData([10000, 10500, 10200]);
     render(<EquityCurve />);

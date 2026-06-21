@@ -13,7 +13,7 @@ import { useFinance, driftLabel } from "@/lib/useFinance";
 import { useSafeRouter } from "@/lib/useNav";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { EquityCurve } from "@/components/EquityCurve";
-import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
+import { fmtUSD, fmtSign, fmtPct, relativeTime, deltaGlyph } from "@/lib/format";
 import { apiBase, getCryptoBasis, setCryptoBasis } from "@/lib/api";
 import { spark } from "@/lib/spark";
 import type { ChannelAlloc, CryptoBasis, PnL, PnlScope } from "@/lib/types";
@@ -238,8 +238,9 @@ export default function FinancePage() {
   }
 
   const totalTone = (data.pnlTotal?.abs ?? 0) < 0 ? "neg" : "pos";
-  const changeNeg = (data.change?.abs ?? 0) < 0;
-  const changeTone = changeNeg ? "neg" : "pos";
+  // #81 — net-worth day-change via the SHARED honest 3-way rule: null/flat → ▬/faint
+  // (was 2-way `changeNeg ? ▼ : ▲` → a no-data or $0 day rendered a green ▲, false-gain).
+  const changeGlyph = deltaGlyph(data.change?.abs);
   const sparkHtml =
     data.series && data.series.length >= 2 ? spark(data.series, "var(--accent)", 640, 130) : "";
 
@@ -269,8 +270,8 @@ export default function FinancePage() {
           <div className="kicker" style={{ position: "relative" }}>Tổng tài sản</div>
           <div className="num" style={{ fontSize: 36, fontWeight: 700, position: "relative" }} data-amount>{fmtUSD(data.totalValue)}</div>
           <div className="nwd" style={{ display: "flex", gap: 14, marginTop: 4, position: "relative" }}>
-            <span className={`num ${changeTone}`} data-amount>
-              {changeNeg ? "▼" : "▲"} {fmtSign(data.change?.abs)} · {fmtPct(data.change?.pct ?? null)} toàn danh mục
+            <span className={`num ${changeGlyph.cls}`} data-amount>
+              {changeGlyph.arrow} {fmtSign(data.change?.abs)} · {fmtPct(data.change?.pct ?? null)} toàn danh mục
             </span>
           </div>
         </div>

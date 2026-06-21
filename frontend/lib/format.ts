@@ -84,6 +84,28 @@ export function fmtPct(v: number | null | undefined, fallback = "—"): string {
   return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
 }
 
+/** A change value (abs OR pct — either nullable number) → the honest 3-way glyph + tone.
+ *  This is the SINGLE source of the delta arrow/color rule across every delta widget
+ *  (Home net-worth, Finance net-worth, EquityCurve, MarketChart). Extracted from the
+ *  #72-FE inline `dayDelta` so the rule can't drift per-widget again (#81).
+ *
+ *  Honest mapping (the distinguishing cases a 2-way `up ? pos : neg` gets WRONG):
+ *   - `< 0`            → ▼ / "neg"   (a real loss, red-down)
+ *   - `> 0`            → ▲ / "pos"   (a real gain, green-up)
+ *   - `=== 0` (FLAT)   → ▬ / "faint" (NOT a green ▲ — flat is not a gain)
+ *   - `null`/NaN       → ▬ / "faint" (NO data — never a fabricated arrow/color)
+ *
+ *  The neutral tone is the existing `.faint` class (var(--tx-2), tone-less) — the same
+ *  class Home's #72-FE inline helper used, so this extraction is behavior-identical for
+ *  Home and merely PROPAGATES the honest rule to the 3 widgets that were still 2-way.
+ *  It must NOT resolve to the green `.pos` or red `.neg` tone. Callers format the
+ *  number/percent text themselves (fmtSign / fmtPct / toFixed) — this returns ONLY
+ *  the arrow + tone class so the rule lives in one place. */
+export function deltaGlyph(v: number | null | undefined): { arrow: string; cls: string } {
+  if (v == null || !Number.isFinite(v) || v === 0) return { arrow: "▬", cls: "faint" };
+  return v < 0 ? { arrow: "▼", cls: "neg" } : { arrow: "▲", cls: "pos" };
+}
+
 /** duration in ms (or null) → "405ms" / "3.1s" / "2m 5s". null/NaN/neg → fallback. */
 export function fmtDuration(ms: number | null | undefined, fallback = "—"): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return fallback;

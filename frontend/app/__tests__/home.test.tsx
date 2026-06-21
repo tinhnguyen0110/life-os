@@ -349,4 +349,38 @@ describe("S1 Home screen (pre-scaffold: skips tiles until T2 lands)", () => {
     render(<HomePage />);
     await waitFor(() => expect(screen.queryByText(/NaN|undefined/)).not.toBeInTheDocument(), { timeout: 3000 });
   });
+
+  // #81 teeth — Home net-worth day-change is 3-way + honest (shared deltaGlyph).
+  // NO prior-day point (change null) → ▬/faint "—", never a green ▲ on fabricated data.
+  it("day-change with change=null → ▬ / faint '—', NOT a green ▲ pos", async () => {
+    if (isStillEmptyScreen() || !HomePage) return;
+    const noChange: FinanceOverview = { ...FINANCE_OK, change: null };
+    getFinance.mockResolvedValue(ENV(noChange));
+    getProjects.mockResolvedValue(ENV(PROJECTS_OK));
+    getMarket.mockResolvedValue(ENV(MARKET_OK));
+
+    render(<HomePage />);
+    const dc = await screen.findByTestId("home-daychange", {}, { timeout: 3000 });
+    expect(dc).toHaveTextContent("▬");
+    expect(dc.className).toContain("faint");
+    expect(dc.className).not.toContain("pos");   // teeth: not green-up on no-data
+    expect(dc.textContent).not.toContain("▲");
+  });
+
+  // FLAT day (change.abs === 0) → ▬/faint "$0", NOT green ▲ "+$0" (the false-gain bug).
+  it("day-change with change.abs=0 → ▬ / faint '$0', NOT a green ▲ pos", async () => {
+    if (isStillEmptyScreen() || !HomePage) return;
+    const flat: FinanceOverview = { ...FINANCE_OK, change: { abs: 0, pct: 0 } };
+    getFinance.mockResolvedValue(ENV(flat));
+    getProjects.mockResolvedValue(ENV(PROJECTS_OK));
+    getMarket.mockResolvedValue(ENV(MARKET_OK));
+
+    render(<HomePage />);
+    const dc = await screen.findByTestId("home-daychange", {}, { timeout: 3000 });
+    expect(dc).toHaveTextContent("▬");
+    expect(dc).toHaveTextContent("$0");
+    expect(dc.className).toContain("faint");
+    expect(dc.className).not.toContain("pos");   // teeth: flat is not a gain
+    expect(dc.textContent).not.toContain("▲");
+  });
 });

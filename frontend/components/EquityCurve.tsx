@@ -15,7 +15,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useFinanceHistory, RANGE_DAYS, type RangeDays } from "@/lib/useFinanceHistory";
 import { buildScale, linePoints, areaPath, xAt, yAt, indexAtX } from "@/lib/chart-geometry";
-import { fmtUSD } from "@/lib/format";
+import { fmtUSD, deltaGlyph } from "@/lib/format";
 
 const VIEW_W = 720;
 const VIEW_H = 220;
@@ -49,7 +49,10 @@ export function EquityCurve() {
   const first = values.length ? values[0] : null;
   const last = values.length ? values[values.length - 1] : null;
   const deltaPct = first != null && last != null && first !== 0 ? ((last - first) / first) * 100 : null;
-  const up = (deltaPct ?? 0) >= 0;
+  const up = (deltaPct ?? 0) >= 0; // drives the line/area/hover-dot fill color (binary, intentional)
+  // #81 — the DELTA CHIP uses the shared honest 3-way glyph so a FLAT 0.00% reads ▬/faint,
+  // not a green ▲ (was `up ? ▲pos : ▼neg`, 0 → false-green). Chart fill stays binary `up`.
+  const dg = deltaGlyph(deltaPct);
 
   const hoverP = hoverIdx != null ? points[hoverIdx] : null;
   const hoverX = hoverIdx != null ? xAt(hoverIdx, scale) : 0;
@@ -63,8 +66,8 @@ export function EquityCurve() {
           <span className="ecurve-last" data-testid="ecurve-last">
             {fmtUSD(last)}
             {deltaPct != null && (
-              <span className={`ecurve-delta ${up ? "pos" : "neg"}`} data-testid="ecurve-delta">
-                {up ? "▲" : "▼"} {Math.abs(deltaPct).toFixed(2)}%
+              <span className={`ecurve-delta ${dg.cls}`} data-testid="ecurve-delta">
+                {dg.arrow} {Math.abs(deltaPct).toFixed(2)}%
               </span>
             )}
           </span>

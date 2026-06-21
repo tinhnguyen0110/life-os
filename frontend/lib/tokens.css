@@ -805,6 +805,8 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .mchart .mchart-delta { font-size:11px; font-weight:600; padding:1px 6px; border-radius:100px; }
 .mchart .mchart-delta.pos { color:var(--green); background:var(--green-dim); }
 .mchart .mchart-delta.neg { color:var(--red); background:var(--red-dim); }
+/* #81 — neutral (flat 0.00% / no-data) delta chip: faint, NOT green/red. */
+.mchart .mchart-delta.faint { color:var(--tx-2); background:var(--bg-2); }
 .mchart-ranges { display:inline-flex; gap:4px; }
 .mchart-range { font-family:var(--mono); font-size:10.5px; padding:4px 9px; border-radius:7px; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); cursor:pointer; }
 .mchart-range:hover { border-color:var(--tx-2); color:var(--tx-0); }
@@ -841,6 +843,8 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .ecurve .ecurve-delta { font-size:11px; font-weight:600; padding:1px 6px; border-radius:100px; }
 .ecurve .ecurve-delta.pos { color:var(--green); background:var(--green-dim); }
 .ecurve .ecurve-delta.neg { color:var(--red); background:var(--red-dim); }
+/* #81 — neutral (flat 0.00% / no-data) delta chip: faint, NOT green/red. */
+.ecurve .ecurve-delta.faint { color:var(--tx-2); background:var(--bg-2); }
 .ecurve-ranges { display:inline-flex; gap:4px; }
 .ecurve-range { font-family:var(--mono); font-size:10.5px; padding:4px 9px; border-radius:7px; border:1px solid var(--line-2); background:var(--bg-0); color:var(--tx-1); cursor:pointer; }
 .ecurve-range:hover { border-color:var(--tx-2); color:var(--tx-0); }
