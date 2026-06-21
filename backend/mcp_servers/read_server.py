@@ -146,6 +146,9 @@ from modules.dev_activity.reader import get_overview as _dev_activity_overview
 # REPO-MEMORY-P1 (#64): the agent reads a repo cold (structure/readme/git-log/stack) on demand —
 # get_insight is a READ fn (live read, no write/index). Read-gate-safe.
 from modules.code_insight.reader import get_insight as _code_insight
+# REPO-MEMORY-P2 (#64): the agent reads a repo's DURABLE curated memory note (Repos/<name>) —
+# get_memory is a READ fn (the write is a wiki propose, not here). Read-gate-safe.
+from modules.code_insight.reader import get_memory as _repo_memory
 # WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
@@ -569,6 +572,15 @@ def code_insight(repo: str) -> dict[str, Any]:
     honest-empty + warning. Each sub-read fail-soft; everything bounded (caps noted in warnings).
     BYTE-IDENTICAL to REST GET /code_insight (#24 parity). Read-only (the projects git whitelist)."""
     return _code_insight(repo).model_dump()
+
+
+def repo_memory(repo: str) -> dict[str, Any]:
+    """The DURABLE curated memory note for a repo (REPO-MEMORY #64): the Repos/<name> wiki note
+    (summary/stack/decisions/lessons/in-progress) a session-agent reads for instant curated context —
+    the persisted complement to code_insight's fresh read. honest found:false if none written yet.
+    BYTE-IDENTICAL to REST GET /code_insight/memory (#24). Read-only — to SAVE/update, an agent uses
+    the wiki PROPOSE tool (kind=note, folder=Repos); the write is gated by the human-apply loop."""
+    return _repo_memory(repo).model_dump()
 
 
 def daily_brief() -> dict[str, Any]:
@@ -1359,6 +1371,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
     "dev_activity": dev_activity,  # DEV-TRACING-P1 #63: local git dev-activity on lifeos-read (read-only)
     "code_insight": code_insight,  # REPO-MEMORY-P1 #64: on-demand repo read on lifeos-read (read-only)
+    "repo_memory": repo_memory,  # REPO-MEMORY-P2 #64: durable Repos/<name> note read (read-only)
     "daily_brief": daily_brief,
     "brief_history": brief_history,
     "journal_entries": journal_entries,

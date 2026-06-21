@@ -8,7 +8,7 @@
 > right. (Regenerate: see the generator at the bottom.)
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
-- whole-app shared: **45 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+- whole-app shared: **46 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **14 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
@@ -75,6 +75,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `tracing_overview` | ✓ | The habit/activity board for today-VN: per-activity today/streak/week/history12w + 12w heatmap (per-day COUNT of activities met) + score. All derived server-side. Byte-identical to REST GET /tracing (#65). |
 | `dev_activity` | ✓ | Local git dev-activity over N days: per VN day × repo × source(you/other) commits + LOC(filtered, INFORMATIONAL) + active-span + byRepo + summary. honest-empty + warnings (roots/identity). Byte-identical to REST GET /dev_activity (#63). |
 | `code_insight` | ✓ | On-demand FRESH read of a repo for a cold agent: top-level structure + README excerpt + recent git-log + detected stack + asOf (live, never indexed). repo = name|path under the :ro roots. honest found:false + bounded (caps warned). Byte-identical to REST GET /code_insight (#64). |
+| `repo_memory` | ✓ | The DURABLE curated Repos/<name> wiki note (summary/stack/decisions/lessons/in-progress) a cold agent reads — the persisted complement to code_insight. found:false if none. Write = the wiki PROPOSE tool (kind=note, folder=Repos). Byte-identical to REST GET /code_insight/memory (#64). |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
 | `proposal_stats` |  | Counts of the agent's proposals by status (pending/accepted/rejected) so the |

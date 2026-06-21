@@ -164,3 +164,87 @@ def test_mcp_code_insight_byte_identical_to_reader(repo):
     mcp.pop("asOf"); rest.pop("asOf")
     assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
     assert "python" in mcp["stack"]
+
+
+# =========================================================================== #
+# REPO-MEMORY-P2 (#64) — the durable Repos/<name> wiki memory note: repo_memory  #
+# READ (found/found:false) + PROPOSE-write (enqueues; auto-land is #80-gated).    #
+# Reuses the wiki note store (read) + the wiki propose path (write).             #
+# =========================================================================== #
+@pytest.fixture
+def wiki_db(isolated_paths):
+    """Wiki + proposal tables for the repo_memory read/propose tests."""
+    from modules.wiki import store as wiki_store
+    from modules.wiki import proposals_store as pstore
+    wiki_store.init_wiki_tables()
+    pstore.init_proposal_tables()
+    return isolated_paths
+
+
+def _seed_repo_note(name: str, body: str):
+    """Seed a Repos/<name> wiki note (the durable memory) directly via the wiki service."""
+    from modules.wiki import service as wiki_service
+    from modules.wiki.schema import NoteCreateInput
+    return wiki_service.create_note(NoteCreateInput(title=name, content=body, folder="Repos"))
+
+
+def test_repo_memory_found(wiki_db):
+    """A Repos/<name> note exists → repo_memory returns it (found:true, body)."""
+    from modules.code_insight import reader
+    _seed_repo_note("cairn", "# cairn\nstack: node\ndecisions: agent-first")
+    mem = reader.get_memory("cairn")
+    assert mem.found is True and mem.note is not None
+    assert mem.note.title == "cairn" and "agent-first" in mem.note.body and mem.note.updated
+
+
+def test_repo_memory_not_found_honest(wiki_db):
+    """No Repos/<name> note → found:false honest (not a crash)."""
+    from modules.code_insight import reader
+    mem = reader.get_memory("never-written")
+    assert mem.found is False and mem.note is None
+
+
+def test_repo_memory_only_matches_repos_folder(wiki_db):
+    """A note titled <name> in a DIFFERENT folder is NOT the repo memory (folder must be Repos)."""
+    from modules.wiki import service as wiki_service
+    from modules.wiki.schema import NoteCreateInput
+    wiki_service.create_note(NoteCreateInput(title="cairn", content="not the memo", folder="Other"))
+    from modules.code_insight import reader
+    assert reader.get_memory("cairn").found is False  # wrong folder → not found
+
+
+def test_propose_memory_create_enqueues(wiki_db):
+    """An agent proposes a NEW Repos/<name> note → a wiki proposal is ENQUEUED (kind=note_create,
+    folder=Repos, title=<name>). Testable at the propose layer (the auto-land is #80-gated)."""
+    from modules.code_insight import repo_memory
+    from modules.wiki import proposals_service as wiki_propose
+    result = repo_memory.propose_memory("newrepo", "# newrepo\nfresh memory", actor="agent")
+    assert result.get("id") or result.get("proposalId") or result  # a proposal record returned
+    # the proposal is in the queue, kind=note_create, the payload carries folder=Repos + title
+    props = wiki_propose.list_proposals()
+    mine = [p for p in props if p.get("kind") == "note_create"
+            and p.get("payload", {}).get("title") == "newrepo"]
+    assert mine and mine[0]["payload"]["folder"] == "Repos"
+
+
+def test_propose_memory_edit_when_exists(wiki_db):
+    """When the Repos/<name> note already exists → propose an EDIT (note_edit, targetId=its id),
+    not a duplicate create."""
+    from modules.code_insight import repo_memory
+    from modules.wiki import proposals_service as wiki_propose
+    note = _seed_repo_note("cairn", "# cairn\nv1")
+    repo_memory.propose_memory("cairn", "# cairn\nv2 updated", actor="agent")
+    edits = [p for p in wiki_propose.list_proposals()
+             if p.get("kind") == "note_edit" and p.get("targetId") == note.id]
+    assert edits, "an existing repo memory must propose an EDIT (targetId), not a new create"
+
+
+def test_mcp_repo_memory_byte_identical_to_reader(wiki_db):
+    """MCP repo_memory ≡ REST reader (#24 byte-identical)."""
+    import mcp_servers.read_server as rs
+    from modules.code_insight import reader
+    _seed_repo_note("cairn", "# cairn\nmemo")
+    mcp = rs.repo_memory("cairn")
+    rest = reader.get_memory("cairn").model_dump()
+    assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)
+    assert mcp["found"] is True

@@ -34,5 +34,15 @@ def get_code_insight(repo: str = Query(..., min_length=1, description="repo name
     return ok(data=insight.model_dump(), warning=warning)
 
 
+@router.get("/memory")
+def get_repo_memory(repo: str = Query(..., min_length=1, description="repo name")):
+    """REPO-MEMORY-P2 (#64): the DURABLE curated memory note (Repos/<repo>) a session-agent reads
+    for context — summary/stack/decisions/lessons/in-progress. honest found:false if none written
+    yet. The WRITE is a wiki propose (POST /wiki/proposals kind=note, folder=Repos) — not a route
+    here (reuse the wiki propose tool). Pairs with code_insight (fresh-now + curated-learned)."""
+    mem = reader.get_memory(repo)
+    return ok(data=mem.model_dump())
+
+
 # The registry discovers this MODULE (adding this folder is the only wiring — no core/main.py edit).
 MODULE = BaseModule(name="code_insight", router=router)

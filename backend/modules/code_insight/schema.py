@@ -36,3 +36,27 @@ class CodeInsight(BaseModel):
     asOf: str = Field(..., description="ISO timestamp of THIS read (live, always-current — honest freshness)")
     warnings: list[str] = Field(default_factory=list,
                                 description="honest non-fatal issues: not-found / sub-read failed / bounded-truncation")
+
+
+# --------------------------------------------------------------------------- #
+# REPO-MEMORY-P2 (#64): the DURABLE per-repo memory — a curated Repos/<name>    #
+# wiki note an agent READS for context + PROPOSES to update (via the wiki       #
+# propose path). FROZEN.                                                         #
+# --------------------------------------------------------------------------- #
+class RepoMemoryNote(BaseModel):
+    """The stored Repos/<name> wiki note (the curated memory)."""
+
+    id: int = Field(..., description="the wiki note id")
+    title: str = Field(..., description="the note title (= the repo name)")
+    body: str = Field(..., description="the markdown body (summary/stack/decisions/lessons/in-progress)")
+    updated: str = Field(..., description="ISO last-updated of the note")
+
+
+class RepoMemory(BaseModel):
+    """repo_memory(repo) read — the durable curated note for a repo, or honest found:false if none
+    has been written yet. (The WRITE reuses the wiki propose path; per #80 a non-root MCP write
+    enqueues pending and won't auto-land until #80 is fixed — the READ here is unaffected.)"""
+
+    repo: str = Field(..., description="the requested repo")
+    note: RepoMemoryNote | None = Field(default=None, description="the Repos/<repo> note, or None")
+    found: bool = Field(..., description="whether a Repos/<repo> memory note exists")
