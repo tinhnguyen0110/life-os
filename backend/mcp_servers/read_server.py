@@ -128,6 +128,11 @@ from modules.reliability.service import run_suite as _reliability_suite
 # agent reads the macro backdrop; it cannot write the macro series.
 from modules.macro.service import get_overview as _macro_overview
 from modules.macro.service import get_history as _macro_history
+# LIFE-BRIEF-SENTIMENT (#66): the daily "market mood" — F&G + BTC dominance — read
+# straight from the macro STORE's latest points (the SINGLE source the decision tower +
+# market block already cite, the #44 FNG-HONEST work). Lazy/local reads inside the helper
+# keep this a READ path (no record_point). The F&G band reuses market.service._fng_status
+# (the existing #44 3-band classifier — single source of truth, no re-implementation).
 # NEWS-MCP: the agent reads grounded news (digest/list) — READ paths only. NOT
 # capture / init_news_tables (those stay in WRITE_SYMBOLS — the agent reads the
 # captured news; it cannot capture/fetch or init the store).
@@ -1079,12 +1084,57 @@ def _brief_tracing() -> dict[str, Any]:
     }
 
 
+def _brief_sentiment() -> dict[str, Any]:
+    """LIFE-BRIEF-SENTIMENT (#66): the daily "market mood" — Crypto Fear & Greed + BTC
+    dominance — read from the macro STORE's latest points (the same single source the
+    decision tower + market block cite, #44 FNG-HONEST). Agent-readable per signal:
+    ``{value, band, asOf, source}``.
+
+    honest-mirror (the key gate): the macro store NEVER persists a ``source=='mock'`` point
+    (#15 DXY-REAL: record_point early-returns on mock), so a missing/unprimed series →
+    ``store.latest()`` returns None → we emit ``available:false`` + ``value:None`` (an honest
+    "sentiment unavailable", NEVER a fabricated number). Should a legacy mock row exist, its
+    ``source`` is carried verbatim so an agent can age/discount it — we never relabel mock as
+    real. Fail-soft: a store-read error → the signal reports unavailable, the brief still
+    assembles (the whole helper is wrapped by life_brief's _section)."""
+    from modules.macro import store as _macro_store          # lazy: keep this a read path
+    from modules.market.service import _fng_status            # the #44 3-band classifier (single source)
+
+    def _signal(indicator: str, band: bool) -> dict[str, Any]:
+        try:
+            row = _macro_store.latest(indicator)
+        except Exception:  # noqa: BLE001 — fail-soft: a store-read error → honest unavailable (the
+            row = None     # whole brief stays up; matches read_server's silent _section pattern)
+        if row is None:
+            # honest null — no live point (or only mock, which the store refuses to persist)
+            return {"available": False, "value": None, "asOf": None, "source": None,
+                    **({"band": None} if band else {})}
+        value = float(row["value"])
+        out: dict[str, Any] = {"available": True, "value": value,
+                               "asOf": row["ts"], "source": row["source"]}
+        if band:
+            out["band"] = _fng_status(value)   # fear / neutral / greed (#44)
+        return out
+
+    return {
+        "fearGreed": _signal("fear_greed", band=True),
+        "btcDominance": _signal("btc_dominance", band=False),
+    }
+
+
 def _brief_macro() -> dict[str, Any]:
     """Neutral macro snapshot (R2-G1): latest Fed funds rate / US CPI / DXY + a
-    DESCRIPTIVE trend. From modules/macro (get_overview → (data, warnings)). NEUTRAL —
-    observed data, NO forecast. Honest on a mock source (tagged source='mock')."""
+    DESCRIPTIVE trend, PLUS the daily "market mood" (LIFE-BRIEF-SENTIMENT #66: Fear & Greed
+    + BTC dominance). From modules/macro: get_overview → (data, warnings) for Fed/CPI/DXY;
+    the macro store's latest points for sentiment. NEUTRAL — observed data, NO forecast.
+    Honest on a mock/missing source (tagged source='mock' / available:false, never faked)."""
     overview, warnings = _macro_overview()
-    return {"macro": _jsonable(overview), "warnings": list(warnings or [])}
+    return {
+        "macro": _jsonable(overview),
+        # #66: ADDITIVE — the "market mood" beside Fed/CPI/DXY. honest-mirror inside _brief_sentiment.
+        "sentiment": _brief_sentiment(),
+        "warnings": list(warnings or []),
+    }
 
 
 def _brief_news() -> dict[str, Any]:
@@ -1137,7 +1187,8 @@ def life_brief(indicators: str = "summary", market_hours: int = 720) -> dict[str
       - ``projects``  (projects): health counts + the IDLE set (slow/stall/dead)
       - ``claude``    (claude_usage): today's tokens / cap / used% / remaining / reset
       - ``decisions`` (decision_journal): OPEN decisions awaiting an outcome
-      - ``macro``     (macro): Fed funds / CPI / DXY + descriptive trend (R2-G1)
+      - ``macro``     (macro): Fed funds / CPI / DXY + descriptive trend (R2-G1) +
+        ``sentiment`` — the daily market mood (Fear & Greed band + BTC dominance, #66)
       - ``news``      (news): source-cited digest of captured headlines (R2-G1)
       - ``wiki``      (wiki): vault overview — stats / inbox / orphans (R2-G1)
       - ``decision``  (decision tower): W (weight) + verdict band + bindingConstraint +

@@ -659,6 +659,94 @@ def test_R2G1_new_sections_failsoft(app_db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# LIFE-BRIEF-SENTIMENT (#66) — life_brief.macro surfaces the daily "market mood" #
+# (Fear & Greed band + BTC dominance), read from the macro store the decision    #
+# tower + market block already cite. honest-mirror is the load-bearing gate: a    #
+# real point → value+band+source surfaced; no live point → honest available:false #
+# (never a fabricated mood). ADDITIVE — the existing Fed/CPI/DXY section intact.   #
+# --------------------------------------------------------------------------- #
+def _seed_sentiment(value_fng=45.0, btcd=52.0, ts="2026-06-21", source="live"):
+    """Seed a real F&G + BTC dominance point into the macro store (the snapshot routine's
+    write, source='live' = real). record_point refuses source='mock' (#15), so this is the
+    only way a sentiment point exists."""
+    from modules.macro import store as macro_store
+    macro_store.init_macro_tables()
+    macro_store.record_point("fear_greed", value_fng, ts, source)
+    macro_store.record_point("btc_dominance", btcd, ts, source)
+
+
+def test_66_life_brief_macro_surfaces_sentiment_when_real(app_db):
+    """HARD GATE: a real F&G value (45 → neutral band) seeded → life_brief.macro.sentiment
+    surfaces it with value + band + asOf + source (the consumer-agent can read "market mood")."""
+    _seed_sentiment(value_fng=45.0, btcd=52.0, ts="2026-06-21", source="live")
+    macro = rs.life_brief()["brief"]["macro"]
+    assert "error" not in macro
+    sent = macro["sentiment"]
+    fng = sent["fearGreed"]
+    assert fng["available"] is True
+    assert fng["value"] == 45.0
+    assert fng["band"] == "neutral"            # 45 is the 45-55 neutral band (#44)
+    assert fng["asOf"] == "2026-06-21" and fng["source"] == "live"   # agent can age + trust it
+    btcd = sent["btcDominance"]
+    assert btcd["available"] is True and btcd["value"] == 52.0 and btcd["source"] == "live"
+
+
+def test_66_sentiment_band_tracks_value():
+    """The band is the #44 3-band classifier: ≤44 fear · 45-55 neutral · ≥56 greed —
+    distinguishing (a different value → a different band, not a constant)."""
+    for value, expect in [(20.0, "fear"), (44.0, "fear"), (50.0, "neutral"),
+                          (55.0, "neutral"), (56.0, "greed"), (90.0, "greed")]:
+        from modules.macro import store as macro_store
+        # pure classifier check via the same fn _brief_sentiment uses (single source of truth)
+        from modules.market.service import _fng_status
+        assert _fng_status(value) == expect, f"F&G {value} should be {expect}"
+
+
+def test_66_life_brief_macro_sentiment_honest_when_no_live_point(app_db):
+    """HARD GATE (honest-mirror): NO live F&G point (clean app, network off) → sentiment is
+    honest available:false + value:None — NEVER a fabricated mood number. (record_point
+    refuses source='mock' so an unprimed series simply has no row → honest unavailable.)"""
+    macro = rs.life_brief()["brief"]["macro"]
+    assert "error" not in macro
+    sent = macro["sentiment"]
+    assert sent["fearGreed"]["available"] is False
+    assert sent["fearGreed"]["value"] is None and sent["fearGreed"]["band"] is None
+    assert sent["fearGreed"]["source"] is None     # no source = no data, not a faked 'live'
+    assert sent["btcDominance"]["available"] is False and sent["btcDominance"]["value"] is None
+
+
+def test_66_sentiment_additive_macro_section_intact(app_db):
+    """ADDITIVE: the existing Fed/CPI/DXY macro block still works alongside the new sentiment —
+    no regression to the macro overview (the #66 OUT: don't break Fed/CPI/DXY/phase)."""
+    macro = rs.life_brief()["brief"]["macro"]
+    assert "macro" in macro and "sentiment" in macro          # both present
+    inds = {i["indicator"] for i in macro["macro"]["indicators"]}
+    assert {"fed_funds_rate", "cpi", "dxy"} <= inds           # the existing indicators survive
+
+
+def test_66_sentiment_is_neutral_no_advice():
+    """NEUTRAL: the sentiment block DESCRIBES the mood — no advice/forecast term leaks
+    (a band label + a number, never 'buy the fear' etc.)."""
+    _seed_sentiment(value_fng=20.0, btcd=60.0)   # extreme-fear-ish mood
+    flat = json.dumps(rs._brief_sentiment()).lower()
+    for banned in ("buy", "sell", "should", "recommend", "forecast", "will rise", "will fall"):
+        assert banned not in flat, f"sentiment leaked an advice/forecast term: {banned}"
+
+
+def test_66_daily_brief_has_no_macro_consumer():
+    """recheck-all-consumers: daily_brief (modules/brief) is a PRIORITIES brief — it has NO
+    macro section to enrich (rules = market/projects/claude/finance/alerts/reminders/tracing).
+    This pins that #66's enrichment correctly lands ONLY on life_brief's macro section. If a
+    macro rule is ever added to daily_brief, this test fails → wire the sentiment there too."""
+    from modules.brief import service as brief_svc
+    import inspect
+    src = inspect.getsource(brief_svc.generate_brief)
+    assert "macro" not in src and "sentiment" not in src, (
+        "daily_brief gained a macro/sentiment element — surface #66 sentiment there too"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # FINANCE-AUDIT2 (#66) — life_brief surfaces an HONEST portfolio P&L            #
 # The bug: life_brief.portfolio.pnlTotal showed a fake +$7 gain while the real  #
 # per-coin loss was −$617. The brief is the agent's #1 surface — a TOTAL that    #
