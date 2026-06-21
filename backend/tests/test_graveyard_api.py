@@ -6,7 +6,6 @@ lesson → graveyard, POST /projects/{id}/restore (200 / 404 / no-op).
 
 from __future__ import annotations
 
-import importlib
 import subprocess
 from pathlib import Path
 
@@ -41,7 +40,6 @@ def app_client(tmp_path, monkeypatch):
 
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         yield c
@@ -130,7 +128,6 @@ def multi_client(tmp_path, monkeypatch):
 
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         yield c

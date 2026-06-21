@@ -11,7 +11,6 @@ fields (no wrapper / no drift).
 
 from __future__ import annotations
 
-import importlib
 import json
 
 import pytest
@@ -140,7 +139,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", None)
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     # the wiki store's import-time init_wiki_tables ran against the PRE-rebind db; re-init the
     # wiki tables on the now-rebound tmp connection so the REST wiki routes have their tables.

@@ -29,7 +29,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", None)
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         yield c
@@ -179,7 +178,6 @@ def test_brief_history_round_trip_save_and_read(tmp_path, monkeypatch):
     db.close_db()
 
     import main as main_mod
-    importlib.reload(main_mod)
     main_mod.create_app()  # init the store
 
     from modules.brief import service as brief_svc
@@ -228,7 +226,6 @@ def test_brief_history_limit_respected(tmp_path, monkeypatch):
     db.close_db()
 
     import main as main_mod
-    importlib.reload(main_mod)
     main_mod.create_app()
 
     from modules.brief import service as brief_svc
@@ -271,7 +268,6 @@ def test_brief_history_malformed_file_skipped(tmp_path, monkeypatch):
     db.close_db()
 
     import main as main_mod
-    importlib.reload(main_mod)
     main_mod.create_app()
 
     from modules.brief import service as brief_svc

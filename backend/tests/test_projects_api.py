@@ -7,7 +7,6 @@ the health summary, /health discovery, and the wiki-refresh routine registration
 
 from __future__ import annotations
 
-import importlib
 import subprocess
 from pathlib import Path
 
@@ -46,7 +45,6 @@ def app_client(tmp_path, monkeypatch):
     db.close_db()
     import main as main_mod
 
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         c._repo_path = str(repo)  # type: ignore[attr-defined]

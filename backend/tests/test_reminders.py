@@ -13,7 +13,6 @@ Coverage:
 
 from __future__ import annotations
 
-import importlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -242,7 +241,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", None)
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         yield c

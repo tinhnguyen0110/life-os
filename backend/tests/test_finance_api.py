@@ -7,7 +7,6 @@ codes, /health discovery, and the static-vs-dynamic route precedence.
 
 from __future__ import annotations
 
-import importlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,7 +46,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(fin_service, "_okx_crypto_value", lambda: (None, None))
 
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         yield c

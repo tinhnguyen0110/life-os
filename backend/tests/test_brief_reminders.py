@@ -111,6 +111,7 @@ def test_brief_reminders_future_beyond_7d_excluded(rem_db):
     assert str(out_window) not in ids, "a +10d (>7d) future reminder is EXCLUDED (the ≤7d boundary)"
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: rs.life_brief() pulls live macro/news/CoinGecko (~8s) — opt-in via -m slow
 def test_life_brief_has_reminders_section(rem_db):
     """life_brief carries a top-level ``reminders`` section with the source tag (via _section)."""
     _seed_distinguishing()
@@ -120,6 +121,7 @@ def test_life_brief_has_reminders_section(rem_db):
     assert lb["brief"]["reminders"]["count"] == 4 - 0  # 4 un-done (none ticked here)
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: rs.life_brief() pulls live macro/news/CoinGecko (~7s) — opt-in via -m slow
 def test_brief_reminders_fail_soft_section(rem_db, monkeypatch):
     """A reader error → the section is soft-skipped ({source, error}), the brief still assembles
     (the _section fail-soft add-on pattern)."""

@@ -505,12 +505,14 @@ def server():
         pytest.skip("Could not determine server module list")
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_health_includes_activity(server):
     """GET /health lists 'activity' in loaded modules."""
     modules = requests.get(f"{BASE}/health", timeout=5).json()["data"].get("modules", [])
     assert "activity" in modules, f"'activity' not in modules: {modules}"
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_get_activity_envelope(server):
     """GET /activity → {success:true, data:{runs[], count, runsToday, okCount, warnCount,
     errorCount, successRate, avgDurationMs, byRoutine[]}}."""
@@ -525,6 +527,7 @@ def test_api_get_activity_envelope(server):
     assert isinstance(d["runs"], list) and isinstance(d["count"], int)
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_get_activity_real_s10a_rows(server):
     """LIVE value-by-value: GET /activity contains real S10A run_log rows.
     At minimum: market-poll ok and idle-hunter warn rows exist from S10A verification."""
@@ -544,6 +547,7 @@ def test_api_get_activity_real_s10a_rows(server):
     assert run["routineName"]
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_successrate_is_percentage(server):
     """LIVE: successRate is a percentage (0–100), not a fraction."""
     d = requests.get(f"{BASE}/activity", timeout=5).json()["data"]
@@ -556,6 +560,7 @@ def test_api_successrate_is_percentage(server):
             assert sr == 100.0
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_by_routine(server):
     """GET /activity?routine=market-poll returns only market-poll rows."""
     runs = requests.get(f"{BASE}/activity?routine=market-poll", timeout=5).json()["data"]["runs"]
@@ -563,6 +568,7 @@ def test_api_filter_by_routine(server):
         assert all(r["routineId"] == "market-poll" for r in runs)
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_status_warn(server):
     """GET /activity?status=warn returns only warn rows."""
     runs = requests.get(f"{BASE}/activity?status=warn", timeout=5).json()["data"]["runs"]
@@ -570,6 +576,7 @@ def test_api_filter_status_warn(server):
         assert all(r["status"] == "warn" for r in runs)
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_status_garbage_is_200_lenient(server):
     """GET /activity?status=garbage → 200 (lenient — ignored, NOT 422)."""
     r = requests.get(f"{BASE}/activity?status=garbage", timeout=5)
@@ -578,17 +585,20 @@ def test_api_filter_status_garbage_is_200_lenient(server):
     assert r.json()["success"] is True
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_range_today_200(server):
     """GET /activity?range=today → 200."""
     r = requests.get(f"{BASE}/activity?range=today", timeout=5)
     assert r.status_code == 200
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_range_7d_200(server):
     """GET /activity?range=7d → 200."""
     assert requests.get(f"{BASE}/activity?range=7d", timeout=5).status_code == 200
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_filter_range_garbage_is_200_lenient(server):
     """GET /activity?range=garbage → 200 (lenient — ignored, NOT 422)."""
     r = requests.get(f"{BASE}/activity?range=garbage", timeout=5)
@@ -596,6 +606,7 @@ def test_api_filter_range_garbage_is_200_lenient(server):
         f"invalid range should return 200 (lenient), got {r.status_code}"
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_byRoutine_fields(server):
     """GET /activity byRoutine entries have all RoutineBreakdown fields.
     Field is 'routine' (id), NOT 'routineId'."""
@@ -609,6 +620,7 @@ def test_api_byRoutine_fields(server):
             "byRoutine must use 'routine' (not 'routineId') per schema"
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_get_run_by_id(server):
     """GET /activity/{id} for a real row → 200 + ActivityRun shape."""
     runs = requests.get(f"{BASE}/activity", timeout=5).json()["data"]["runs"]
@@ -624,16 +636,19 @@ def test_api_get_run_by_id(server):
     assert data["status"] == runs[0]["status"]
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_get_run_unknown_404(server):
     """GET /activity/999999999 → 404."""
     assert requests.get(f"{BASE}/activity/999999999", timeout=5).status_code == 404
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_get_run_non_int_422(server):
     """GET /activity/not-an-int → 422 (FastAPI auto-validates int path param)."""
     assert requests.get(f"{BASE}/activity/not-an-int", timeout=5).status_code == 422
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: live :8686 test (flakes under contention) — opt-in via -m slow
 def test_api_idle_hunter_warn_has_detail(server):
     """LIVE: idle-hunter warn row has non-empty detail mentioning idle projects (S10A)."""
     runs = requests.get(

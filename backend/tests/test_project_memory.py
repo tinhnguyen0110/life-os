@@ -11,7 +11,6 @@ fabricated project); a project with zero tagged notes → ``notes: []`` (honest-
 
 from __future__ import annotations
 
-import importlib
 import json
 import subprocess
 from pathlib import Path
@@ -134,7 +133,6 @@ def app_client(tmp_path, monkeypatch):
 
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     wiki_store.init_wiki_tables()
     with TestClient(app) as c:

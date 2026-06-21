@@ -6,7 +6,6 @@ fixture (NEVER real ~/.claude). Envelope + /health discovery + override PUT.
 
 from __future__ import annotations
 
-import importlib
 import json
 from datetime import datetime, timezone
 
@@ -46,7 +45,6 @@ def app_client(tmp_path, monkeypatch):
 
     db.close_db()
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
     with TestClient(app) as c:
         c._stats_fixture = fix  # type: ignore[attr-defined]

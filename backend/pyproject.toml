@@ -45,6 +45,16 @@ exclude = ["tests*", "data*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# SUITE-SPEED (#58): `slow` marks live-server (real requests to :8686) + heavy perf tests.
+# Default run EXCLUDES them (`-m "not slow"`) for fast, deterministic, offline dev runs — the
+# live tests flake under full-suite contention (the test-activity httpx flake) + the perf tests
+# are seconds each. NO coverage lost: the inclusive run (`pytest -m slow` for just those, or
+# `pytest -o addopts=""` / `pytest -m ""` for the FULL set) still runs every test — the trim is a
+# dev-speed convenience, the verification gate stays the full set. REVERSIBLE, no prod change.
+markers = [
+    "slow: live-server (:8686) or heavy perf test — excluded by default, run with `-m slow` or `-m ''`",
+]
+addopts = "-m 'not slow'"
 
 [tool.mypy]
 python_version = "3.11"

@@ -1280,6 +1280,7 @@ def test_ego_graph_edges_have_type_and_resolved(wiki_db):
     assert e["type"] == "relates" and e["isResolved"] is True
 
 
+@pytest.mark.slow  # SUITE-SPEED #58: perf test, builds 200 notes (200 git commits ~10s) — opt-in via -m slow
 def test_ego_graph_200_notes_under_1s(wiki_db):
     import time
     # Build a star: 1 hub + 200 spokes each linking the hub.

@@ -604,7 +604,6 @@ def api_client(tmp_path_factory):
     db_mod.close_db()
 
     import main as main_mod
-    importlib.reload(main_mod)
     app = main_mod.create_app()
 
     from fastapi.testclient import TestClient
