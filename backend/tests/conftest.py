@@ -46,6 +46,14 @@ def isolated_paths(tmp_path: Path, monkeypatch):
     # can't leak into a test that monkeypatches httpx.get differently.
     from modules.market import reader as _mkt_reader
     _mkt_reader._FEED_CACHE.clear()
+    # exchange OKX snapshot is process-global (`_last_snapshot`): get_overview()
+    # returns it verbatim when set. A prior OKX-configured test's per-coin holdings
+    # (which carry avgCost) then leak into finance._okx_crypto_holdings() and flip a
+    # value-only crypto channel's basisUnknown True→False under reorder — #79's
+    # crypto_basis reverse-order failure (test_overview_with_okx_uses_basis_as_cost).
+    # Reset to None so each test re-syncs from its own (isolated, unconfigured) state.
+    from modules.exchange import service as _ex_service
+    monkeypatch.setattr(_ex_service, "_last_snapshot", None)
     # Reset the module-level DB_PATH override so settings.db_path takes effect.
     # init_db(path) (e.g. test_db.py) sets this global and never clears it; it
     # wins over settings.db_path in _db_path(), so without this reset a prior
