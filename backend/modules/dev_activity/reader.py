@@ -43,15 +43,23 @@ def get_overview(days: int = _DEFAULT_DAYS, *, run_scan_warnings: bool = True) -
     days = max(1, days)
     since = (service._now() - timedelta(days=days)).strftime("%Y-%m-%d")
     warnings: list[str] = []
+    last_scanned: str | None = None
+    never_scanned = False
     try:
         rows = [_row_to_repoday(r) for r in store.rows_since(since)]
-    except Exception as exc:  # store unavailable → honest-empty, never crash
+        last_scanned = store.get_last_scanned()  # #77: honest freshness
+        never_scanned = last_scanned is None and store.row_count() == 0
+    except Exception as exc:  # store unavailable → honest-empty, never crash (fail-soft, like _series)
         logger.warning("dev_activity read failed: %s", exc)
         rows = []
         warnings.append(f"dev_activity store read failed ({type(exc).__name__})")
 
     # surface config warnings (roots unreachable / identity unset) so honest-empty isn't misread.
     if run_scan_warnings:
+        # #77: never-scanned (roots configured but no scan ever ran) → tell the agent to scan,
+        # distinct from the not-configured case (so honest-empty isn't read as "no activity").
+        if never_scanned and service.scan_roots():
+            warnings.append("no scan yet — POST /dev_activity/scan or wait for the daily routine")
         if not service.scan_roots():
             warnings.append("DEV_TRACING_ROOTS not set — nothing scanned")
         if not service.your_emails():
@@ -99,5 +107,6 @@ def get_overview(days: int = _DEFAULT_DAYS, *, run_scan_warnings: bool = True) -
 
     return DevActivityOverview(
         rangeDays=days, byDay=by_day, byRepo=by_repo, otherRepos=other_rows,
-        summary=summary, scannedRepos=len({r.repo for r in rows}), warnings=warnings,
+        summary=summary, scannedRepos=len({r.repo for r in rows}),
+        lastScanned=last_scanned, warnings=warnings,  # #77: honest freshness
     )

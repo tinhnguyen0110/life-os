@@ -384,5 +384,9 @@ def scan(days: int = _DEFAULT_DAYS) -> dict:
         if source == "you":
             your_commits += a["commits"]
 
+    # DEV-ACTIVITY-STORE (#77): stamp the scan time so the read path surfaces honest freshness.
+    # Stamped even on a 0-row scan (a scan DID run — "scanned, found nothing" ≠ "never scanned").
+    store.set_last_scanned(_now().isoformat())
+
     return {"scannedRepos": scanned, "days": max(1, days), "rowsUpserted": rows,
             "yourCommits": your_commits, "warnings": warnings}

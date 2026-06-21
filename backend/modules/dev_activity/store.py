@@ -29,9 +29,14 @@ CREATE TABLE IF NOT EXISTS dev_activity (
     PRIMARY KEY (date, repo, source)
 );
 CREATE INDEX IF NOT EXISTS idx_dev_activity_date ON dev_activity(date, repo);
+CREATE TABLE IF NOT EXISTS dev_activity_meta (
+    key   TEXT PRIMARY KEY,   -- DEV-ACTIVITY-STORE (#77): scan metadata (e.g. 'last_scanned')
+    value TEXT
+);
 """
 
 _COLS = "date, repo, source, commits, loc_added, loc_deleted, first_ts, last_ts"
+_META_LAST_SCANNED = "last_scanned"  # the meta key for the most-recent scan timestamp
 
 
 def init_dev_activity_tables() -> sqlite3.Connection:
@@ -72,3 +77,37 @@ def rows_since(since_date: str) -> list[sqlite3.Row]:
             f"SELECT {_COLS} FROM dev_activity WHERE date >= ? ORDER BY date DESC, repo ASC",
             (since_date,),
         ).fetchall()
+
+
+def row_count() -> int:
+    """Total dev_activity aggregate rows (any date). Lets the reader distinguish never-scanned
+    (0 rows + no last_scanned) from scanned-but-no-activity-in-window (#77 honest-empty)."""
+    init_dev_activity_tables()
+    conn = db.get_conn()
+    with _lock:
+        return int(conn.execute("SELECT COUNT(*) FROM dev_activity").fetchone()[0])
+
+
+def set_last_scanned(ts: str) -> None:
+    """DEV-ACTIVITY-STORE (#77): record the most-recent scan timestamp (the WRITE path stamps this so
+    the read path can surface honest freshness). Idempotent upsert on the meta key."""
+    init_dev_activity_tables()
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO dev_activity_meta(key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (_META_LAST_SCANNED, ts),
+        )
+        conn.commit()
+
+
+def get_last_scanned() -> str | None:
+    """The most-recent scan timestamp (ISO), or None if never scanned (#77 honest staleness)."""
+    init_dev_activity_tables()
+    conn = db.get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT value FROM dev_activity_meta WHERE key = ?", (_META_LAST_SCANNED,)
+        ).fetchone()
+    return row["value"] if row is not None else None

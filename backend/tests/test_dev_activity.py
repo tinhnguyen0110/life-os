@@ -344,3 +344,65 @@ def test_github_loc_skip_applied_remote(remote_env, monkeypatch):
     ov = reader.get_overview(365)
     proj = [r for r in ov.byRepo if r.repo == "proj"][0]
     assert proj.locAdded == 7 and proj.locDeleted == 2  # lockfile excluded
+
+
+# =========================================================================== #
+# DEV-ACTIVITY-STORE (#77) — GET reads the STORE (fast), the SCAN is the write   #
+# path. lastScanned (honest freshness) + no-scan-yet warning + the no-scan-on-    #
+# read regression pin (the GET must NEVER trigger a 24s git scan).               #
+# =========================================================================== #
+def test_get_reads_store_does_NOT_scan(temp_repo, monkeypatch):
+    """THE #77 INVARIANT (regression pin): get_overview reads the STORE and NEVER calls scan() / git.
+    Seed via one scan, then poison service.scan + _scan_repo so a read that re-scans would BLOW UP —
+    the GET must still succeed (proving it's a pure store-read, the fast agent surface)."""
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="c1")
+    service.scan(days=30)  # the WRITE path populates the store
+    # now make ANY scan attempt during a read explode:
+    monkeypatch.setattr(service, "scan", lambda *a, **k: (_ for _ in ()).throw(AssertionError("GET re-scanned!")))
+    monkeypatch.setattr(service, "_scan_repo", lambda *a, **k: (_ for _ in ()).throw(AssertionError("GET ran git!")))
+    ov = reader.get_overview(30)  # must NOT raise → it reads the store, not a re-scan
+    assert ov.summary.totalCommits == 1  # served from the stored row
+
+
+def test_last_scanned_surfaced_after_scan(temp_repo):
+    """lastScanned is None before any scan, set (ISO) after — honest freshness for the agent/UI."""
+    before = reader.get_overview(30)
+    assert before.lastScanned is None
+    service.scan(days=30)
+    after = reader.get_overview(30)
+    assert after.lastScanned is not None and "T" in after.lastScanned  # an ISO timestamp
+
+
+def test_never_scanned_honest_empty_warning(isolated_paths, monkeypatch, tmp_path):
+    """Store empty + roots CONFIGURED but never scanned → honest-empty + a 'no scan yet' warning
+    (distinct from 'roots not set'), NOT an auto-scan-on-read."""
+    root = tmp_path / "root"
+    (root / "somerepo").mkdir(parents=True)  # a dir exists so roots are 'configured/reachable'
+    monkeypatch.setenv("DEV_TRACING_ROOTS", str(root))
+    monkeypatch.setenv("DEV_TRACING_EMAILS", "me@example.com")
+    store.init_dev_activity_tables()
+    ov = reader.get_overview(30)
+    assert ov.byDay == [] and ov.summary.totalCommits == 0  # honest-empty
+    assert ov.lastScanned is None
+    assert any("no scan yet" in w for w in ov.warnings), ov.warnings
+
+
+def test_scanned_empty_is_not_never_scanned(temp_repo, monkeypatch):
+    """A scan that RAN but found nothing in the window → lastScanned SET + NO 'no scan yet' warning
+    (the distinguishing: 'scanned, empty' ≠ 'never scanned')."""
+    # no commits in the repo → scan runs, finds 0, but stamps last_scanned
+    service.scan(days=30)
+    ov = reader.get_overview(30)
+    assert ov.lastScanned is not None
+    assert not any("no scan yet" in w for w in ov.warnings)
+
+
+def test_mcp_dev_activity_includes_lastScanned(temp_repo):
+    """MCP dev_activity ≡ REST (#24) — both store-read, both carry lastScanned (byte-identical)."""
+    import mcp_servers.read_server as rs
+    _commit(temp_repo, email="me@example.com", name="Me", files={"a.py": "x=1\n"}, msg="c1")
+    service.scan(days=30)
+    mcp = rs.dev_activity(90)
+    rest = reader.get_overview(90).model_dump()
+    assert "lastScanned" in mcp and mcp["lastScanned"] is not None
+    assert json.dumps(mcp, sort_keys=True) == json.dumps(rest, sort_keys=True)

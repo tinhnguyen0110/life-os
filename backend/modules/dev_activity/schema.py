@@ -72,8 +72,10 @@ class DevActivityOverview(BaseModel):
                                       description="'other'-source rows (team context), tagged, not in your totals")
     summary: DevActivitySummary
     scannedRepos: int = Field(..., ge=0, description="git repos found + scanned")
+    lastScanned: str | None = Field(default=None,
+                                    description="ISO ts of the most-recent scan, or None if never scanned (#77 honest freshness)")
     warnings: list[str] = Field(default_factory=list,
-                                description="honest non-fatal issues: roots unreachable / repo skipped / identity unset")
+                                description="honest non-fatal issues: roots unreachable / repo skipped / identity unset / no-scan-yet")
 
 
 class ScanResult(BaseModel):
