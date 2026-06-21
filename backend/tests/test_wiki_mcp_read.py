@@ -219,6 +219,45 @@ def test_99_flat_all_weak_not_a_forced_spread(wiki_db):
     assert (max(rels) - min(rels)) < 0.5, "no manufactured 1→0 spread on flat data"
 
 
+def test_101_folder_scope_filters_to_folder_and_subtree(wiki_db):
+    """#101: folder=X → only notes in X AND its subtree; a note in a sibling folder is EXCLUDED."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="A root", content="scopeterm", folder="Projects/A"))
+    wsvc.create_note(NoteCreateInput(title="A sub", content="scopeterm", folder="Projects/A/sub"))
+    wsvc.create_note(NoteCreateInput(title="B note", content="scopeterm", folder="Projects/B"))
+    res = read_server.wiki_search(q="scopeterm", limit=20, folder="Projects/A")["results"]
+    titles = sorted(r["title"] for r in res)
+    assert titles == ["A root", "A sub"], f"folder=Projects/A → A + subtree only, got {titles}"
+    assert all("Projects/A" in r["folder"] for r in res)
+
+
+def test_101_folder_none_is_whole_vault_non_blocking(wiki_db):
+    """#101 THE load-bearing property (insight #83 — scope FILTERS, doesn't BLOCK): folder=None
+    (omitted) → the WHOLE vault (cross-folder), the unchanged default. A search that worked before
+    still returns the same cross-folder results."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="A", content="vaultterm", folder="Projects/A"))
+    wsvc.create_note(NoteCreateInput(title="B", content="vaultterm", folder="Projects/B"))
+    wsvc.create_note(NoteCreateInput(title="Root", content="vaultterm", folder=""))
+    res = read_server.wiki_search(q="vaultterm", limit=20)["results"]  # no folder → whole vault
+    assert sorted(r["title"] for r in res) == ["A", "B", "Root"], "folder=None must return the whole vault"
+
+
+def test_101_nonexistent_folder_is_empty_not_500(wiki_db):
+    """#101: a folder that matches nothing → [] honestly (the LIKE matches nothing), never a 500."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="X", content="ghostfolder", folder="Real"))
+    assert read_server.wiki_search(q="ghostfolder", folder="Nope/Nowhere")["results"] == []
+
+
+def test_101_folder_exact_match_not_just_subtree(wiki_db):
+    """#101: folder=X matches the folder X ITSELF (n.folder = X), not only its subtree."""
+    from modules.wiki.schema import NoteCreateInput
+    wsvc.create_note(NoteCreateInput(title="Exact", content="exactterm", folder="Area51"))
+    res = read_server.wiki_search(q="exactterm", folder="Area51")["results"]
+    assert len(res) == 1 and res[0]["title"] == "Exact"
+
+
 def test_99_raw_score_kept_for_transparency(wiki_db):
     """#99: the raw bm25 ``score`` is KEPT alongside ``relevance`` (transparency — the agent can
     audit the normalization)."""

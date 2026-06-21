@@ -7,6 +7,7 @@ never raises a 500."""
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from store import db
 
@@ -49,24 +50,37 @@ def _sanitize_fts_query(q: str) -> str:
     return " OR ".join(f'"{t}"*' for t in tokens)
 
 
-def fts_search(q: str, limit: int = 30) -> list[sqlite3.Row]:
+def fts_search(q: str, limit: int = 30, folder: str | None = None) -> list[sqlite3.Row]:
     """Full-text search → rows ``{id, title, status, folder, snippet, score}`` ranked by FTS5
     rank. WIKI-RETRIEVAL-2 (#22): +folder (for the ranked result) + ``score`` = the FTS5 ``rank``
     (bm25; MORE NEGATIVE = MORE relevant — surfaced raw so the agent sees WHY a result ranked).
-    Query is sanitized (bad input → [] , never a 500). Empty q → []."""
+    Query is sanitized (bad input → [] , never a 500). Empty q → [].
+
+    #101 folder-scope (insight #83 — a FILTER, NOT a block): ``folder`` (non-empty) scopes to that
+    folder AND its subtree (`n.folder = folder OR n.folder LIKE folder/%`); ``folder`` None/'' → whole
+    vault (the unchanged default). The folder is a SQL PARAM (parameterized — FTS-special chars safe;
+    the MATCH ``q`` is sanitized separately). A nonexistent folder → the LIKE matches nothing → []."""
     match = _sanitize_fts_query(q)
     if not match:
         return []
     conn = db.get_conn()
+    # FTS5 requires the MATCH constraint; the optional folder clause is ANDed AFTER it.
     sql = (
         "SELECT f.rowid AS id, n.title AS title, n.status AS status, n.folder AS folder, "
         "snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet, rank AS score "
         "FROM notes_fts f JOIN wiki_notes n ON n.id = f.rowid "
-        "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?"
+        "WHERE notes_fts MATCH ?"
     )
+    params: list[Any] = [match]
+    scope = (folder or "").strip()
+    if scope:  # #101: folder + subtree; empty → no clause (whole vault, the default)
+        sql += " AND (n.folder = ? OR n.folder LIKE ?)"
+        params += [scope, scope + "/%"]
+    sql += " ORDER BY rank LIMIT ?"
+    params.append(int(limit))
     with _lock:
         try:
-            return conn.execute(sql, (match, int(limit))).fetchall()
+            return conn.execute(sql, tuple(params)).fetchall()
         except sqlite3.OperationalError as exc:  # malformed MATCH slipped through
             logger.warning("fts_search fell back on bad query %r: %s", q, exc)
             return []

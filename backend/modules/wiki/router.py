@@ -72,12 +72,14 @@ def wiki_info():
 
 
 @router.get("/search")
-def search(q: str = "", query: str = ""):
-    """Full-text search → RANKED top-5 ``[{id, title, folder, snippet, score}]`` (WIKI-RETRIEVAL-2
-    #22 — agent-first lean: top-5 not flat, +score so the agent sees WHY it matched, NO body).
-    Accepts ``q`` OR ``query`` (alias — a client sending ?query=… works too; ``q`` wins if both).
-    Empty/malformed → empty list (never 500). Same reader.search the MCP wiki_search uses (#24)."""
-    return ok(data=reader.search(q or query))
+def search(q: str = "", query: str = "", folder: str | None = None):
+    """Full-text search → RANKED top-5 ``[{id, title, folder, snippet, score, relevance}]``
+    (WIKI-RETRIEVAL-2 #22 + #99 relevance — agent-first lean: top-5 not flat, score+relevance so the
+    agent sees WHY/HOW-STRONG it matched, NO body). Accepts ``q`` OR ``query`` (alias; ``q`` wins).
+    ``folder`` (#101, optional): scope to a folder + its subtree; None/'' = whole vault (the default,
+    non-blocking). Empty/malformed → empty list (never 500). Same reader.search the MCP wiki_search
+    uses (#24 parity)."""
+    return ok(data=reader.search(q or query, folder=folder))
 
 
 @router.get("/overview")

@@ -60,10 +60,14 @@ def backlinks(note_id: int) -> dict[str, Any]:
             "outbound": outbound}
 
 
-def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
+def search(q: str, limit: int = 5, folder: str | None = None) -> list[dict[str, Any]]:
     """Full-text search → RANKED top-K ``[{id, title, folder, snippet, score, relevance}]`` (FTS5).
     WIKI-RETRIEVAL-2 (#22): agent-first — default TOP-5, each result carries ``folder`` + the rank.
     NO body (snippet + id only — token-cheap). Empty/bad query → ``[]`` (never raises — store sanitizes).
+
+    #101 folder-scope (insight #83 — a FILTER, NOT a block): ``folder`` (non-empty) scopes to that
+    folder + its subtree; None/'' → whole vault (the unchanged default). Orthogonal to relevance —
+    the #99 1-exp relevance is computed over the FILTERED set (relevance within the scoped results).
 
     #99 agent-readable RELEVANCE (the score-correction): raw bm25 ``score`` (≤0, more-negative=better)
     is near-flat for a common term → an agent can't read the magnitude. Add a ``relevance`` (0..1) =
@@ -76,7 +80,7 @@ def search(q: str, limit: int = 5) -> list[dict[str, Any]]:
     which MANUFACTURED a full 1→0 spread out of a microscopic flat-data span — an honest-mirror breach.)
     Raw ``score`` (bm25 rank) is KEPT for transparency. Order UNCHANGED (best-first; 1-exp is monotonic
     in score → relevance still descending best-first). Empty/bad query → ``[]`` (comprehension)."""
-    rows = wiki_store.fts_search(q, limit=limit)
+    rows = wiki_store.fts_search(q, limit=limit, folder=folder)  # #101: folder filter (None=whole vault)
     return [
         {"id": r["id"], "title": r["title"], "folder": r["folder"],
          "snippet": r["snippet"], "score": r["score"],

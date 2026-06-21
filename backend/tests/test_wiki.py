@@ -1204,6 +1204,17 @@ def test_api_search_endpoint(api):
     assert 0.0 <= data[0]["relevance"] <= 1.0 and data[0]["score"] <= 0  # raw score kept ≤0
 
 
+def test_api_search_folder_scope(api):
+    """#101: REST /wiki/search?folder=X scopes to X + subtree (parity with MCP wiki_search). A
+    sibling folder is excluded; folder omitted → whole vault."""
+    api.post("/wiki/notes", json={"title": "InA", "content": "restscope", "folder": "Proj/A"})
+    api.post("/wiki/notes", json={"title": "InB", "content": "restscope", "folder": "Proj/B"})
+    scoped = api.get("/wiki/search", params={"q": "restscope", "folder": "Proj/A"}).json()["data"]
+    assert sorted(r["title"] for r in scoped) == ["InA"], "REST folder-scope → only Proj/A"
+    whole = api.get("/wiki/search", params={"q": "restscope"}).json()["data"]  # no folder → whole vault
+    assert sorted(r["title"] for r in whole) == ["InA", "InB"]
+
+
 def test_api_search_bad_query_200_not_500(api):
     api.post("/wiki/notes", json={"title": "X", "content": "y"})
     r = api.get("/wiki/search", params={"q": '" OR ((('})
