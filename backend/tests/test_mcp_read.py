@@ -1074,7 +1074,7 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 43  # DAILY-TRACING-P2 #65: +tracing_overview (was 42; #42 +project_context)
+    assert len(rs.TOOLS) == 44  # DEV-TRACING-P1 #63: +dev_activity (was 43; #65 +tracing_overview)
 
 
 # =========================================================================== #

@@ -8,7 +8,7 @@
 > right. (Regenerate: see the generator at the bottom.)
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
-- whole-app shared: **43 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+- whole-app shared: **44 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **14 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
@@ -73,6 +73,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `insights` | ✓ | Cross-domain NEUTRAL evidence-grounded observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
 | `tracing_overview` | ✓ | The habit/activity board for today-VN: per-activity today/streak/week/history12w + 12w heatmap (per-day COUNT of activities met) + score. All derived server-side. Byte-identical to REST GET /tracing (#65). |
+| `dev_activity` | ✓ | Local git dev-activity over N days: per VN day × repo × source(you/other) commits + LOC(filtered, INFORMATIONAL) + active-span + byRepo + summary. honest-empty + warnings (roots/identity). Byte-identical to REST GET /dev_activity (#63). |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
 | `proposal_stats` |  | Counts of the agent's proposals by status (pending/accepted/rejected) so the |

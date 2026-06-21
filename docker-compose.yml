@@ -37,6 +37,14 @@ services:
       # Mount the host's ~/.claude READ-ONLY (reader never writes; single-user).
       # Override CLAUDE_HOST_DIR if your ~/.claude lives elsewhere.
       - ${CLAUDE_HOST_DIR:-${HOME}/.claude}:/claude-home:ro
+      # DEV-TRACING-P1 (#63): the dev-activity git-scan reads the user's local repos READ-ONLY
+      # to count commits/LOC/active-span per date×repo. The Tinhdev tree is already at /tinhdev:ro
+      # (above). The COMPANY repos (PSA, inmobi — the dev tree per the validate script) are
+      # SIBLINGS of Tinhdev, OUTSIDE /tinhdev, so mount them separately :ro at /devscan/<name>.
+      # Reader never writes (:ro enforced). Override the host paths via PSA_HOST_DIR/INMOBI_HOST_DIR;
+      # a missing host dir → the scan honest-skips that root (host-file-source-must-mount).
+      - ${PSA_HOST_DIR:-../PSA}:/devscan/PSA:ro
+      - ${INMOBI_HOST_DIR:-../inmobi}:/devscan/inmobi:ro
     environment:
       # Point the config's TINHDEV_ROOT at the mounted repos (config.py reads this
       # env directly). Default ../  → /tinhdev so the 6 sibling repos resolve.
@@ -55,6 +63,13 @@ services:
       # the container's derived path resolves to "/" and the CV falls back to the
       # embedded stub (host-file-source-must-mount lesson).
       LIFEOS_CAREER_CV_SOURCE: /tinhdev/CV_v3_Trustworthy_AI.md
+      # DEV-TRACING-P1 (#63): the dev-activity scan roots (colon-separated in-container paths).
+      # /tinhdev = the personal repos (already mounted :ro); /devscan/{PSA,inmobi} = the company
+      # repos (mounted :ro above). The service finds .git repos under each root. Override
+      # DEV_TRACING_ROOTS to change the set. DEV_TRACING_EMAILS = the user's git emails (you vs
+      # other identity-map); unset → the scan tags all commits "other" + warns (never silently "you").
+      DEV_TRACING_ROOTS: ${DEV_TRACING_ROOTS:-/tinhdev:/devscan/PSA:/devscan/inmobi}
+      DEV_TRACING_EMAILS: ${DEV_TRACING_EMAILS:-}
     # Resource caps — safety against host-takedown. The host hit load 188 once
     # (multiple apps + a uvicorn reload-storm). These caps confine any future
     # leak/storm to THIS container (OOM-killed in isolation), never the host.

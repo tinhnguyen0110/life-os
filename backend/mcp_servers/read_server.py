@@ -140,6 +140,9 @@ from modules.reminders.service import list_reminders as _reminders_list
 # DAILY-TRACING-P2 (#65): the agent reads "what did I do today / my streaks" — get_overview is a
 # READ fn (no mutation; log_session/CRUD live on the lifeos-tracing write surface). Read-gate-safe.
 from modules.tracing.reader import get_overview as _tracing_overview
+# DEV-TRACING-P1 (#63): the agent reads "my dev activity" — get_overview is a READ fn (no mutation;
+# the scan/upsert lives in service + the routine, NOT imported here). Read-gate-safe.
+from modules.dev_activity.reader import get_overview as _dev_activity_overview
 # WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
@@ -543,6 +546,16 @@ def tracing_overview() -> dict[str, Any]:
     BYTE-IDENTICAL to REST GET /tracing (#24 parity — both return reader.get_overview().model_dump()).
     Read-only (logging a session lives on the lifeos-tracing write surface)."""
     return _tracing_overview().model_dump()
+
+
+def dev_activity(days: int = 90) -> dict[str, Any]:
+    """The user's LOCAL dev activity over the last ``days`` (DEV-TRACING #63): per VN day × repo ×
+    source (you/other) commits + LOC(filtered, INFORMATIONAL — never a score) + active-span, plus
+    byRepo + summary. So the agent reads "what did I code, which project, when" without firing the
+    scan. honest-empty + warnings (roots unreachable / identity unset → so 'no data' isn't misread as
+    'no work'). BYTE-IDENTICAL to REST GET /dev_activity (#24 parity). Read-only (the scan/upsert
+    lives on POST /dev_activity/scan + the daily routine)."""
+    return _dev_activity_overview(days).model_dump()
 
 
 def daily_brief() -> dict[str, Any]:
@@ -1331,6 +1344,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
     "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
+    "dev_activity": dev_activity,  # DEV-TRACING-P1 #63: local git dev-activity on lifeos-read (read-only)
     "daily_brief": daily_brief,
     "brief_history": brief_history,
     "journal_entries": journal_entries,
