@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import ErrorCode, agent_error_response  # AGENT-ERROR-P4 (#46): flat REST error parity
 from core.base import BaseModule, Routine
 from core.responses import ok
+
+# AGENT-ERROR-P4: map a ProjectError's HTTP code → the agent_error enum (400 bad-input, 409 conflict).
+_PROJECT_ERR_CODE: dict[int, ErrorCode] = {400: "INVALID_INPUT", 409: "CONFLICT"}
 
 from . import service
 from .schema import ProjectAbandonInput, ProjectRegisterInput
@@ -62,7 +66,8 @@ def get_project(project_id: str):
     """One project (INCLUDES abandoned). 404 if the id is not tracked."""
     status = service.get_project(project_id)
     if status is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
     return ok(data=_attach_routines(status).model_dump())
 
 
@@ -75,7 +80,8 @@ def get_project_context(project_id: str):
     MCP≡REST byte-identical (#24). project_get stays lean; this is the 'everything about X' call."""
     ctx = service.get_context(project_id)
     if ctx is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
     return ok(data=ctx)
 
 
@@ -88,7 +94,10 @@ def register_project(body: ProjectRegisterInput):
     try:
         status = service.register_project(body)
     except service.ProjectError as exc:
-        raise HTTPException(status_code=exc.code, detail=str(exc)) from exc
+        # #46-P4: map the ProjectError HTTP code → agent_error enum (400 not-git-repo→INVALID_INPUT,
+        # 409 id-exists→CONFLICT). RETURN the flat error (not raise).
+        return agent_error_response(_PROJECT_ERR_CODE.get(exc.code, "INVALID_INPUT"), str(exc),
+                                    hint="check the repo path exists + is a git repo, and the id is unique")
     return ok(data=_attach_routines(status).model_dump())
 
 
@@ -97,7 +106,8 @@ def refresh_project(project_id: str):
     """Re-read git, stamp lastAuto into status.md (one commit). 404 if unknown."""
     status = service.refresh_project(project_id)
     if status is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
     return ok(data=_attach_routines(status).model_dump())
 
 
@@ -108,7 +118,8 @@ def abandon_project(project_id: str, body: ProjectAbandonInput):
     """
     status = service.abandon_project(project_id, body)
     if status is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
     return ok(data=_attach_routines(status).model_dump())
 
 
@@ -119,7 +130,8 @@ def restore_project(project_id: str):
     """
     status = service.restore_project(project_id)
     if status is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
     return ok(data=_attach_routines(status).model_dump())
 
 

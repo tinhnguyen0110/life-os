@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P4 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -85,7 +86,8 @@ def get_blog(post_id: str):
     """One blog post. 404 if absent/malformed."""
     post = service.get_blog(post_id)
     if post is None:
-        raise HTTPException(status_code=404, detail=f"blog post {post_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"blog post {post_id!r} not found",
+                                    hint="GET /career/blog for valid ids")
     return ok(data=post.model_dump())
 
 
@@ -94,7 +96,8 @@ def update_blog(post_id: str, body: BlogInput):
     """Update a blog post (preserve createdAt). 404 if absent."""
     post = service.update_blog(post_id, body)
     if post is None:
-        raise HTTPException(status_code=404, detail=f"blog post {post_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"blog post {post_id!r} not found",
+                                    hint="GET /career/blog for valid ids")
     return ok(data=post.model_dump())
 
 
@@ -102,7 +105,8 @@ def update_blog(post_id: str, body: BlogInput):
 def delete_blog(post_id: str):
     """Delete a blog post (one git commit). 404 if absent."""
     if not service.delete_blog(post_id):
-        raise HTTPException(status_code=404, detail=f"blog post {post_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"blog post {post_id!r} not found",
+                                    hint="GET /career/blog for valid ids")
     return ok(data={"deleted": post_id})
 
 
@@ -131,7 +135,8 @@ def get_demo(demo_id: str):
     """One demo item. 404 if absent/malformed."""
     item = service.get_demo(demo_id)
     if item is None:
-        raise HTTPException(status_code=404, detail=f"demo {demo_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"demo {demo_id!r} not found",
+                                    hint="GET /career/demo for valid ids")
     return ok(data=item.model_dump())
 
 
@@ -140,7 +145,8 @@ def update_demo(demo_id: str, body: DemoInput):
     """Update a demo item (preserve createdAt). 404 if absent."""
     item = service.update_demo(demo_id, body)
     if item is None:
-        raise HTTPException(status_code=404, detail=f"demo {demo_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"demo {demo_id!r} not found",
+                                    hint="GET /career/demo for valid ids")
     return ok(data=item.model_dump())
 
 
@@ -148,7 +154,8 @@ def update_demo(demo_id: str, body: DemoInput):
 def delete_demo(demo_id: str):
     """Delete a demo item (one git commit). 404 if absent."""
     if not service.delete_demo(demo_id):
-        raise HTTPException(status_code=404, detail=f"demo {demo_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"demo {demo_id!r} not found",
+                                    hint="GET /career/demo for valid ids")
     return ok(data={"deleted": demo_id})
 
 

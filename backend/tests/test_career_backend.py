@@ -260,6 +260,17 @@ def test_api_blog_create_rejects_blank_title(client):
     assert r.status_code == 422
 
 
+def test_api_career_404s_are_agent_error_shape(client):
+    """AGENT-ERROR-P4 (#46): blog + demo bad-id 404s → flat {error:{code:NOT_FOUND,hint,retryable:false}},
+    NOT raw {detail}. (GET blog + GET demo on a nonexistent id.)"""
+    for path in ("/career/blog/nope-xyz", "/career/demo/nope-xyz"):
+        r = client.get(path)
+        assert r.status_code == 404, path
+        j = r.json()
+        assert "detail" not in j, f"{path}: must be flat error, not {{detail}}"
+        assert j["error"]["code"] == "NOT_FOUND" and j["error"]["retryable"] is False and j["error"]["hint"]
+
+
 def test_api_demo_crud(client):
     lst = client.get("/career/demo").json()
     assert lst["success"] is True and len(lst["data"]) >= 3

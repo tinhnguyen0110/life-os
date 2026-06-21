@@ -725,13 +725,17 @@ class TestPostProjects:
         assert resp.json().get("success") is True
 
     @skip_api
-    def test_register_bogus_path_returns_400(self, api_client):
-        """Registering a non-git path must return 400 (validated before write), not 500."""
+    def test_register_bogus_path_returns_invalid_input(self, api_client):
+        """Registering a non-git path → agent_error INVALID_INPUT (validated before write), not 500.
+        #46-P4: the status is now 422 (agent_error _CODE_STATUS maps INVALID_INPUT→422), was raw 400.
+        INTENDED — bad-input is 422, consistent with the missing-field 422 below; body is flat {error}."""
         payload = {"repo": BOGUS_PATH, "name": "Bogus Test Register", "goal": "test validation"}
         resp = api_client.post("/projects", json=payload)
-        assert resp.status_code == 400, (
-            f"Bogus path must return 400 (not a git repo), got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 422, (
+            f"Bogus path must return 422 INVALID_INPUT (not a git repo), got {resp.status_code}: {resp.text}"
         )
+        j = resp.json()
+        assert "detail" not in j and j["error"]["code"] == "INVALID_INPUT"
 
     @skip_api
     def test_register_missing_required_fields_422(self, api_client):

@@ -111,6 +111,9 @@ def test_get_detail_200(app_client):
 def test_get_detail_404(app_client):
     resp = app_client.get("/projects/nope-not-here")
     assert resp.status_code == 404
+    # AGENT-ERROR-P4 (#46): flat agent_error, NOT raw {detail}
+    j = resp.json()
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 # --------------------------------------------------------------------------- #
@@ -128,11 +131,16 @@ def test_register_201_style(app_client, tmp_path):
     assert body["data"]["health"] == "act"
 
 
-def test_register_400_non_git(app_client, tmp_path):
+def test_register_non_git_is_invalid_input(app_client, tmp_path):
+    """#46-P4: a non-git-repo register → agent_error INVALID_INPUT. NB the HTTP status is now 422
+    (the agent_error _CODE_STATUS maps INVALID_INPUT→422), NOT the old raw 400 — INTENDED: the
+    agent-error semantic for bad-input is 422 (the code-map distinguishing: code 400→INVALID_INPUT)."""
     plain = tmp_path / "plain"
     plain.mkdir()
     resp = app_client.post("/projects", json={"name": "Plain", "repo": str(plain)})
-    assert resp.status_code == 400
+    assert resp.status_code == 422  # INVALID_INPUT → 422 (was raw 400 pre-#46-P4)
+    j = resp.json()
+    assert "detail" not in j and j["error"]["code"] == "INVALID_INPUT"
 
 
 def test_register_409_collision(app_client, tmp_path):
@@ -142,6 +150,9 @@ def test_register_409_collision(app_client, tmp_path):
     assert first.status_code == 200
     second = app_client.post("/projects", json={"name": "Dup", "repo": str(repo)})
     assert second.status_code == 409
+    # #46-P4 the code-map distinguishing: ProjectError code 409 → CONFLICT (an all-NOT_FOUND impl FAILS)
+    j = second.json()
+    assert "detail" not in j and j["error"]["code"] == "CONFLICT"
 
 
 def test_register_422_missing_field(app_client):
