@@ -85,6 +85,23 @@ def test_rsi_all_down_is_0():
     assert r.latest == 0.0
 
 
+def test_rsi_flat_series_is_50_not_100():
+    """RSI-FLAT-HONEST (#62) — THE distinguishing: a FLAT series (no movement → avg_gain==0 AND
+    avg_loss==0) → RSI 50.0 NEUTRAL, NOT 100. The old bug folded flat into the avg_loss==0→100
+    branch → fake "extreme overbought" on a series with ZERO momentum (honest-mirror breach). An
+    impl that returns 100 (or anything ≠50) for a flat series FAILS this. No flat-series RSI test
+    existed before — that gap hid the bug."""
+    r = ta.rsi([100.0] * 20, 14)
+    assert r.latest == 50.0, "flat series → neutral 50, not fake overbought 100"
+    # every point in the seeded+smoothed series is the flat-neutral 50 (not just the latest)
+    assert all(v == 50.0 for v in r.series if v is not None)
+
+
+def test_rsi_all_up_still_100_after_flat_fix():
+    """Regression: the flat fix does NOT touch the all-gains path (avg_loss==0, avg_gain>0 → 100)."""
+    assert ta.rsi(list(range(1, 20)), 14).latest == 100.0
+
+
 def test_rsi_needs_period_plus_one():
     r = ta.rsi([1, 2, 3], 14)
     assert r.latest is None and "shorter than period+1" in r.warning
@@ -212,6 +229,15 @@ def test_summarize_oversold_on_strong_downtrend():
     s = ta.summarize(list(range(12, 1, -1)), sma_fast=2, sma_slow=4, rsi_period=3)
     assert s["signals"]["rsi"] == "oversold"
     assert s["signals"]["trend"] == "down"
+
+
+def test_summarize_flat_series_rsi_is_neutral_not_overbought():
+    """RSI-FLAT-HONEST (#62) — the CONSUMER-FACING end-to-end proof: summarize() on a FLAT series →
+    rsi signal "neutral", NOT "overbought". This is the breach the fix closes: pre-fix, flat/mock
+    data flowed RSI 100 → summarize "overbought" → life_brief surfaced a fake overbought signal. A
+    flat series has zero momentum → neutral is the honest read."""
+    s = ta.summarize([100.0] * 12, sma_fast=2, sma_slow=4, rsi_period=3)
+    assert s["signals"]["rsi"] == "neutral", "flat series → neutral RSI signal, not fake overbought"
 
 
 def test_summarize_golden_cross():

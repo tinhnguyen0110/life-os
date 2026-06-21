@@ -263,7 +263,8 @@ def ema(values: list, period: int = 20) -> IndicatorResult:
 # --------------------------------------------------------------------------- #
 def rsi(values: list, period: int = 14) -> IndicatorResult:
     """Wilder's RSI. Needs ``period``+1 points (period deltas). RMA-smoothed gains/
-    losses; a zero average-loss → RSI 100 (no down moves)."""
+    losses; zero average-loss WITH gains → RSI 100 (all up moves); a FLAT series (zero average-gain
+    AND zero average-loss, no movement) → RSI 50 neutral, NOT 100 (#62 RSI-FLAT-HONEST)."""
     clean, warn = _clean(values)
     if period <= 0:
         return IndicatorResult("rsi", period, [], None, "period must be > 0")
@@ -282,8 +283,13 @@ def rsi(values: list, period: int = 14) -> IndicatorResult:
     avg_loss = sum(losses[:period]) / period
 
     def _rsi_from(g: float, l: float) -> float:
+        # RSI-FLAT-HONEST (#62): disambiguate the avg_loss==0 branch by the gain. A FLAT series (no
+        # movement → avg_gain==0 AND avg_loss==0) has ZERO momentum → 50.0 NEUTRAL, NOT 100 (the old
+        # bug surfaced fake "overbought" on flat/mock data — honest-mirror breach). All-real-gains
+        # (avg_loss==0, avg_gain>0) → 100 (unchanged). EXACT ==0 (no float epsilon — a tiny-but-real
+        # move is handled by the rs formula below; an epsilon would over-engineer + mis-flatten it).
         if l == 0:
-            return 100.0
+            return 50.0 if g == 0 else 100.0
         rs = g / l
         return 100.0 - (100.0 / (1.0 + rs))
 
