@@ -41,9 +41,15 @@ def update_note(note_id: int, inp: NoteUpdateInput, actor: str = "human",
 
 def delete_note(note_id: int, actor: str = "human",
                 feedback: dict | None = None) -> None:
-    """HARD-delete a note through the queue (the .md + cache + aliases/links/fts gone forever).
-    Raises NoteNotFound if absent. #94: the ROUTER's DELETE now calls soft_delete_note (recoverable);
-    this hard path stays for merge/internal use that genuinely removes a note.
+    """HARD delete — IRREVERSIBLE (removes the .md + cache row + aliases/links/fts; op_log keeps the
+    record). Raises NoteNotFound if absent.
+
+    #104 (A2 — surface-less by design today): NO wired surface currently reaches this — both REST
+    ``DELETE /wiki/notes/{id}`` and MCP ``wiki_delete_note`` are SOFT (#94, recoverable). This HARD
+    path is the HUMAN-OVERRIDE control ONLY: agents get soft-delete (#94); a human/admin retains the
+    irreversible hard-delete (a future human-purge endpoint would route HERE; merge also uses the
+    store-level hard delete). NOT dead code — the deliberate asymmetry (human-retains-hard-delete vs
+    agent-soft-only) is the override design, asserted by ``test_human_can_override_agent_note``.
 
     #35: ``feedback={reason, text}`` (optional) is the override-feedback a HUMAN gives
     when deleting an AGENT-written note — captured into the op_log detail by the apply

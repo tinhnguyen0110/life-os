@@ -70,6 +70,8 @@ from .apply import (
 # Public CRUD (router + other modules call these).
 from .crud import (
     create_note,
+    # delete_note = HARD/irreversible, human-override ONLY (agents soft #94); surface-less today
+    # — see crud.delete_note docstring (#104).
     delete_note,
     get_note,
     merge_notes,
