@@ -142,6 +142,17 @@ describe("#65-P3 Tracing — heatmap", () => {
     expect(c20.getAttribute("style")).toContain("color-mix"); // accent band
     expect(c0.getAttribute("style")).toContain("--bg-3"); // empty
   });
+
+  it("a11y: the grid is a labeled role=img + each cell has an aria-label (screen-reader readable)", async () => {
+    const hm = Array(84).fill(0);
+    hm[5] = 2;
+    getTracing.mockResolvedValue(OVERVIEW([ACT()], { heatmap12w: hm, score: { total: 3, done: 0, pct: 0, timeActive: "", topStreak: 0 } }));
+    render(<TracingPage />);
+    const grid = await screen.findByTestId("heatmap-grid");
+    expect(grid).toHaveAttribute("role", "img");
+    expect(grid.getAttribute("aria-label")).toMatch(/12 tuần/);
+    expect(screen.getByTestId("hc-5")).toHaveAttribute("aria-label", "2 hoạt động đạt");
+  });
 });
 
 describe("#65-P3 Tracing — log round-trip + errors (fail-closed)", () => {

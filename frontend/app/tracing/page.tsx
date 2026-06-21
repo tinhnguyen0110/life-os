@@ -298,13 +298,13 @@ export default function TracingPage() {
                   <div style={{ padding: "10px 14px 14px" }}>
                     <div className="heatmap-wrap">
                       <div className="hm-days">{WEEK_DAYS.map((d) => <div className="hm-day" key={d}>{d}</div>)}</div>
-                      <div className="hm-grid" data-testid="heatmap-grid">
+                      <div className="hm-grid" data-testid="heatmap-grid" role="img" aria-label="Lịch sử 12 tuần — số hoạt động đạt mục tiêu mỗi ngày">
                         {data.heatmap12w.map((v, i) => (
-                          <div className="hc" key={i} style={{ background: heatColor(v, heatMax) }} title={`${v} hoạt động đạt`} data-testid={`hc-${i}`} data-count={v} />
+                          <div className="hc" key={i} style={{ background: heatColor(v, heatMax) }} title={`${v} hoạt động đạt`} aria-label={`${v} hoạt động đạt`} data-testid={`hc-${i}`} data-count={v} />
                         ))}
                       </div>
                     </div>
-                    <div className="hm-legend">
+                    <div className="hm-legend" aria-hidden="true">
                       <span className="faint">Ít</span>
                       {[0, 1, 2, 3, 4].map((v) => <div className="hc" key={v} style={{ background: heatColor(v, 4) }} />)}
                       <span className="faint">Nhiều</span>
