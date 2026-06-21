@@ -50,7 +50,10 @@ def test_create_get_roundtrip(app_client):
 
 
 def test_get_404(app_client):
-    assert app_client.get("/notes/nope-000000").status_code == 404
+    r = app_client.get("/notes/nope-000000")
+    assert r.status_code == 404
+    j = r.json()  # #46-P5: flat agent_error, not {detail}
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 def test_create_422_empty_title(app_client):

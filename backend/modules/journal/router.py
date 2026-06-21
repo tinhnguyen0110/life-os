@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P5 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -39,7 +40,8 @@ def get_journal(entry_id: str):
     """One entry. 404 if absent/malformed."""
     entry = service.get_entry(entry_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail=f"journal entry {entry_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"journal entry {entry_id!r} not found",
+                                    hint="GET /journal for valid ids")
     return ok(data=entry.model_dump())
 
 
@@ -55,7 +57,8 @@ def update_journal(entry_id: str, body: JournalInput):
     """Update/close an entry (set pnl/outcome/lesson). 404 if absent. Fail-CLOSED."""
     entry = service.update_entry(entry_id, body)
     if entry is None:
-        raise HTTPException(status_code=404, detail=f"journal entry {entry_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"journal entry {entry_id!r} not found",
+                                    hint="GET /journal for valid ids")
     return ok(data=entry.model_dump())
 
 
@@ -63,7 +66,8 @@ def update_journal(entry_id: str, body: JournalInput):
 def delete_journal(entry_id: str):
     """Delete an entry (one git commit). 404 if absent."""
     if not service.delete_entry(entry_id):
-        raise HTTPException(status_code=404, detail=f"journal entry {entry_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"journal entry {entry_id!r} not found",
+                                    hint="GET /journal for valid ids")
     return ok(data={"deleted": entry_id})
 
 

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P5 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -40,7 +41,8 @@ def get_note(note_id: str):
     """One note. 404 if absent/malformed."""
     note = service.get_note(note_id)
     if note is None:
-        raise HTTPException(status_code=404, detail=f"note {note_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
+                                    hint="GET /notes for valid ids")
     return ok(data=note.model_dump())
 
 
@@ -56,7 +58,8 @@ def update_note(note_id: str, body: NoteInput):
     """Update a note in place (preserve createdAt). 404 if absent."""
     note = service.update_note(note_id, body)
     if note is None:
-        raise HTTPException(status_code=404, detail=f"note {note_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
+                                    hint="GET /notes for valid ids")
     return ok(data=note.model_dump())
 
 
@@ -64,7 +67,8 @@ def update_note(note_id: str, body: NoteInput):
 def delete_note(note_id: str):
     """Delete a note (one git commit). 404 if absent."""
     if not service.delete_note(note_id):
-        raise HTTPException(status_code=404, detail=f"note {note_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
+                                    hint="GET /notes for valid ids")
     return ok(data={"deleted": note_id})
 
 

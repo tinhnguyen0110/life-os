@@ -205,7 +205,10 @@ def test_api_empty_honest(client):
 
 
 def test_api_get_missing_404(client):
-    assert client.get("/decision-journal/nope").status_code == 404
+    r = client.get("/decision-journal/nope")
+    assert r.status_code == 404
+    j = r.json()  # #46-P5: flat agent_error, not {detail}
+    assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 def test_F2_M5_malformed_entry_is_422_not_404(client):
@@ -217,8 +220,14 @@ def test_F2_M5_malformed_entry_is_422_not_404(client):
                         "---\nnot: valid: decision: {{{\n---\nbody", "seed corrupt")
     r = client.get("/decision-journal/corrupt-abc")
     assert r.status_code == 422
-    # a truly absent id is still 404 (the distinguishing case)
-    assert client.get("/decision-journal/never-existed").status_code == 404
+    # #46-P5 THE nuance distinguishing: corrupt-file → INVALID_INPUT (NOT NOT_FOUND); message names
+    # the corrupt-vs-not-found distinction. An all-NOT_FOUND impl FAILS this.
+    je = r.json()
+    assert "detail" not in je and je["error"]["code"] == "INVALID_INPUT"
+    assert "malformed" in je["error"]["message"] or "corrupt" in je["error"]["message"]
+    # a truly absent id is still 404 → NOT_FOUND (the other arm)
+    r404 = client.get("/decision-journal/never-existed")
+    assert r404.status_code == 404 and r404.json()["error"]["code"] == "NOT_FOUND"
 
 
 def test_api_natural_resolve_put_is_200_not_422(client):

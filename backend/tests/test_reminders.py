@@ -288,10 +288,13 @@ def test_rest_tick_idempotent(app_client):
 def test_rest_delete_and_404s(app_client):
     rid = app_client.post("/reminders", json={"title": "t", "due_at": _now().isoformat()}).json()["data"]["id"]
     assert app_client.delete(f"/reminders/{rid}").status_code == 200
-    # gone now → 404 on get/tick/delete
-    assert app_client.get(f"/reminders/{rid}").status_code == 404
-    assert app_client.put(f"/reminders/{rid}/tick").status_code == 404
-    assert app_client.delete(f"/reminders/{rid}").status_code == 404
+    # gone now → 404 on get/tick/delete — #46-P5: flat agent_error NOT_FOUND, not {detail}
+    for resp in (app_client.get(f"/reminders/{rid}"),
+                 app_client.put(f"/reminders/{rid}/tick"),
+                 app_client.delete(f"/reminders/{rid}")):
+        assert resp.status_code == 404
+        j = resp.json()
+        assert "detail" not in j and j["error"]["code"] == "NOT_FOUND" and j["error"]["hint"]
 
 
 def test_rest_blank_title_422_no_row(app_client):

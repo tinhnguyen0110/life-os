@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P5 (#46): flat REST error parity
 from core.base import BaseModule, Routine
 from core.responses import ok
 
@@ -54,7 +55,8 @@ def get_reminder(reminder_id: int):
     """One reminder. 404 if absent."""
     reminder = service.get(reminder_id)
     if reminder is None:
-        raise HTTPException(status_code=404, detail=f"reminder {reminder_id} not found")
+        return agent_error_response("NOT_FOUND", f"reminder {reminder_id} not found",
+                                    hint="GET /reminders for valid ids")
     return ok(data=reminder.model_dump())
 
 
@@ -64,7 +66,8 @@ def tick_reminder(reminder_id: int):
     its first value), 200 with the reminder. 404 if the reminder doesn't exist."""
     reminder = service.tick(reminder_id)
     if reminder is None:
-        raise HTTPException(status_code=404, detail=f"reminder {reminder_id} not found")
+        return agent_error_response("NOT_FOUND", f"reminder {reminder_id} not found",
+                                    hint="GET /reminders for valid ids")
     return ok(data=reminder.model_dump())
 
 
@@ -73,7 +76,8 @@ def delete_reminder(reminder_id: int):
     """Delete a reminder. 200 + {deleted} (the locked envelope — see module docstring). 404 if
     the reminder doesn't exist."""
     if not service.delete(reminder_id):
-        raise HTTPException(status_code=404, detail=f"reminder {reminder_id} not found")
+        return agent_error_response("NOT_FOUND", f"reminder {reminder_id} not found",
+                                    hint="GET /reminders for valid ids")
     return ok(data={"deleted": reminder_id})
 
 

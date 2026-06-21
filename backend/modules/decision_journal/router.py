@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from core.agent_errors import agent_error_response  # AGENT-ERROR-P5 (#46): flat REST error parity
 from core.base import BaseModule
 from core.responses import ok
 
@@ -39,9 +40,13 @@ def get_decision(entry_id: str):
     entry = service.get_entry(entry_id)
     if entry is None:
         if service.entry_file_exists(entry_id):
-            raise HTTPException(status_code=422,
-                                detail=f"decision {entry_id!r} is malformed (corrupt entry file)")
-        raise HTTPException(status_code=404, detail=f"decision {entry_id!r} not found")
+            # #46-P5 the nuance: the FILE exists but parses to None (corruption) — INVALID_INPUT
+            # (422), distinct from not-found. The message names the corrupt-vs-bad-input distinction.
+            return agent_error_response(
+                "INVALID_INPUT", f"decision {entry_id!r} is malformed (corrupt entry file)",
+                hint="the id is valid but the stored entry can't be parsed — the file may be corrupt")
+        return agent_error_response("NOT_FOUND", f"decision {entry_id!r} not found",
+                                    hint="GET /decision-journal for valid ids")
     return ok(data=entry.model_dump())
 
 
@@ -59,7 +64,8 @@ def update_decision(entry_id: str, body: DecisionUpdate):
     fields. 404 if absent. Fail-CLOSED."""
     entry = service.update_entry(entry_id, body)
     if entry is None:
-        raise HTTPException(status_code=404, detail=f"decision {entry_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"decision {entry_id!r} not found",
+                                    hint="GET /decision-journal for valid ids")
     return ok(data=entry.model_dump())
 
 
@@ -67,7 +73,8 @@ def update_decision(entry_id: str, body: DecisionUpdate):
 def delete_decision(entry_id: str):
     """Delete a decision (one git commit). 404 if absent."""
     if not service.delete_entry(entry_id):
-        raise HTTPException(status_code=404, detail=f"decision {entry_id!r} not found")
+        return agent_error_response("NOT_FOUND", f"decision {entry_id!r} not found",
+                                    hint="GET /decision-journal for valid ids")
     return ok(data={"deleted": entry_id})
 
 
