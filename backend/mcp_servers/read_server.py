@@ -109,6 +109,7 @@ from modules.market.service import candles as _mkt_candles
 from modules.market.service import watchlist_data as _mkt_watchlist
 from modules.projects.service import list_projects as _proj_list
 from modules.projects.service import get_project as _proj_get
+from modules.projects.service import get_context as _proj_context  # PROJECT-MEMORY #42
 from modules.graveyard.service import get_graveyard as _grave_get
 from modules.claude_usage.service import get_usage as _claude_usage
 from modules.brief.service import generate_brief as _brief_generate
@@ -419,6 +420,20 @@ def project_get(project_id: str) -> dict[str, Any]:
     if status is None:
         return {"found": False, "project_id": project_id}
     return {"found": True, "project": _jsonable(status)}
+
+
+def project_context(project_id: str) -> dict[str, Any]:
+    """PROJECT-MEMORY (#42): a project's full context — its metadata PLUS its accumulated wiki notes
+    (tagged ``project:<id>``) as "project memory", so the agent reasons WITH the project's notes.
+    ``{project, notes:[{id,title,status,updated,snippet}], noteCount}`` on a tracked project; a
+    project with zero tagged notes → ``notes: []`` (honest-empty); an UNKNOWN project →
+    ``{found: False, project_id}`` (never fabricates). Same ``service.get_context`` the REST
+    GET /projects/{id}/context calls → MCP≡REST byte-identical (#24). project_get stays lean; this
+    is the 'everything about X' call."""
+    ctx = _proj_context(project_id)
+    if ctx is None:
+        return {"found": False, "project_id": project_id}
+    return ctx
 
 
 def graveyard_overview() -> dict[str, Any]:
@@ -1244,6 +1259,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "market_relative_strength": market_relative_strength,
     "projects_list": projects_list,
     "project_get": project_get,
+    "project_context": project_context,  # PROJECT-MEMORY #42: metadata + tagged wiki notes
     "graveyard_overview": graveyard_overview,
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)

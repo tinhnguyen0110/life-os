@@ -159,6 +159,23 @@ def mutual_link_pairs() -> list[tuple[int, int]]:
     return [(int(r["a"]), int(r["b"])) for r in rows]
 
 
+def notes_with_tag(tag: str) -> list[sqlite3.Row]:
+    """PROJECT-MEMORY (#42): all note rows whose ``tags`` JSON array contains EXACTLY ``tag``,
+    newest-updated first. The ``tags`` column is a JSON string array (e.g. '["project:life-os",
+    "x"]'); we match the quoted token ``"<tag>"`` via LIKE so a substring (e.g. tag "project:a"
+    inside "project:abc") can't false-match — the surrounding quotes anchor it to a whole array
+    element. Returns ``[]`` for an absent/empty tag. Ordered updated DESC (the caller slices top-N)."""
+    if not tag:
+        return []
+    needle = f'%"{tag}"%'  # the JSON-quoted element — anchored so it's a whole-tag match
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT * FROM wiki_notes WHERE tags LIKE ? ORDER BY updated DESC, id DESC",
+            (needle,),
+        ).fetchall()
+
+
 def fleeting_notes() -> list[sqlite3.Row]:
     """Notes with status='fleeting', oldest→newest (the inbox)."""
     conn = db.get_conn()

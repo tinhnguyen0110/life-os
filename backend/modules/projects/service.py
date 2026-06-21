@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -314,6 +315,32 @@ def get_project(project_id: str) -> ProjectStatus | None:
     if repo_path is None:
         return None
     return read_one(project_id, repo_path)
+
+
+def get_context(project_id: str, notes_limit: int = 10) -> dict[str, Any] | None:
+    """PROJECT-MEMORY (#42): a project's full context for an agent — its metadata PLUS its accumulated
+    wiki notes ("project memory"), so the agent reasons WITH the project's notes. Composes
+    ``get_project`` (the status/metadata) + ``wiki.reader.project_notes`` (notes tagged
+    ``project:<id>``, lean, newest first, top ``notes_limit``).
+
+    Returns ``{project: <metadata>, notes: [{id,title,status,updated,snippet}], noteCount}``; a
+    project with ZERO tagged notes → ``notes: []`` (honest-empty, not omitted). An UNTRACKED project
+    → ``None`` (the caller 404s / returns found:False — never fabricates a project). project_get stays
+    LEAN; this is the dedicated "everything about X" call.
+
+    The ONE compose impl behind BOTH the REST /projects/{id}/context endpoint and the MCP
+    project_context tool → they're byte-identical by construction (#24)."""
+    status = get_project(project_id)
+    if status is None:
+        return None
+    # lazy import: the wiki reader (the project_notes tag-filter lives in the wiki module).
+    from modules.wiki import reader as wiki_reader
+    notes = wiki_reader.project_notes(project_id, limit=notes_limit)
+    return {
+        "project": status.model_dump(),
+        "notes": notes,
+        "noteCount": len(notes),
+    }
 
 
 def list_abandoned() -> tuple[list[tuple[ProjectStatus, dict]], list[str]]:

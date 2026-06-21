@@ -8,7 +8,7 @@
 > right. (Regenerate: see the generator at the bottom.)
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
-- whole-app shared: **41 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+- whole-app shared: **42 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **13 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
@@ -52,6 +52,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `market_relative_strength` | ✓ | A symbol vs a benchmark (price-ratio trend + % change) — NEUTRAL, not a recommendation |
 | `projects_list` |  | All tracked, non-abandoned projects with derived health/commit/lang status |
 | `project_get` |  | One project's status by id (includes abandoned). Unknown id → |
+| `project_context` | read | A project's full context: metadata + its wiki notes (tagged project:<id>) as "project memory". {project, notes, noteCount} (#42). |
 | `graveyard_overview` |  | The graveyard: abandoned projects + post-mortem pattern aggregates |
 | `claude_usage` |  | Claude token-usage view: per-day burn series, by-model / by-project split, |
 | `daily_brief` |  | Generate today's brief on the fly from live reads: prioritised actions + |

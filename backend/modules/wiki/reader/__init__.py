@@ -46,6 +46,9 @@ from .suggest import suggest_links
 # staleness + contradiction-candidate detector (#41): read-only, no auto-fix.
 from .stale import stale_notes
 
+# project-memory (#42): a project's tagged notes (project:<id>).
+from .project_notes import project_notes, project_tag
+
 # overview + inbox.
 from .overview import inbox, overview
 
@@ -63,6 +66,7 @@ __all__ = [
     "context",
     "suggest_links",
     "stale_notes",
+    "project_notes", "project_tag",
     "overview", "inbox",
     "folder_tree", "mocs",
     "note_view",

@@ -145,7 +145,7 @@ def test_stdio_build_servers_unchanged():
     import modules.wiki.mcp.write_server as wws
 
     # MCP-DEDUP #70: shared read 46→40 (−6 wiki), shared write 10→4 (−6 wiki_propose_*)
-    assert len(rs.TOOLS) == 41  # REMINDERS-2 #28: +reminders_list (was 40)
+    assert len(rs.TOOLS) == 42  # PROJECT-MEMORY #42: +project_context (was 41; #28 +reminders_list)
     assert len(ws.TOOLS) == 4
     # MCP-DOMAINS T1: finance subset = 15 (ADDITIVE — read above stays 40, not regressed)
     assert len(fs.TOOLS) == 15

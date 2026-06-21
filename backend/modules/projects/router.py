@@ -66,6 +66,19 @@ def get_project(project_id: str):
     return ok(data=_attach_routines(status).model_dump())
 
 
+@router.get("/{project_id}/context")
+def get_project_context(project_id: str):
+    """PROJECT-MEMORY (#42): a project's full context for an agent — its metadata + its accumulated
+    wiki notes (tagged ``project:<id>``) as "project memory". ``{project, notes:[{id,title,status,
+    updated,snippet}], noteCount}``. A project with zero tagged notes → ``notes: []`` (honest-empty);
+    an untracked project → 404. Same ``service.get_context`` the MCP ``project_context`` tool calls →
+    MCP≡REST byte-identical (#24). project_get stays lean; this is the 'everything about X' call."""
+    ctx = service.get_context(project_id)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+    return ok(data=ctx)
+
+
 @router.post("")
 def register_project(body: ProjectRegisterInput):
     """Register a project: write its status.md (one commit) + return fresh status.

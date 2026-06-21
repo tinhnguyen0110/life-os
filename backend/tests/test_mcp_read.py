@@ -1064,7 +1064,7 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 41  # REMINDERS-2 #28: +reminders_list (was 40; MCP-DEDUP #70 −6 wiki)
+    assert len(rs.TOOLS) == 42  # PROJECT-MEMORY #42: +project_context (was 41; #28 +reminders_list)
 
 
 # =========================================================================== #
