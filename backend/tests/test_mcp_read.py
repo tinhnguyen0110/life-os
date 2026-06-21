@@ -887,7 +887,7 @@ def test_catalog_count_matches_real_servers(app_db):
 
 def test_catalog_every_tool_has_description_and_fields(app_db):
     cat = rs.list_tools_catalog()
-    valid_servers = {"read", "write", "wiki-read", "wiki-write", "finance", "reminders"}
+    valid_servers = {"read", "write", "wiki-read", "wiki-write", "finance", "reminders", "tracing"}
     for t in cat["tools"]:
         assert set(t) >= {"name", "server", "capability", "neutral", "description"}
         assert t["description"], f"{t['name']} has no description"
@@ -1072,7 +1072,7 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 42  # PROJECT-MEMORY #42: +project_context (was 41; #28 +reminders_list)
+    assert len(rs.TOOLS) == 43  # DAILY-TRACING-P2 #65: +tracing_overview (was 42; #42 +project_context)
 
 
 # =========================================================================== #

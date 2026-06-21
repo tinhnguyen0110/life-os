@@ -1,11 +1,11 @@
-"""tests/test_mcp_http.py — MCP-HTTP: the 5 MCP servers mounted over streamable-http
+"""tests/test_mcp_http.py — MCP-HTTP: the 7 MCP servers mounted over streamable-http
 into the existing uvicorn (main.py), reachable for remote/multi-client.
 
-MCP-DOMAINS (T1): a 5th mount /mcp/finance was added — a NARROW, ADDITIVE 15-tool finance
-subset that reference-imports read_server's own fns (zero dup; see tests/
-test_finance_mcp_server.py for the 15-count + identity + no-reimpl gates). It rides the same
-_build_mcp_servers loop (stateless_http=True, DNS-rebind-off), so every handshake/stateless
-test below now exercises it too — added to MOUNTS.
+The mounts: shared read/write + standalone wiki-read/wiki-write + the per-domain finance (#28-T1
+precedent), reminders (#28), and tracing (#65) servers. MOUNTS below MUST stay in sync with
+main._MCP_MOUNTS (a test pins that) so the handshake/stateless tests exercise EVERY live mount —
+a mount added to main.py but not here would silently lose its live-HTTP coverage (the count-gotcha's
+sibling: DAILY-TRACING-P2 closed the reminders+tracing gap the comment already claimed).
 
 Defensive cases (each a real assertion, per the dispatch):
 (a) un-wired lifespan → 500 on every call → so we POST a REAL `initialize` and assert
@@ -14,14 +14,14 @@ Defensive cases (each a real assertion, per the dispatch):
 (b) DNS-rebinding 421 → TestClient sends Host 'testserver' (non-localhost); without
     enable_dns_rebinding_protection=False the handshake 421s. We KEEP that Host (don't
     override to localhost) so a 200 proves the remote-client path this sprint exists to fix.
-(c) MCP-STATELESS (#75): the 5 mounts are stateless_http=True → the handshake issues NO
+(c) MCP-STATELESS (#75): the mounts are stateless_http=True → the handshake issues NO
     mcp-session-id (no per-session state) so a backend RESTART can't drop a client; a
     tools/list works with NO prior initialize-session (restart-survivable). (Was: distinct
     session ids — stateful; the agent-first switch removed sessions entirely.)
 (d) stdio unbroken → each build_server() still builds + the per-server tool counts hold (asserted
     live below — shared read/write + standalone wiki-read 14 (#23/#34/#41/#53) / wiki-write 6 /
     finance subset 15). Historical: MCP-DEDUP #70 shared read 46→40, write 10→4, wiki-read 9→11.
-(e) no `from __future__ import annotations` added to the 5 server modules.
+(e) no `from __future__ import annotations` added to the server modules.
 """
 
 from __future__ import annotations
@@ -34,7 +34,11 @@ from fastapi.testclient import TestClient
 import main
 
 
-MOUNTS = ["/mcp/read", "/mcp/write", "/mcp/wiki-read", "/mcp/wiki-write", "/mcp/finance"]
+# DAILY-TRACING-P2 (#65): all 7 live mounts (must match main._MCP_MOUNTS). reminders + tracing were
+# missing — the handshake/stateless tests now exercise EVERY mount (the per-domain-mount coverage the
+# comment above already claimed). Keep in sync with _MCP_MOUNTS when a mount is added.
+MOUNTS = ["/mcp/read", "/mcp/write", "/mcp/wiki-read", "/mcp/wiki-write", "/mcp/finance",
+          "/mcp/reminders", "/mcp/tracing"]
 
 
 def _init_body():
@@ -59,8 +63,8 @@ def client(isolated_paths):
 # (a) + (b) + (c): the 4 handshakes return 200 (NOT 500/421/404) + distinct ids #
 # --------------------------------------------------------------------------- #
 def test_all_mcp_endpoints_handshake_200(client):
-    """Each /<mount>/mcp `initialize` → 200 (all 5 mounts incl. MCP-DOMAINS /mcp/finance).
-    200 (not 404) proves the session manager is
+    """Each /<mount>/mcp `initialize` → 200 (all 7 live mounts incl. the per-domain finance/
+    reminders/tracing). 200 (not 404) proves the session manager is
     RUN (a); 200 (not 421) proves DNS-rebinding is OFF for the non-localhost TestClient
     Host (b). MCP-STATELESS (#75): the servers are stateless_http=True now, so the
     handshake issues NO mcp-session-id (no session to track) — that is the agent-first WIN
@@ -70,6 +74,17 @@ def test_all_mcp_endpoints_handshake_200(client):
         r = client.post(f"{mount}/mcp", json=_init_body(),
                         headers={"Accept": "application/json, text/event-stream"})
         assert r.status_code == 200, f"{mount}/mcp handshake not 200: {r.status_code} {r.text[:200]}"
+
+
+def test_MOUNTS_in_sync_with_main_mcp_mounts():
+    """DAILY-TRACING-P2 (#65) — the structural fix for the stale-MOUNTS gap (a mount added to
+    main._MCP_MOUNTS but not to this test's MOUNTS silently loses its handshake/stateless coverage).
+    Pin MOUNTS == the live _MCP_MOUNTS paths so the handshake + stateless tests above ALWAYS exercise
+    EVERY live mount — adding a future mount without updating MOUNTS now fails HERE, not silently."""
+    live = [path for path, _mod in main._MCP_MOUNTS]
+    assert set(MOUNTS) == set(live), (
+        f"MOUNTS out of sync with main._MCP_MOUNTS — missing {set(live) - set(MOUNTS)}, "
+        f"stale {set(MOUNTS) - set(live)}")
 
 
 def test_stateless_handshake_issues_no_session_id(client):
@@ -145,9 +160,9 @@ def test_stdio_build_servers_unchanged():
     import modules.wiki.mcp.write_server as wws
 
     # MCP-DEDUP #70: shared read 46→40 (−6 wiki), shared write 10→4 (−6 wiki_propose_*)
-    assert len(rs.TOOLS) == 42  # PROJECT-MEMORY #42: +project_context (was 41; #28 +reminders_list)
+    assert len(rs.TOOLS) == 43  # DAILY-TRACING-P2 #65: +tracing_overview (was 42; #42 +project_context)
     assert len(ws.TOOLS) == 4
-    # MCP-DOMAINS T1: finance subset = 15 (ADDITIVE — read above stays 40, not regressed)
+    # MCP-DOMAINS T1: finance subset = 15 (ADDITIVE — read above unchanged by the finance subset)
     assert len(fs.TOOLS) == 15
     # the whole-app servers expose TOOLS; build each (default transport_security=None)
     for mod in (rs, ws, fs):
@@ -179,13 +194,14 @@ def test_build_server_default_is_stdio_identical():
 
 
 # --------------------------------------------------------------------------- #
-# (e): no `from __future__ import annotations` in the 4 server modules          #
+# (e): no `from __future__ import annotations` in the server modules             #
 # --------------------------------------------------------------------------- #
 def test_no_future_annotations_in_server_modules():
     """FastMCP introspects REAL param annotations at registration (stringized annotations
-    crash issubclass) — the 5 server modules must NOT add `from __future__ import
+    crash issubclass) — the server modules must NOT add `from __future__ import
     annotations`. Checked via AST (a real ImportFrom node), NOT a substring — the modules
-    legitimately MENTION the string in a docstring warning the reader not to add it."""
+    legitimately MENTION the string in a docstring warning the reader not to add it.
+    (reminders_server + tracing_server have the same AST check in their own test files.)"""
     import ast
     import inspect
 

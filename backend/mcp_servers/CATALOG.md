@@ -2,19 +2,21 @@
 
 > **The canonical, always-current catalog is the MCP tool `list_tools_catalog()`** on the
 > read-server — it is DERIVED from the live tool registries, so it never drifts. As of #32 it walks
-> EVERY mount (read · write · wiki-read · wiki-write · finance · reminders), not just the shared
-> read+write servers — so this doc's wiki/finance/reminders sections are now generator-covered too.
+> EVERY mount (read · write · wiki-read · wiki-write · finance · reminders · tracing), not just the
+> shared read+write servers — so this doc's wiki/finance/reminders/tracing sections are generator-covered too.
 > This doc is a human-readable snapshot; if it disagrees with `list_tools_catalog()`, the tool is
 > right. (Regenerate: see the generator at the bottom.)
 
 Mounts (every server `list_tools_catalog()` enumerates — #32):
-- whole-app shared: **42 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
+- whole-app shared: **43 read · 4 write** (propose) — `/mcp/read` · `/mcp/write`
 - standalone wiki (canonical): **14 wiki-read · 6 wiki-write** — `/mcp/wiki-read` · `/mcp/wiki-write`
 - finance domain (narrow): **15 finance-read** — `/mcp/finance` — a SUBSET of the whole-app read
   (the SAME 15 fn objects, zero dup), for a finance-only agent. Listed under BOTH `finance` and
   `read` in the catalog (the honest "what THIS agent sees" view) — adds no NEW tool fns.
 - reminders domain (writable): **3 reminders** — `/mcp/reminders` — reminders_list (read) +
   reminder_create/reminder_tick (reversible single-user direct write, no proposal gate).
+- tracing domain (writable): **2 tracing** — `/mcp/tracing` — tracing_overview (read, is-identity
+  with the shared read tool) + tracing_log (reversible single-user direct append, no proposal gate).
 
 The wiki tools were CONSOLIDATED onto the standalone wiki servers (no longer duplicated on the
 shared servers). The shared write-server's `propose_note` was renamed `propose_quicknote` (the
@@ -70,6 +72,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `news_list` | ✓ | Raw captured headlines, newest-first — each with source url + published_ts |
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `insights` | ✓ | Cross-domain NEUTRAL evidence-grounded observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
+| `tracing_overview` | ✓ | The habit/activity board for today-VN: per-activity today/streak/week/history12w + 12w heatmap (per-day COUNT of activities met) + score. All derived server-side. Byte-identical to REST GET /tracing (#65). |
 | `check_proposal_status` |  | One proposal's disposition by id: status (pending|accepted|rejected), |
 | `list_my_proposals` |  | The agent's proposals (newest-first) with their current disposition — the review |
 | `proposal_stats` |  | Counts of the agent's proposals by status (pending/accepted/rejected) so the |
@@ -118,6 +121,13 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | `reminders_list` | reminders | What's on the user's plate: reminders by `filter` (today\|week\|undone\|all) |
 | `reminder_create` | reminders | Create a reminder — DIRECT write-through (no proposal gate; reversible single-user CRUD) |
 | `reminder_tick` | reminders | Mark a reminder done — DIRECT write-through, IDEMPOTENT (re-ticking keeps the first done_at) |
+
+## Tracing tools (tracing domain — `/mcp/tracing`; reversible single-user direct write)
+
+| Tool | Server | Description |
+|---|---|---|
+| `tracing_overview` | tracing | The habit board for today-VN (per-activity today/streak/week/history12w + 12w heatmap + score). is-identity with the shared read tool |
+| `tracing_log` | tracing | Log a session against an activity — DIRECT write-through (no proposal gate); same-day logs accumulate; returns the updated activity view. Unknown id → {found:False} |
 
 ## Regenerate this doc
 

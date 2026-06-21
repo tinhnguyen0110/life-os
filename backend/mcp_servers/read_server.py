@@ -137,6 +137,9 @@ from modules.news.service import list_news as _news_list
 # mutation; create/tick/delete are NOT imported here, they live on the lifeos-reminders write
 # surface). Read-gate-safe.
 from modules.reminders.service import list_reminders as _reminders_list
+# DAILY-TRACING-P2 (#65): the agent reads "what did I do today / my streaks" — get_overview is a
+# READ fn (no mutation; log_session/CRUD live on the lifeos-tracing write surface). Read-gate-safe.
+from modules.tracing.reader import get_overview as _tracing_overview
 # WIKI-MCP: the agent reads the wiki (search/get/overview/backlinks) — READ paths
 # only, aliased-private. NOT create_note/update_note/delete_note/merge_notes/enqueue/
 # create_proposal/accept_proposal/reject_proposal (those stay in WRITE_SYMBOLS — the
@@ -532,6 +535,16 @@ def reminders_list(filter: str = "today") -> dict[str, Any]:
     }
 
 
+def tracing_overview() -> dict[str, Any]:
+    """The user's habit/activity board for today-VN: per-activity {today (done/val/pct/streak), week,
+    history12w} + a 12-week heatmap (per-day COUNT of activities that met goal) + score (DAILY-TRACING
+    #65). All metrics DERIVED server-side from the raw logs (raw-data-first) — the agent reads "what
+    did I do today / my streaks" without re-computing. honest-mirror: no activities → [] + all-0.
+    BYTE-IDENTICAL to REST GET /tracing (#24 parity — both return reader.get_overview().model_dump()).
+    Read-only (logging a session lives on the lifeos-tracing write surface)."""
+    return _tracing_overview().model_dump()
+
+
 def daily_brief() -> dict[str, Any]:
     """Generate today's brief on the fly from live reads: prioritised actions +
     summary across market / projects / finance / Claude. ``{brief}``. Fail-soft per
@@ -736,6 +749,7 @@ _CATALOG_MOUNTS: list[tuple[str, str, str]] = [
     ("wiki-write", "modules.wiki.mcp.write_server", "propose"),
     ("finance", "mcp_servers.finance_server", "read"),
     ("reminders", "mcp_servers.reminders_server", "read"),
+    ("tracing", "mcp_servers.tracing_server", "read"),  # DAILY-TRACING-P2 #65
 ]
 
 
@@ -1288,6 +1302,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "graveyard_overview": graveyard_overview,
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
+    "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
     "daily_brief": daily_brief,
     "brief_history": brief_history,
     "journal_entries": journal_entries,

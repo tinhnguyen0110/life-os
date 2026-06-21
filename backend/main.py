@@ -38,7 +38,7 @@ scheduler = SchedulerEngine(enabled=settings.scheduler_enabled)
 # <mount>/mcp (e.g. POST /mcp/read/mcp). Order is stable for the lifespan exit-stack.
 # MCP-DOMAINS: /mcp/finance is a NARROW, ADDITIVE 15-tool finance subset (reference-imports
 # read_server's own fns — zero dup; see mcp_servers/finance_server.py). The full-access
-# /mcp/read keeps all 40 tools; finance is for a specialized finance agent.
+# /mcp/read keeps all 43 tools; finance is for a specialized finance agent.
 _MCP_MOUNTS = [
     ("/mcp/read", "mcp_servers.read_server"),
     ("/mcp/write", "mcp_servers.write_server"),
@@ -48,15 +48,18 @@ _MCP_MOUNTS = [
     # REMINDERS-2 (#28): per-domain lifeos-reminders — a WRITABLE domain (reminders_list read +
     # reminder_create/tick direct write-through, reversible single-user CRUD, no proposal gate).
     ("/mcp/reminders", "mcp_servers.reminders_server"),
+    # DAILY-TRACING-P2 (#65): per-domain lifeos-tracing — WRITABLE domain (tracing_overview read +
+    # tracing_log direct write-through, reversible single-user append, no proposal gate).
+    ("/mcp/tracing", "mcp_servers.tracing_server"),
 ]
 
 
 def _build_mcp_servers() -> list:
-    """Build the 4 FastMCP servers with DNS-rebinding protection OFF (single-user, no-auth,
+    """Build the MCP servers (one per _MCP_MOUNTS entry) with DNS-rebinding protection OFF (single-user, no-auth,
     LAN — north-star) so REMOTE/multi-client streamable-http works (default ON → 421 on a
     non-localhost Host). Each via the server's own build_server(transport_security=...) so
     the capability gate + import graph stay pristine (no new import in the server modules).
-    Returns the 4 FastMCP instances (session_manager exists only AFTER streamable_http_app).
+    Returns the FastMCP instances (session_manager exists only AFTER streamable_http_app).
 
     MCP-STATELESS (#75, agent-first): stateless_http=True → the HTTP servers hold NO per-
     session state, so a backend RESTART does NOT drop connected MCP clients (no mcp-session-id
@@ -79,7 +82,7 @@ def _build_mcp_servers() -> list:
 
 def create_app() -> FastAPI:
     """Application factory — used by uvicorn and by tests for isolation."""
-    # MCP-HTTP: build the 4 FastMCP + their ASGI apps ONCE (session_manager.run() is
+    # MCP-HTTP: build the FastMCP servers + their ASGI apps ONCE (session_manager.run() is
     # one-shot; never per-request). streamable_http_app() must be called BEFORE reading
     # .session_manager (lazy).
     mcp_servers = _build_mcp_servers()
@@ -170,7 +173,7 @@ def create_app() -> FastAPI:
     # C2: discover + mount BEFORE returning. Empty modules/ → mounts nothing.
     app.state.discovery = mount_all(app)
 
-    # MCP-HTTP: mount the 4 streamable-http ASGI apps at distinct paths. Built above
+    # MCP-HTTP: mount the streamable-http ASGI apps at distinct paths. Built above
     # (session managers entered in the lifespan). Client hits <mount>/mcp. stdio main()
     # entrypoints are untouched — this is an ADDITIONAL transport, not a replacement.
     for (path, _mod_name), sub in zip(_MCP_MOUNTS, mcp_apps):
