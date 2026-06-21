@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS tracing_activities (
     goal      REAL    NOT NULL DEFAULT 0,
     color     TEXT    NOT NULL DEFAULT '',
     created   TEXT    NOT NULL,
-    archived  INTEGER NOT NULL DEFAULT 0
+    archived  INTEGER NOT NULL DEFAULT 0,
+    remind_at     TEXT,                          -- TRACING-REMINDERS (#75): HH:MM VN, or NULL
+    remind_repeat TEXT NOT NULL DEFAULT 'off'    -- (#75) daily | weekdays | off
 );
 CREATE TABLE IF NOT EXISTS tracing_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,16 +44,24 @@ CREATE TABLE IF NOT EXISTS tracing_logs (
 CREATE INDEX IF NOT EXISTS idx_tracing_logs_act_date ON tracing_logs(activity_id, date);
 """
 
-_ACT_COLS = "id, name, emoji, icon, unit, goal, color, created, archived"
+_ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
+             "remind_at, remind_repeat")  # TRACING-REMINDERS (#75): +remind_at, +remind_repeat
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
 
 
 def init_tracing_tables() -> sqlite3.Connection:
     """Register the tracing tables on the shared connection. Idempotent; safe after a test
-    rebinds ``db.DB_PATH`` (each store fn calls this first, like reminders)."""
+    rebinds ``db.DB_PATH`` (each store fn calls this first, like reminders).
+
+    TRACING-REMINDERS (#75) migration: add remind_at/remind_repeat to a pre-#75 table (idempotent)."""
     conn = db.get_conn()
     with _lock:
         conn.executescript(TRACING_SCHEMA)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracing_activities)").fetchall()}
+        if "remind_at" not in cols:
+            conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_at TEXT")
+        if "remind_repeat" not in cols:
+            conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_repeat TEXT NOT NULL DEFAULT 'off'")
         conn.commit()
     return conn
 
@@ -81,15 +91,16 @@ def list_activities(include_archived: bool = False) -> list[sqlite3.Row]:
 
 
 def create_activity(*, id: str, name: str, emoji: str, icon: str, unit: str, goal: float,
-                    color: str, created: str) -> None:
+                    color: str, created: str, remind_at: str | None = None,
+                    remind_repeat: str = "off") -> None:
     """Insert an activity def. Raises sqlite3.IntegrityError on a duplicate id (caller maps → 409)."""
     init_tracing_tables()
     conn = db.get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO tracing_activities(id, name, emoji, icon, unit, goal, color, created, "
-            "archived) VALUES (?,?,?,?,?,?,?,?,0)",
-            (id, name, emoji, icon, unit, goal, color, created),
+            "archived, remind_at, remind_repeat) VALUES (?,?,?,?,?,?,?,?,0,?,?)",
+            (id, name, emoji, icon, unit, goal, color, created, remind_at, remind_repeat),
         )
         conn.commit()
 

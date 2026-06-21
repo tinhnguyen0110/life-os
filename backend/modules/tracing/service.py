@@ -66,10 +66,13 @@ def _pct(val: float, goal: float) -> int:
 
 
 def _row_to_activity(row: sqlite3.Row) -> Activity:
+    keys = row.keys()  # tolerate a pre-#75 row missing remind_* (migration adds them)
     return Activity(
         id=row["id"], name=row["name"], emoji=row["emoji"], icon=row["icon"],
         unit=row["unit"], goal=row["goal"], color=row["color"], created=row["created"],
         archived=bool(row["archived"]),
+        remind_at=row["remind_at"] if "remind_at" in keys else None,
+        remind_repeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
     )
 
 
@@ -162,6 +165,7 @@ def _derive_activity_view(act: Activity) -> ActivityView:
     return ActivityView(
         id=act.id, name=act.name, emoji=act.emoji, icon=act.icon, unit=act.unit,
         goal=act.goal, color=act.color,
+        remind_at=act.remind_at, remind_repeat=act.remind_repeat,  # #75: surface the reminder link
         today=today_stat, streak=streak, week=week, history12w=history,
     )
 
@@ -222,29 +226,75 @@ def get_activity(activity_id: str) -> Activity | None:
     return _row_to_activity(row) if row is not None else None
 
 
+# TRACING-REMINDERS (#75): map remind_repeat → the reminders engine's repeat. "daily"/"weekdays"
+# both fire daily (the #29 engine has no weekday-mask; weekdays is surfaced for the FE but fires
+# daily — documented honest limitation, refine in a later phase). "off" → no reminder.
+_REPEAT_MAP = {"daily": "daily", "weekdays": "daily"}
+
+
+def _sync_reminder(act: Activity) -> None:
+    """ONE-WAY tracing→reminder (#75): if the activity has remind_at + remind_repeat≠off → UPSERT the
+    linked reminder (source=tracing, via the reminders service — reuse the #29 engine, no new one);
+    else → DELETE the linked reminder. Fail-soft: a reminders-store hiccup logs but never breaks the
+    activity write (the activity is source-of-truth)."""
+    from modules.reminders import service as rem
+    from modules.reminders.schema import _to_utc_iso
+    try:
+        if act.remind_at and act.remind_repeat != "off":
+            # today-VN @ remind_at → a VN-offset ISO → UTC (reminders compares due_at in UTC).
+            due_local = f"{vn_today()}T{act.remind_at}:00+07:00"
+            due_at = _to_utc_iso(due_local)
+            title = f"{act.emoji} {act.name}".strip()
+            rem.upsert_for_activity(
+                activity_id=act.id, title=title, due_at=due_at,
+                repeat=_REPEAT_MAP.get(act.remind_repeat, "daily"),
+            )
+        else:
+            rem.delete_for_activity(act.id)
+    except Exception as exc:  # noqa: BLE001 — reminder sync is an add-on; never break the activity write
+        logger.error("dev: reminder sync failed for activity %s: %s", act.id, exc)
+
+
 def create_activity(inp: ActivityInput) -> Activity:
-    """Create an activity def. Raises sqlite3.IntegrityError on a duplicate id (router → 409)."""
+    """Create an activity def. Raises sqlite3.IntegrityError on a duplicate id (router → 409).
+    #75: syncs the linked reminder if remind_at + remind_repeat≠off."""
     store.create_activity(
         id=inp.id, name=inp.name, emoji=inp.emoji, icon=inp.icon, unit=inp.unit,
         goal=inp.goal, color=inp.color, created=vn_now_iso(),
+        remind_at=inp.remind_at, remind_repeat=inp.remind_repeat,
     )
     created = store.get_activity(inp.id)
     assert created is not None  # just inserted
-    return _row_to_activity(created)
+    act = _row_to_activity(created)
+    _sync_reminder(act)  # #75: materialize/clear the linked reminder
+    return act
 
 
 def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:
-    """Update the supplied fields of an activity def. Returns the updated def, or None if absent."""
+    """Update the supplied fields of an activity def. Returns the updated def, or None if absent.
+    #75: re-syncs the linked reminder (upsert on remind change, delete on clear/off)."""
     fields = upd.model_dump(exclude_none=True)
     if not store.update_activity(activity_id, fields):
         return None
     row = store.get_activity(activity_id)
-    return _row_to_activity(row) if row is not None else None
+    if row is None:
+        return None
+    act = _row_to_activity(row)
+    _sync_reminder(act)  # #75: re-materialize/clear the linked reminder per the new remind state
+    return act
 
 
 def archive_activity(activity_id: str) -> bool:
-    """Archive (soft-delete) an activity def. False if absent."""
-    return store.archive_activity(activity_id)
+    """Archive (soft-delete) an activity def. False if absent. #75: deletes the linked reminder
+    (one-way — an archived habit shouldn't keep nagging). Fail-soft on the reminder delete."""
+    ok = store.archive_activity(activity_id)
+    if ok:
+        try:
+            from modules.reminders import service as rem
+            rem.delete_for_activity(activity_id)
+        except Exception as exc:  # noqa: BLE001 — add-on; never break the archive
+            logger.error("dev: reminder delete-on-archive failed for %s: %s", activity_id, exc)
+    return ok
 
 
 def log_session(activity_id: str, inp: LogInput) -> ActivityView:

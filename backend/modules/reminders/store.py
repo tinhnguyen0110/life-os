@@ -34,16 +34,21 @@ CREATE TABLE IF NOT EXISTS reminders (
     notified_count   INTEGER NOT NULL DEFAULT 0,       -- (#29) times Discord-notified this period
     last_notified    TEXT,                             -- (#29) ISO of the last notify, else NULL
     done_at          TEXT,                             -- ISO-8601 when ticked, else NULL
-    created          TEXT    NOT NULL                  -- ISO-8601 created
+    created          TEXT    NOT NULL,                 -- ISO-8601 created
+    source           TEXT    NOT NULL DEFAULT 'manual', -- TRACING-REMINDERS (#75): manual | tracing
+    activity_id      TEXT                              -- (#75) the tracing activity id when source=tracing
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
 """
+# NOTE the activity_id index is created in init AFTER the ALTER migration (a pre-#75 table won't have
+# the column when executescript runs, so the index can't be in the schema-script — it would crash on
+# an existing table: "no such column activity_id"). Created post-migration below.
 
 # The columns selected for a Reminder row (stable order; reader maps these to the model).
-# REMINDERS-3 (#29): +last_notified.
+# REMINDERS-3 (#29): +last_notified. TRACING-REMINDERS (#75): +source, +activity_id.
 _COLS = ("id, title, note, due_at, repeat, re_notify_every, max_times, "
-         "notified_count, last_notified, done_at, created")
+         "notified_count, last_notified, done_at, created, source, activity_id")
 
 
 def init_reminders_tables() -> sqlite3.Connection:
@@ -59,6 +64,13 @@ def init_reminders_tables() -> sqlite3.Connection:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()}
         if "last_notified" not in cols:
             conn.execute("ALTER TABLE reminders ADD COLUMN last_notified TEXT")
+        # TRACING-REMINDERS (#75) migration: add source/activity_id to a pre-#75 table (idempotent).
+        if "source" not in cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        if "activity_id" not in cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN activity_id TEXT")
+        # the activity_id index — AFTER the ALTER (the column now exists on both new + migrated tables).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_activity ON reminders(activity_id, source)")
         conn.commit()
     return conn
 
@@ -69,20 +81,55 @@ def _now() -> datetime:
 
 def create_reminder(*, title: str, note: str | None, due_at: str, repeat: str,
                     re_notify_every: int | None, max_times: int | None,
-                    created: str) -> int:
-    """Insert a reminder. Returns the new row id. notified_count starts 0, done_at NULL."""
+                    created: str, source: str = "manual",
+                    activity_id: str | None = None) -> int:
+    """Insert a reminder. Returns the new row id. notified_count starts 0, done_at NULL. ``source``
+    defaults 'manual' (the user path); the tracing service passes source='tracing'+activity_id (#75)."""
     init_reminders_tables()
     conn = db.get_conn()
     with _lock:
         cur = conn.execute(
             "INSERT INTO reminders(title, note, due_at, repeat, re_notify_every, max_times, "
-            "notified_count, done_at, created) VALUES (?,?,?,?,?,?,0,NULL,?)",
-            (title, note, due_at, repeat, re_notify_every, max_times, created),
+            "notified_count, done_at, created, source, activity_id) "
+            "VALUES (?,?,?,?,?,?,0,NULL,?,?,?)",
+            (title, note, due_at, repeat, re_notify_every, max_times, created, source, activity_id),
         )
         conn.commit()
         rid = cur.lastrowid
         assert rid is not None
         return int(rid)
+
+
+def find_by_activity(activity_id: str, source: str = "tracing") -> sqlite3.Row | None:
+    """TRACING-REMINDERS (#75): the linked reminder for an activity (by activity_id + source), or
+    None. The upsert key — find-existing before create, so a re-sync updates not duplicates."""
+    init_reminders_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_COLS} FROM reminders WHERE activity_id = ? AND source = ? "
+            "ORDER BY id ASC LIMIT 1", (activity_id, source),
+        ).fetchone()
+
+
+def update_reminder(reminder_id: int, *, title: str, due_at: str, repeat: str) -> sqlite3.Row | None:
+    """TRACING-REMINDERS (#75): update the tracing-linked reminder's title/due_at/repeat (the fields
+    the activity drives). Resets the notify counters (a re-synced time = a fresh period). Returns the
+    updated row, or None if absent."""
+    init_reminders_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE reminders SET title = ?, due_at = ?, repeat = ?, notified_count = 0, "
+            "last_notified = NULL WHERE id = ?",
+            (title, due_at, repeat, int(reminder_id)),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return conn.execute(
+            f"SELECT {_COLS} FROM reminders WHERE id = ?", (int(reminder_id),)
+        ).fetchone()
 
 
 def get_reminder(reminder_id: int) -> sqlite3.Row | None:

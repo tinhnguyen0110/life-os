@@ -59,6 +59,39 @@ def delete(reminder_id: int) -> bool:
     return store.delete_reminder(reminder_id)
 
 
+# --------------------------------------------------------------------------- #
+# TRACING-REMINDERS (#75) — the tracing→reminder wire (one-way, internal-only).  #
+# The forge-guard: source='tracing' is set ONLY here (the tracing service calls   #
+# these); the public create(ReminderInput) can't set source (not an input field).  #
+# --------------------------------------------------------------------------- #
+def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: str) -> Reminder:
+    """Create-or-update the reminder linked to ``activity_id`` (source='tracing'). find-by-activity:
+    none → create (source=tracing), else → update title/due_at/repeat. Idempotent — a re-sync on the
+    same activity UPDATES, never duplicates. Returns the linked Reminder. (Called by the tracing
+    service when an activity has remind_at + remind_repeat≠off.) ``due_at`` is already a UTC ISO."""
+    existing = store.find_by_activity(activity_id, source="tracing")
+    if existing is None:
+        rid = store.create_reminder(
+            title=title, note=None, due_at=due_at, repeat=repeat,
+            re_notify_every=None, max_times=None, created=now_iso(),
+            source="tracing", activity_id=activity_id,
+        )
+        row = store.get_reminder(rid)
+    else:
+        row = store.update_reminder(int(existing["id"]), title=title, due_at=due_at, repeat=repeat)
+    assert row is not None
+    return row_to_reminder(row)
+
+
+def delete_for_activity(activity_id: str) -> bool:
+    """Delete the tracing-linked reminder for ``activity_id`` (if any). True if one was removed. Called
+    when the activity clears its remind / is archived. ONE-WAY (only tracing drives this)."""
+    existing = store.find_by_activity(activity_id, source="tracing")
+    if existing is None:
+        return False
+    return store.delete_reminder(int(existing["id"]))
+
+
 def list_reminders(filter_key: str | None) -> tuple[ReminderList, list[str]]:
     """The filtered list + counts. Returns (ReminderList, warnings). Fail-open: a malformed row
     is skipped + warned, never crashes. ``undoneCount`` = how many in this list have done_at NULL

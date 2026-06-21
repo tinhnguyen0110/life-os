@@ -42,6 +42,22 @@ def vn_day_of(ts: str) -> str:
     return dt.astimezone(VN_TZ).strftime("%Y-%m-%d")
 
 
+# TRACING-REMINDERS (#75): an activity can drive a daily reminder. remind_at = HH:MM VN time-of-day
+# (None = no reminder); remind_repeat = how it recurs (off = no reminder regardless of remind_at).
+RemindRepeat = Literal["daily", "weekdays", "off"]
+
+
+def _validate_hhmm(v: str | None) -> str | None:
+    """Validate a HH:MM (24h) time-of-day string, or None. Raises ValueError (→ 422) on a bad time."""
+    if v is None:
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    datetime.strptime(s, "%H:%M")  # raises ValueError on a malformed time → 422
+    return s
+
+
 # --------------------------------------------------------------------------- #
 # Inputs (create/update payloads — validated at the boundary → 422)            #
 # --------------------------------------------------------------------------- #
@@ -56,6 +72,8 @@ class ActivityInput(BaseModel):
     unit: str = Field(default="", max_length=32, description="unit of val, e.g. 'km', 'min', 'reps'")
     goal: float = Field(default=0.0, ge=0, description="daily goal in `unit` (0 = no goal)")
     color: str = Field(default="", max_length=32, description="display color (FE)")
+    remind_at: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
+    remind_repeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
 
     @field_validator("id", "name")
     @classmethod
@@ -64,6 +82,11 @@ class ActivityInput(BaseModel):
         if not s:
             raise ValueError("must not be blank")
         return s
+
+    @field_validator("remind_at")
+    @classmethod
+    def _remind_at_hhmm(cls, v: str | None) -> str | None:
+        return _validate_hhmm(v)
 
 
 class ActivityUpdate(BaseModel):
@@ -75,6 +98,10 @@ class ActivityUpdate(BaseModel):
     unit: str | None = Field(default=None, max_length=32)
     goal: float | None = Field(default=None, ge=0)
     color: str | None = Field(default=None, max_length=32)
+    # TRACING-REMINDERS (#75): None means "not supplied" (leave unchanged). To CLEAR the reminder,
+    # pass remind_repeat="off" (or an explicit empty remind_at via the router's clear path).
+    remind_at: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
+    remind_repeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
 
     @field_validator("name")
     @classmethod
@@ -85,6 +112,11 @@ class ActivityUpdate(BaseModel):
         if not s:
             raise ValueError("name must not be blank")
         return s
+
+    @field_validator("remind_at")
+    @classmethod
+    def _remind_at_hhmm(cls, v: str | None) -> str | None:
+        return _validate_hhmm(v)
 
 
 class LogInput(BaseModel):
@@ -132,6 +164,8 @@ class Activity(BaseModel):
     color: str = ""
     created: str
     archived: bool = False
+    remind_at: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
+    remind_repeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
 
 
 class TodayStat(BaseModel):
@@ -156,6 +190,8 @@ class ActivityView(BaseModel):
     unit: str = ""
     goal: float = Field(default=0.0, ge=0)
     color: str = ""
+    remind_at: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
+    remind_repeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     today: TodayStat
     streak: int = Field(..., ge=0, description="consecutive goal-met VN-days (today-incomplete ≠ break)")
     week: list[float] = Field(..., description="Mon→Sun Σ(val)/day for the current week (7)")

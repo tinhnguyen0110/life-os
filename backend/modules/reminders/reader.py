@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from typing import Literal
 
 from .schema import Reminder, now_iso
 
@@ -27,6 +28,11 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
     on a malformed row. ``last_notified`` tolerates a pre-migration row missing the column."""
     keys = row.keys()
     last_notified = row["last_notified"] if "last_notified" in keys else None
+    # TRACING-REMINDERS (#75): tolerate a pre-migration row missing source/activity_id. Coerce
+    # source to the known set (an unexpected value defensively reads as "manual").
+    raw_source = row["source"] if "source" in keys else "manual"
+    source: Literal["manual", "tracing"] = "tracing" if raw_source == "tracing" else "manual"
+    activity_id = row["activity_id"] if "activity_id" in keys else None
     return Reminder(
         id=int(row["id"]),
         title=row["title"],
@@ -40,6 +46,8 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
         done_at=row["done_at"],
         created=row["created"],
         overdue=_is_overdue(row["due_at"], row["done_at"]),
+        source=source,
+        activity_id=activity_id,
     )
 
 

@@ -98,6 +98,11 @@ class Reminder(BaseModel):
     # A reminder is overdue the moment it's past-due + un-done (FE/brief show RED); the notify cap
     # only gates Discord-spam, it does NOT define overdue. Derived by the reader (not stored).
     overdue: bool = Field(default=False, description="un-done AND due_at < now (NOT cap-gated) (#29)")
+    # TRACING-REMINDERS (#75): source tag + the linked tracing activity. ``source`` is NOT on
+    # ReminderInput (forge-guard — a manual POST can't set source=tracing; only the tracing SERVICE
+    # sets it). One-way: the activity drives the reminder, not vice-versa.
+    source: Literal["manual", "tracing"] = Field(default="manual", description="manual | tracing (#75)")
+    activity_id: str | None = Field(default=None, description="the tracing activity id when source=tracing (#75)")
 
 
 class ReminderList(BaseModel):
