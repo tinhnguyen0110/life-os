@@ -156,15 +156,21 @@ class WatchlistItem(BaseModel):
 
 
 class MacroSignal(BaseModel):
-    """A macro indicator (Fear&Greed/BTC Dominance/Brent) — stub mock this build.
+    """A macro indicator (Fear&Greed/BTC Dominance/Brent).
 
-    value is a STRING ("38", "54%", "$72") — display-ready, mixed units.
+    value is a STRING ("38", "54%", "$72") — display-ready, mixed units; "n/a" when the source
+    has no data (honest — NEVER a fabricated number). FNG-HONEST (#44+#54): F&G + BTC.d now read the
+    REAL macro store (single source of truth, byte-identical with decision/guardian); ``source``
+    marks where the value came from (live | mock | n/a-ish), ``asOf`` is the data's freshness ts so
+    an agent can trust + age it. Brent has no feed → value mock, source="mock".
     """
 
     name: str = Field(..., min_length=1)
     value: str
     status: str = Field(..., description="e.g. fear | greed | neutral")
     note: str = Field("", description="short human note")
+    source: str = Field("mock", description="where the value came from: live (real feed) | mock (no feed)")  # FNG-HONEST
+    asOf: str | None = Field(None, description="ISO ts of the underlying data point; None = no live data")  # FNG-HONEST
 
 
 class PricePoint(BaseModel):

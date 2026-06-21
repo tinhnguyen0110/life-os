@@ -19,6 +19,7 @@ import logging
 import re
 from contextvars import ContextVar, Token
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import yaml
 
@@ -589,17 +590,75 @@ def watchlist_data(hours: int = 168) -> tuple[list[dict], list[str]]:
 # --------------------------------------------------------------------------- #
 # Macro stub + alert history (run_log)                                          #
 # --------------------------------------------------------------------------- #
-def macro_signals() -> list[MacroSignal]:
-    """Stub macro block this build (Fear&Greed/BTC Dominance/Brent). Deterministic.
+def _fng_status(value: float) -> str:
+    """The Fear & Greed band for a 0-100 index value, COLLAPSED to the existing MacroSignal.status
+    enum {fear, neutral, greed} (FNG-HONEST #44+#54, decide-and-log team-lead-approved 2026-06-21).
 
-    value is a display-ready STRING (mixed units). Real feed swaps in later
-    (data-fallback: mock-first, never block on a paid source).
-    """
-    return [
-        MacroSignal(name="Fear & Greed", value="38", status="fear", note="thị trường sợ hãi"),
-        MacroSignal(name="BTC Dominance", value="54%", status="neutral", note=""),
-        MacroSignal(name="Brent Oil", value="$72", status="neutral", note=""),
-    ]
+    alternative.me's 5 bands fold into 3 to keep the existing status enum (no new "extreme" value →
+    no consumer breaks; no-overengineering): extreme-fear+fear → "fear", neutral → "neutral",
+    greed+extreme-greed → "greed". Cut-offs: ≤44 fear · 45-55 neutral · ≥56 greed. NB: this status is
+    DISPLAY-ONLY on the market surface — the decision tower reads the RAW store value, not market
+    status, so the band is cosmetic and skews no rule."""
+    if value <= 44:
+        return "fear"
+    if value <= 55:
+        return "neutral"
+    return "greed"
+
+
+def macro_signals() -> list[MacroSignal]:
+    """The macro block (Fear&Greed / BTC Dominance / Brent).
+
+    FNG-HONEST (#44+#54): F&G + BTC.d now read the REAL macro store — the SINGLE SOURCE OF TRUTH that
+    decision/guardian/life_brief already cite — so market no longer contradicts them with a hardcoded
+    number (the honest-mirror breach this fixes). A store with no point → value="n/a" + source="mock"
+    (HONEST — never fabricate a number; the DXY-HONEST precedent). Brent has no free feed → keep its
+    mock value but mark source="mock". ``asOf`` carries the data point's ts so an agent can age it.
+
+    Reads ``macro.store.latest(...)`` directly (the same points decision reads) — lazy-imported to
+    avoid a market↔macro circular import, and leaner than macro_overview (no FRED cold-start; the
+    sentiment indicators have no FRED series)."""
+    from modules.macro import store as macro_store  # lazy: avoid market↔macro circular import
+
+    def _latest(indicator: str) -> Any:
+        """Read the store FAIL-SOFT: a missing/uninitialized macro_history table (a fresh DB before
+        the macro routine ran) → None → the caller emits honest 'n/a', never a crash. The macro block
+        must not break market_overview just because macro hasn't snapshotted yet."""
+        try:
+            return macro_store.latest(indicator)
+        except Exception as exc:  # noqa: BLE001 — fail-soft: a store-read error → honest n/a, not a 500
+            logger.warning("macro_signals: store.latest(%s) failed → n/a: %s", indicator, exc)
+            return None
+
+    signals: list[MacroSignal] = []
+
+    # NB: pass EVERY field explicitly (incl. defaulted note/asOf) — this env has no pydantic mypy
+    # plugin, so mypy treats defaulted model fields as required ([call-arg]); explicit args > ignores.
+    fng = _latest("fear_greed")
+    if fng is not None:
+        v = float(fng["value"])
+        signals.append(MacroSignal(
+            name="Fear & Greed", value=str(int(v)), status=_fng_status(v),
+            note="", source=fng["source"], asOf=fng["ts"]))
+    else:
+        signals.append(MacroSignal(
+            name="Fear & Greed", value="n/a", status="n/a",
+            note="no live fear_greed point", source="mock", asOf=None))
+
+    btcd = _latest("btc_dominance")
+    if btcd is not None:
+        signals.append(MacroSignal(
+            name="BTC Dominance", value=f'{float(btcd["value"]):.0f}%', status="neutral",
+            note="", source=btcd["source"], asOf=btcd["ts"]))
+    else:
+        signals.append(MacroSignal(
+            name="BTC Dominance", value="n/a", status="n/a",
+            note="no live btc_dominance point", source="mock", asOf=None))
+
+    # Brent: no free feed → mock value, honestly source-marked.
+    signals.append(MacroSignal(
+        name="Brent Oil", value="$72", status="neutral", note="", source="mock", asOf=None))
+    return signals
 
 
 def alert_history(limit: int = 50) -> list[AlertEvent]:
