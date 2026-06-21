@@ -84,7 +84,18 @@ export default function MacroPage() {
       )}
 
       {status === "loading" ? (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="macro-loading">Đang tải macro…</div>
+        // #71: a skeleton grid (placeholder cards) instead of a blank "loading"
+        // line, so the layout appears immediately while the macro fetch (~1-2s,
+        // slower cold from FRED) resolves — no blank-hang.
+        <div className="macro-grid" data-testid="macro-loading" aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div className="card macro-skeleton" key={i} style={{ padding: "14px 16px", minHeight: 96 }} aria-hidden="true">
+              <div className="sk-line" style={{ width: "55%" }} />
+              <div className="sk-line" style={{ width: "40%", height: 22, marginTop: 10 }} />
+              <div className="sk-line" style={{ width: "70%", marginTop: 12 }} />
+            </div>
+          ))}
+        </div>
       ) : status === "error" ? (
         <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="macro-error">
           {errMsg || "Không tải được macro."}

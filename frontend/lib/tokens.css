@@ -928,6 +928,15 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .news-src { color:var(--tx-1); }
 
 /* ============================================================
+   Skeleton placeholder (#71 first-paint) — a shimmering line for loading
+   states so a slow fetch shows layout, not a blank-hang. Reduced-motion safe.
+   ============================================================ */
+.sk-line { height:11px; border-radius:5px; background:linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 37%, var(--bg-2) 63%); background-size:400% 100%; animation:sk-shimmer 1.4s ease infinite; }
+.macro-skeleton { display:flex; flex-direction:column; }
+@keyframes sk-shimmer { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+@media (prefers-reduced-motion: reduce) { .sk-line { animation:none; } }
+
+/* ============================================================
    S14 Daily Tracing (#65-P3) — PORTED VERBATIM from mock
    template/Life Command/app/screens.css (.act-card / .ac-* / .tl-* /
    heatmap). Do NOT redesign (ARCH §8 / SPEC §5).

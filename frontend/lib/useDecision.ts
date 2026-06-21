@@ -65,29 +65,34 @@ export function useDecision(): UseDecision {
   useEffect(() => {
     let alive = true;
     setStatus("loading");
+    // reset sections so a reload re-shows per-section pending (not stale data).
+    setWeight(EMPTY); setMacroCycle(EMPTY); setAllocation(EMPTY);
+    setGuardian(EMPTY); setNavHistory(EMPTY);
 
-    (async () => {
-      // each settles independently — a failed section is captured, not thrown.
-      const [w, m, a, g, n] = await Promise.allSettled([
-        getDecisionWeight(),
-        getMacroCycle(),
-        getDecisionAllocation(),
-        getDecisionGuardian(),
-        getNavHistory(),
-      ]);
+    // #71 PROGRESSIVE: update each section AS ITS OWN promise settles — do NOT
+    // batch behind Promise.allSettled (that made the page wait for the SLOWEST
+    // endpoint, e.g. weight ~3s, before ANY section painted → a long blank-hang).
+    // settled[] tracks completion to flip status: "ready" on the FIRST success,
+    // "error" only when ALL FIVE have settled AND every one failed (backend down).
+    const results: ("ok" | "fail")[] = [];
+    const mark = (outcome: "ok" | "fail") => {
       if (!alive) return;
+      results.push(outcome);
+      if (outcome === "ok") setStatus("ready"); // first success → render the tower
+      else if (results.length === 5 && !results.includes("ok")) setStatus("error"); // all 5 failed
+    };
+    const wire = <T,>(p: Promise<{ data: T }>, set: (s: Section<T>) => void) => {
+      p.then(
+        (res) => { if (alive) { set({ data: res.data, errMsg: "" }); mark("ok"); } },
+        (err) => { if (alive) { set({ data: null, errMsg: errText(err) }); mark("fail"); } },
+      );
+    };
 
-      setWeight(w.status === "fulfilled" ? { data: w.value.data, errMsg: "" } : { data: null, errMsg: errText(w.reason) });
-      setMacroCycle(m.status === "fulfilled" ? { data: m.value.data, errMsg: "" } : { data: null, errMsg: errText(m.reason) });
-      setAllocation(a.status === "fulfilled" ? { data: a.value.data, errMsg: "" } : { data: null, errMsg: errText(a.reason) });
-      setGuardian(g.status === "fulfilled" ? { data: g.value.data, errMsg: "" } : { data: null, errMsg: errText(g.reason) });
-      setNavHistory(n.status === "fulfilled" ? { data: n.value.data, errMsg: "" } : { data: null, errMsg: errText(n.reason) });
-
-      // hard error only when EVERY section failed (backend down) — otherwise render
-      // what we have (a partly-thin tower is honest, not an error screen).
-      const anyOk = [w, m, a, g, n].some((r) => r.status === "fulfilled");
-      setStatus(anyOk ? "ready" : "error");
-    })();
+    wire(getDecisionWeight(), setWeight);
+    wire(getMacroCycle(), setMacroCycle);
+    wire(getDecisionAllocation(), setAllocation);
+    wire(getDecisionGuardian(), setGuardian);
+    wire(getNavHistory(), setNavHistory);
 
     return () => {
       alive = false;

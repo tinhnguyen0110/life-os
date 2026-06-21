@@ -217,7 +217,7 @@ describe("Decision Cockpit — NEUTRAL copy (HARD acceptance: ZERO advice verbs 
 });
 
 describe("Decision Cockpit — degrade & states", () => {
-  it("loading → spinner", () => {
+  it("#71 progressive render: while pending, the shell + per-section placeholders render (NO all-or-nothing blank gate)", () => {
     const pending = () => new Promise(() => {}); // never resolves
     getDecisionWeight.mockImplementation(pending);
     getMacroCycle.mockImplementation(pending);
@@ -225,7 +225,30 @@ describe("Decision Cockpit — degrade & states", () => {
     getDecisionGuardian.mockImplementation(pending);
     getNavHistory.mockImplementation(pending);
     render(<DecisionPage />);
-    expect(screen.getByTestId("decision-loading")).toBeInTheDocument();
+    // the page shell paints immediately (no blank "decision-loading" hang)…
+    expect(screen.getByTestId("decision-screen")).toBeInTheDocument();
+    expect(screen.queryByTestId("decision-loading")).toBeNull();
+    // …and each section shows its OWN pending placeholder (so a fast section can
+    // paint while a slow one is still loading).
+    expect(screen.getByTestId("weight-pending")).toBeInTheDocument();
+    expect(screen.getByTestId("cycle-pending")).toBeInTheDocument();
+    expect(screen.getByTestId("guardian-pending")).toBeInTheDocument();
+    expect(screen.getByTestId("alloc-pending")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-pending")).toBeInTheDocument();
+  });
+
+  it("#71 progressive: a FAST section paints while a SLOW one is still pending (the win)", async () => {
+    const pending = () => new Promise(() => {}); // never resolves (the slow weight)
+    getDecisionWeight.mockImplementation(pending);
+    // the others resolve fast
+    getMacroCycle.mockResolvedValue({ success: true, data: { phase: "overheat", axes: [], qCycle: { q: 0.7, freshness: 1, coverage: 1, agreement: 1, presentInputs: 3, neededInputs: 3 } } } as never);
+    getDecisionAllocation.mockResolvedValue({ success: true, data: { phase: "overheat", capitalTier: "small", targets: {}, vsStaticGoldenPath: {}, rationale: {}, note: null } } as never);
+    getDecisionGuardian.mockResolvedValue({ success: true, data: { alerts: [], confidence: 1, asOf: "2026-06-21T00:00:00Z", note: null } } as never);
+    getNavHistory.mockResolvedValue({ success: true, data: { series: [], points: 0, range: { from: "", to: "" }, confidence: 0, warning: null } } as never);
+    render(<DecisionPage />);
+    // the fast sections render their data/empty while weight is STILL pending.
+    await waitFor(() => expect(screen.getByTestId("guardian-empty")).toBeInTheDocument());
+    expect(screen.getByTestId("weight-pending")).toBeInTheDocument(); // slow one still loading
   });
 
   it("ALL sections fail → hard error screen with retry", async () => {

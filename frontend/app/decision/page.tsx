@@ -45,18 +45,25 @@ function pct01(v: number | null | undefined): string {
   return `${Math.round(v * 100)}%`;
 }
 
+/** Per-section pending placeholder (#71 progressive render): a section whose data
+ *  hasn't arrived yet shows this skeleton INSIDE its own panel, so the fast sections
+ *  paint immediately while a slow one (e.g. weight ~3s) fills in — no all-or-nothing
+ *  blank-hang. */
+function SectionPending({ testId }: { testId: string }) {
+  return (
+    <div className="hint faint" style={{ padding: "16px" }} data-testid={testId}>
+      đang tải…
+    </div>
+  );
+}
+
 export default function DecisionPage() {
   const { weight, macroCycle, allocation, guardian, navHistory, status, reload } = useDecision();
 
-  if (status === "loading") {
-    return (
-      <section className="view" data-screen="DEC">
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="decision-loading">
-          Đang tải decision cockpit…
-        </div>
-      </section>
-    );
-  }
+  // #71: do NOT gate the whole page on a single "loading" — the hook fetches the 5
+  // sections in parallel and exposes each independently, so we render the shell +
+  // every panel immediately and let each section show its own pending/data/error
+  // state. (A 10s blank used to hang the page waiting for the slowest endpoint.)
 
   // hard error only when EVERY section failed (backend down).
   if (status === "error") {
@@ -169,7 +176,9 @@ export default function DecisionPage() {
               </div>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <SectionPending testId="weight-pending" />
+        )}
       </div>
 
       {/* ─────────── INVESTMENT CLOCK ─────────── */}
@@ -204,7 +213,9 @@ export default function DecisionPage() {
               agreement {macroCycle.data.qCycle.agreement.toFixed(2)}
             </div>
           </div>
-        ) : null}
+        ) : (
+          <SectionPending testId="cycle-pending" />
+        )}
       </div>
 
       {/* ─────────── GUARDIAN — questions, NOT advice ─────────── */}
@@ -231,7 +242,9 @@ export default function DecisionPage() {
               ))}
             </div>
           )
-        ) : null}
+        ) : (
+          <SectionPending testId="guardian-pending" />
+        )}
       </div>
 
       {/* ─────────── ALLOCATION — reference weighting (data, not instruction) ─────────── */}
@@ -277,7 +290,9 @@ export default function DecisionPage() {
               </div>
             )}
           </div>
-        ) : null}
+        ) : (
+          <SectionPending testId="alloc-pending" />
+        )}
       </div>
 
       {/* ─────────── NAV LINE — short-series honesty ─────────── */}
@@ -340,7 +355,14 @@ function NavPanel({ data, errMsg }: { data: import("@/lib/types").NavHistory | n
       </div>
     );
   }
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div className="panel" data-testid="decision-nav">
+        <div className="phead"><span className="kicker">NAV · giá trị ròng theo ngày</span></div>
+        <SectionPending testId="nav-pending" />
+      </div>
+    );
+  }
 
   const values = data.series.map((p) => p.nav);
   const scale = buildScale(values, NAV_W, NAV_H);
