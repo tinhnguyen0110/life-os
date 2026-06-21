@@ -33,15 +33,15 @@ export default function CareerPage() {
       </div>
 
       <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 6 }} data-testid="career-tabs">
-        <span className={`tab${tab === "cv" ? " on" : ""}`} role="button" tabIndex={0} onClick={() => setTab("cv")} data-testid="tab-cv">
+        <button type="button" className={`tab${tab === "cv" ? " on" : ""}`} onClick={() => setTab("cv")} data-testid="tab-cv">
           <Icon name="i-doc" /> CV
-        </span>
-        <span className={`tab${tab === "blog" ? " on" : ""}`} role="button" tabIndex={0} onClick={() => setTab("blog")} data-testid="tab-blog">
+        </button>
+        <button type="button" className={`tab${tab === "blog" ? " on" : ""}`} onClick={() => setTab("blog")} data-testid="tab-blog">
           <Icon name="i-note" /> Blog
-        </span>
-        <span className={`tab${tab === "demo" ? " on" : ""}`} role="button" tabIndex={0} onClick={() => setTab("demo")} data-testid="tab-demo">
+        </button>
+        <button type="button" className={`tab${tab === "demo" ? " on" : ""}`} onClick={() => setTab("demo")} data-testid="tab-demo">
           <Icon name="i-bolt" /> Demo
-        </span>
+        </button>
       </div>
 
       {warning && (

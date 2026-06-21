@@ -281,9 +281,14 @@ select.finput { cursor:pointer; }
 
 /* chips / tabs */
 .tabs { display:flex; gap:6px; }
-.tab { font-family:var(--mono); font-size:11.5px; padding:6px 13px; border-radius:8px; border:1px solid var(--line); background:var(--bg-1); color:var(--tx-1); cursor:pointer; white-space:nowrap; }
+/* .tab — filter chip. Works on a <button> too (#76: span→button for keyboard a11y);
+   margin:0 + line-height:inherit keep a <button.tab> pixel-identical to the old span. */
+.tab { font-family:var(--mono); font-size:11.5px; line-height:inherit; margin:0; padding:6px 13px; border-radius:8px; border:1px solid var(--line); background:var(--bg-1); color:var(--tx-1); cursor:pointer; white-space:nowrap; }
 .tab:hover { color:var(--tx-0); border-color:var(--line-2); }
 .tab.on { background:var(--bg-2); color:var(--accent); border-color:color-mix(in oklch, var(--accent) 40%, transparent); }
+/* #76: a keyboard-visible focus ring so a keyboard user sees the focused tab
+   (mouse-click keeps no ring via :focus-visible). */
+.tab:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .seg { display:inline-flex; border:1px solid var(--line-2); border-radius:8px; overflow:hidden; }
 .seg button { font-family:var(--mono); font-size:11px; padding:6px 12px; background:var(--bg-0); color:var(--tx-1); border:0; border-right:1px solid var(--line-2); cursor:pointer; }
 .seg button:last-child { border-right:0; }

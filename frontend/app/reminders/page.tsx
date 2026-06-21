@@ -162,16 +162,15 @@ export default function RemindersPage() {
         <span className="sp" />
         <div className="tabs">
           {TABS.map((t) => (
-            <span
+            <button
               key={t.key}
+              type="button"
               className={`tab${tab === t.key ? " on" : ""}`}
               onClick={() => setTab(t.key)}
-              role="button"
-              tabIndex={0}
               data-testid={`tab-${t.key}`}
             >
               {t.label}
-            </span>
+            </button>
           ))}
         </div>
         <button

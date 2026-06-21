@@ -67,6 +67,22 @@ describe("#31 Reminders — render + list", () => {
     expect(within(row).getByTestId("rem-title-1")).toHaveTextContent("Nộp báo cáo thuế");
   });
 
+  it("#76 a11y: filter tabs are keyboard-ACTIVATABLE (focus + Enter switches filter) — they are real <button>s, not onClick-only spans", async () => {
+    getReminders.mockResolvedValue(LIST([REM()]));
+    const user = userEvent.setup();
+    render(<RemindersPage />);
+    const todayTab = await screen.findByTestId("tab-today");
+    // it's a real button (keyboard-activatable natively) — NOT a span/div
+    expect(todayTab.tagName).toBe("BUTTON");
+    getReminders.mockClear();
+    // focus it + press Enter → the filter switches (a span onClick would NOT fire on Enter)
+    todayTab.focus();
+    expect(todayTab).toHaveFocus();
+    await user.keyboard("{Enter}");
+    // switching to "today" re-fetches with the today server filter (the distinguishing effect)
+    await waitFor(() => expect(getReminders).toHaveBeenCalledWith("today"));
+  });
+
   it("empty list → honest empty state (no fabricated rows)", async () => {
     getReminders.mockResolvedValue(LIST([]));
     render(<RemindersPage />);

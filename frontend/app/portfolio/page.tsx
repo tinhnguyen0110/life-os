@@ -84,11 +84,11 @@ export default function PortfolioPage() {
         {/* channel filter tabs — only when >1 channel held (a single channel needs no filter) */}
         {heldChannels.length > 1 && (
           <div className="tabs" data-testid="portfolio-filter">
-            <span className={`tab${chanFilter === "all" ? " on" : ""}`} onClick={() => setChanFilter("all")} data-testid="filter-all">Tất cả</span>
+            <button type="button" className={`tab${chanFilter === "all" ? " on" : ""}`} onClick={() => setChanFilter("all")} data-testid="filter-all">Tất cả</button>
             {heldChannels.map((c) => (
-              <span key={c} className={`tab${chanFilter === c ? " on" : ""}`} onClick={() => setChanFilter(c)} data-testid={`filter-${c}`}>
+              <button key={c} type="button" className={`tab${chanFilter === c ? " on" : ""}`} onClick={() => setChanFilter(c)} data-testid={`filter-${c}`}>
                 {CHANNEL_LABEL[c] ?? c}
-              </span>
+              </button>
             ))}
           </div>
         )}

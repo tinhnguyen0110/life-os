@@ -71,9 +71,9 @@ export default function ActivityPage() {
         <span className="sp" />
         {/* status filter tabs — SERVER-side re-fetch (cap + count stay correct per filter) */}
         <div className="tabs" data-testid="activity-tabs">
-          <span className={`tab${statusFilter === "all" ? " on" : ""}`} onClick={() => setStatusFilter("all")} data-testid="tab-all">Tất cả</span>
-          <span className={`tab${statusFilter === "ok" ? " on" : ""}`} onClick={() => setStatusFilter("ok")} data-testid="tab-ok">Thành công</span>
-          <span className={`tab${statusFilter === "error" ? " on" : ""}`} onClick={() => setStatusFilter("error")} data-testid="tab-err">Lỗi</span>
+          <button type="button" className={`tab${statusFilter === "all" ? " on" : ""}`} onClick={() => setStatusFilter("all")} data-testid="tab-all">Tất cả</button>
+          <button type="button" className={`tab${statusFilter === "ok" ? " on" : ""}`} onClick={() => setStatusFilter("ok")} data-testid="tab-ok">Thành công</button>
+          <button type="button" className={`tab${statusFilter === "error" ? " on" : ""}`} onClick={() => setStatusFilter("error")} data-testid="tab-err">Lỗi</button>
         </div>
         <div className="seg" data-testid="activity-range">
           <button className={rangeFilter === "today" ? "on" : ""} type="button" onClick={() => setRangeFilter("today")}>Hôm nay</button>

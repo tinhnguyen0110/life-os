@@ -130,7 +130,7 @@ export default function JournalPage() {
         <span className="sp" />
         <div className="tabs">
           {TABS.map((t) => (
-            <span key={t.key} className={`tab${filter === t.key ? " on" : ""}`} onClick={() => setFilter(t.key)} role="button" tabIndex={0} data-testid={`tab-${t.key}`}>{t.label}</span>
+            <button key={t.key} type="button" className={`tab${filter === t.key ? " on" : ""}`} onClick={() => setFilter(t.key)} data-testid={`tab-${t.key}`}>{t.label}</button>
           ))}
         </div>
         <button className="btn accent" type="button" onClick={() => { setCreating({ ...EMPTY_CREATE }); setFormErr(""); }} data-testid="journal-new">+ Ghi lệnh</button>

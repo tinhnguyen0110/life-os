@@ -104,7 +104,7 @@ export function MarketOverview({ symbols }: { symbols: string[] }) {
           <div className="hint" style={{ padding: "16px" }} data-testid="mov-compare-empty">Chưa có dữ liệu so sánh.</div>
         )}
         {compareStatus === "ready" && rows.length > 0 && (
-          <table className="mov-table" data-testid="mov-compare-table">
+          <table className="mov-table" data-testid="mov-compare-table" aria-label="So sánh đa mã — biến động, RSI, xu hướng">
             <thead>
               <tr>
                 {([["symbol", "Mã"], ["changePct", "Δ% kỳ"], ["volatility", "Biến động"], ["rsi", "RSI"], ["trend", "Xu hướng"]] as [SortKey, string][]).map(([k, label]) => (
@@ -159,7 +159,7 @@ export function MarketOverview({ symbols }: { symbols: string[] }) {
         )}
         {!corrNeedsMore && corrStatus === "ready" && correlation && (
           <div className="mov-heatwrap">
-            <table className="mov-heat" data-testid="mov-heatmap">
+            <table className="mov-heat" data-testid="mov-heatmap" aria-label="Tương quan Pearson giữa các mã">
               <thead>
                 <tr>
                   <th className="mov-heat-corner" />

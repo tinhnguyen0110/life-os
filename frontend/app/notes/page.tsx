@@ -138,25 +138,23 @@ export default function NotesPage() {
 
       {allTags.length > 0 && (
         <div className="row" style={{ gap: 6, flexWrap: "wrap" }} data-testid="notes-tagfilter">
-          <span
+          <button
+            type="button"
             className={`tab${activeTag === null ? " on" : ""}`}
             onClick={() => setActiveTag(null)}
-            role="button"
-            tabIndex={0}
           >
             Tất cả
-          </span>
+          </button>
           {allTags.map((t) => (
-            <span
+            <button
               key={t}
+              type="button"
               className={`tab${activeTag === t ? " on" : ""}`}
               onClick={() => setActiveTag(activeTag === t ? null : t)}
-              role="button"
-              tabIndex={0}
               data-testid={`tagfilter-${t}`}
             >
               {t}
-            </span>
+            </button>
           ))}
         </div>
       )}

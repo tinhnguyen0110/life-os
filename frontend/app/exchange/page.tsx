@@ -234,7 +234,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
             Không có tài sản
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} aria-label="Số dư tài sản trên sàn">
             <thead>
               <tr style={{ background: "var(--surface, rgba(255,255,255,0.03))" }}>
                 <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
@@ -308,7 +308,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
           }}>
             Open Positions
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} aria-label="Vị thế đang mở">
             <thead>
               <tr style={{ background: "var(--surface, rgba(255,255,255,0.03))" }}>
                 <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Instrument</th>
