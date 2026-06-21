@@ -15,10 +15,12 @@ import contextlib
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from core.agent_errors import agent_error
 from core.config import settings
 from core.registry import DiscoveryResult, mount_all
 from core.responses import ok
@@ -107,6 +109,32 @@ def create_app() -> FastAPI:
         db.close_db()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+
+    # AGENT-ERROR-P7 (#69, the true final of #46): FastAPI's RequestValidationError fires
+    # BEFORE any route handler (path/query/body type validation), so the per-handler #46
+    # migration could never reach it — a bad path int / malformed body still returned the raw
+    # FastAPI ``{detail:[{type,loc,msg,...}]}`` list, the one raw-error class an agent could
+    # still meet. ONE app-level handler converts it to the flat agent_error envelope so an
+    # agent NEVER parses a raw {detail} again. Status STAYS 422 (only the BODY shape changes);
+    # the first validation error is summarized (loc: msg) into a readable message — we don't
+    # dump the whole list (no-overengineering) nor drop the info. INVALID_INPUT → retryable
+    # auto-resolves False (deterministic — fix the input, don't retry).
+    @app.exception_handler(RequestValidationError)
+    async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        errs = exc.errors()
+        first = errs[0] if errs else {}
+        # loc starts with "body"/"query"/"path"/"header" then the field path — keep it for the agent.
+        loc = ".".join(str(p) for p in first.get("loc", []))
+        detail = first.get("msg", "invalid")
+        msg = f"{loc}: {detail}" if loc else (detail or "validation failed")
+        return JSONResponse(
+            status_code=422,
+            content=agent_error(
+                "INVALID_INPUT",
+                f"request validation failed — {msg}",
+                hint="check the path/query/body types against the endpoint's schema",
+            ),
+        )
 
     # CORS — let the browser FE (:3010) call the API. Single-user localhost
     # no-auth (CLAUDE.md §2): this enables browser fetch, it is NOT a security
