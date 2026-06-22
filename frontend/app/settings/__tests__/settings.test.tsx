@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/lib/useNav", () => ({ useSafeRouter: () => ({ push: vi.fn() }) }));
@@ -62,6 +62,11 @@ describe("S12 Settings — write round-trip (fail-closed)", () => {
     const user = userEvent.setup();
     render(<SettingsPage />);
     await waitFor(() => expect(screen.getByTestId("cfg-briefHour-input")).toBeInTheDocument());
+    // #B-T1 fix: flush pending React effects (StrictMode double-invoke fires a 2nd
+    // getSettings call; let it settle + re-render BEFORE touching the input, so the
+    // controlled input is stable at "8" before interaction. Without this flush the 2nd
+    // effect can fire MID-clear and restore "8", then type appends → "89".
+    await act(async () => { await Promise.resolve(); });
     const input = screen.getByTestId("cfg-briefHour-input");
     await user.clear(input);
     await user.type(input, "9");
@@ -225,6 +230,8 @@ describe("S12 Settings — capital-tilt round-trip (PATCH → server-truth → r
     const user = userEvent.setup();
     render(<SettingsPage />);
     await waitFor(() => expect(screen.getByTestId("cfg-riskCapitalSmallUsd-input")).toBeInTheDocument());
+    // #B-T1 fix: flush pending effects (StrictMode double-invoke) before touching input
+    await act(async () => { await Promise.resolve(); });
     const input = screen.getByTestId("cfg-riskCapitalSmallUsd-input") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "75000");
