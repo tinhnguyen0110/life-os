@@ -1104,12 +1104,71 @@ def test_catalog_every_tool_has_description_and_fields(app_db):
     cat = rs.list_tools_catalog()
     valid_servers = {"read", "write", "wiki-read", "wiki-write", "finance", "reminders", "tracing"}
     for t in cat["tools"]:
-        assert set(t) >= {"name", "server", "capability", "neutral", "description"}
+        # #129: +fullDescription +params (additive)
+        assert set(t) >= {"name", "server", "capability", "neutral", "description",
+                          "fullDescription", "params"}
         assert t["description"], f"{t['name']} has no description"
         assert t["server"] in valid_servers, f"{t['name']} on unknown server {t['server']}"
         assert t["capability"] in ("read", "propose")
         assert isinstance(t["neutral"], bool)
+        # #129: fullDescription is a string (≥ the 1-line description for any documented tool);
+        # params is a list of {name,type,required} entries (honest-empty [] for a no-arg tool).
+        assert isinstance(t["fullDescription"], str)
+        assert isinstance(t["params"], list)
+        for p in t["params"]:
+            assert set(p) >= {"name", "type", "required"}, f"{t['name']} param missing fields: {p}"
+            assert isinstance(p["name"], str) and isinstance(p["required"], bool)
     json.dumps(cat)
+
+
+# --------------------------------------------------------------------------- #
+# #129 — catalog +fullDescription +params (derived-from-live-signature)          #
+# --------------------------------------------------------------------------- #
+def test_catalog_fullDescription_is_full_docstring(app_db):
+    """fullDescription is the FULL docstring, not truncated to line-1 (it should contain more than
+    the 1-line `description` for a multi-line-doc tool)."""
+    cat = rs.list_tools_catalog()
+    t = next(x for x in cat["tools"] if x["name"] == "project_dev_activity")
+    assert len(t["fullDescription"]) > len(t["description"])  # full > 1-line
+    assert "VN-day" in t["fullDescription"] or "slug" in t["fullDescription"]  # body content present
+
+
+def test_catalog_params_for_arg_tool(app_db):
+    """A tool with args → params with name/type/required/default. project_dev_activity has
+    project_id (required) + days:int=90 (optional, default 90) — the dispatch's distinguishing case."""
+    cat = rs.list_tools_catalog()
+    t = next(x for x in cat["tools"] if x["name"] == "project_dev_activity")
+    params = {p["name"]: p for p in t["params"]}
+    assert params["project_id"]["required"] is True and params["project_id"]["type"] == "str"
+    assert params["days"]["required"] is False and params["days"]["type"] == "int"
+    assert params["days"]["default"] == 90
+
+
+def test_catalog_params_honest_empty_for_noarg_tool(app_db):
+    """A no-arg tool → params: [] (honest-empty, not omitted)."""
+    cat = rs.list_tools_catalog()
+    t = next(x for x in cat["tools"] if x["name"] == "insights")
+    assert t["params"] == []
+
+
+def test_catalog_required_param_has_no_default_key(app_db):
+    """A required param (no default) must NOT carry a `default` key (honest — don't fabricate one)."""
+    cat = rs.list_tools_catalog()
+    t = next(x for x in cat["tools"] if x["name"] == "project_dev_activity")
+    pid = next(p for p in t["params"] if p["name"] == "project_id")
+    assert "default" not in pid and pid["required"] is True
+
+
+def test_catalog_params_derived_no_write_leak(app_db):
+    """🔴 #129: reading signatures (inspect.signature) for params binds/calls NO write fn — the
+    no-write gate stays pristine after the catalog extension."""
+    ns = set(vars(rs))
+    for w in ("propose_note", "propose_edit", "create_note", "upsert_holding", "set_golden_path",
+              "add_rule", "delete_rule"):
+        assert w not in ns, f"#129 catalog-params leaked a write symbol: {w}"
+    # and building the catalog (which now reads signatures) returns clean metadata
+    cat = rs.list_tools_catalog()
+    assert all("params" in t for t in cat["tools"])
 
 
 # --------------------------------------------------------------------------- #

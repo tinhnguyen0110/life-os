@@ -64,8 +64,10 @@ annotations are required for the SDK to build each tool schema. (Same constraint
 wiki MCP servers document.)
 """
 
+import inspect  # #129: read tool signatures (metadata-only — no fn call, the no-write gate holds)
+import textwrap
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, get_type_hints
 
 from core.agent_errors import agent_error  # AGENT-ERROR #46-P2: structured agent-readable errors (pure formatter, no write)
 
@@ -823,6 +825,62 @@ def _is_neutral(fn: Callable[..., Any]) -> bool:
     return "neutral" in (fn.__doc__ or "").lower()
 
 
+def _full_doc(fn: Callable[..., Any]) -> str:
+    """#129: the FULL tool docstring (dedented, stripped) — what the tool does, beyond the 1-line
+    ``description``. Metadata-only (reads fn.__doc__, never calls fn). Empty string if no docstring."""
+    return textwrap.dedent(fn.__doc__ or "").strip()
+
+
+def _stringify_annotation(ann: Any) -> str:
+    """A readable type string for a param annotation (e.g. 'str', 'int', 'str | None'). Falls back
+    to the raw repr for exotic annotations — honest, never crashes."""
+    if ann is inspect.Parameter.empty:
+        return ""
+    if isinstance(ann, str):  # a string annotation (from __future__ annotations) → use as-is
+        return ann
+    name = getattr(ann, "__name__", None)
+    if name:
+        return name
+    return str(ann).replace("typing.", "")
+
+
+def _params_of(fn: Callable[..., Any]) -> list[dict[str, Any]]:
+    """#129: the tool's call-params as [{name, type, required, default?}] from inspect.signature +
+    type hints — so an agent (and the /mcp-keys UI) knows HOW to call the tool. METADATA-ONLY:
+    inspect.signature reads the signature object, it does NOT call fn → the no-write gate stays
+    pristine. honest-empty [] for a no-arg tool. Skips self/cls + *args/**kwargs (not agent-callable
+    named params). DERIVED-from-live-signature → can't drift from the actual tool.
+
+    ``type`` = the annotation stringified (prefer get_type_hints' resolved hint, fall back to the raw
+    signature annotation for anything unresolvable). ``required`` = no default; ``default`` present
+    only when there is one. ``description`` is omitted (honest — we don't fabricate per-param docs;
+    the docstring's param section isn't reliably machine-parseable across our tools)."""
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return []  # builtins / un-introspectable → honest-empty, never crash
+    try:
+        hints = get_type_hints(fn)
+    except Exception:  # noqa: BLE001 — unresolved forward refs etc. → fall back to raw annotations
+        hints = {}
+    out: list[dict[str, Any]] = []
+    for pname, p in sig.parameters.items():
+        if pname in ("self", "cls"):
+            continue
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue  # *args / **kwargs — not a named agent-callable param
+        ann = hints.get(pname, p.annotation)
+        entry: dict[str, Any] = {
+            "name": pname,
+            "type": _stringify_annotation(ann),
+            "required": p.default is inspect.Parameter.empty,
+        }
+        if p.default is not inspect.Parameter.empty:
+            entry["default"] = p.default
+        out.append(entry)
+    return out
+
+
 # ALL mounted MCP servers (#32) — mirrors main.py's _MCP_MOUNTS so the catalog walks EVERY mount,
 # not just the shared read+write. Each entry: (server-label, module-path, capability). The label is
 # the agent-facing server name (matches the /mcp/<label> mount); capability is "read" (read-only
@@ -885,6 +943,8 @@ def list_tools_catalog() -> dict[str, Any]:
             tools.append({
                 "name": name, "server": label, "capability": capability,
                 "neutral": _is_neutral(fn), "description": _one_line(fn),
+                "fullDescription": _full_doc(fn),  # #129: the full docstring (what it does)
+                "params": _params_of(fn),          # #129: call-params (how to call it), honest-empty []
             })
     return {
         "tools": tools,
