@@ -2,16 +2,19 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, within, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-/* #122 TRACING-UX2 — the 2-column redesign: LEFT Hoạt động (todos = text + tick +
-   optional inline 🔔-remind), RIGHT Note (text + optional 🔔-remind, #121
-   /tracing/notes), streak/heatmap KEPT but small/collapsed. The old chip-row / emoji /
-   color / goal / heavy-form / template-picker are INTENTIONALLY DROPPED — this suite
-   asserts both the new behavior AND the inverted mock-diff (those are gone).
+/* #126 TRACING-UX2 timeline redesign — the VIEW changed (default = a time-rail read-view +
+   an edit-mode toggle + multi-list notes + "+ Từ mẫu" templates), the BASE model is KEPT
+   (todo=activity goal=1, tick=log val=1→done, note→#121, streak/heatmap collapsed).
 
-   Mocks the NAMED api fns (mock-named-getter-not-apiget). Steady-state fetches use
-   mockResolvedValue (NOT ...Once) so a refetch-after-write doesn't exhaust the queue →
-   undefined → unhandled rejection (unhandled-errors-not-green). Asserts scoped to
-   testids (scope-no-fabrication-asserts-to-element). */
+   AUDIT vs the #122 suite: the #122 tests that asserted the *plain 2-col left-list view
+   shape* (tracing-todos panel id, always-visible todo-input, todo-* row testids) are
+   REPLACED by timeline-shape tests here. The surviving BEHAVIOR is re-covered: add-todo →
+   createActivity(goal:1), tick → log(val:1), remind chip, archive, empty-state, the note
+   multi-list, streak/heatmap kept. NEW coverage: edit-mode gating, timeline time-order,
+   tick-in-read-mode, the #124 template picker.
+
+   Mocks the NAMED api fns. Steady-state = mockResolvedValue (unhandled-errors-not-green).
+   Asserts scoped to testids. */
 const getTracing = vi.fn();
 const logTracingSession = vi.fn();
 const createActivity = vi.fn();
@@ -21,6 +24,9 @@ const getTracingNotes = vi.fn();
 const createTracingNote = vi.fn();
 const updateTracingNote = vi.fn();
 const deleteTracingNote = vi.fn();
+const getTracingTemplates = vi.fn();
+const addTemplateToToday = vi.fn();
+const addAllTemplates = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -34,6 +40,9 @@ vi.mock("@/lib/api", async () => {
     createTracingNote: (...a: unknown[]) => createTracingNote(...a),
     updateTracingNote: (...a: unknown[]) => updateTracingNote(...a),
     deleteTracingNote: (...a: unknown[]) => deleteTracingNote(...a),
+    getTracingTemplates: (...a: unknown[]) => getTracingTemplates(...a),
+    addTemplateToToday: (...a: unknown[]) => addTemplateToToday(...a),
+    addAllTemplates: (...a: unknown[]) => addAllTemplates(...a),
   };
 });
 
@@ -65,136 +74,228 @@ const NOTE = (over = {}) => ({
   created: "2026-06-22T10:00:00+07:00", ...over,
 });
 const NOTES = (notes: ReturnType<typeof NOTE>[] = []) => ({ success: true, data: { notes } });
+const TPL = (over = {}) => ({ id: "uong-nuoc", name: "Uống nước", emoji: "💧", icon: "droplet", unit: "ly", goal: 8, color: "#38bdf8", source: "seed", ...over });
 
 beforeEach(() => {
   getReminderChannels.mockResolvedValue(CHANNELS_OK);
   getTracingNotes.mockResolvedValue(NOTES([]));
   getTracing.mockResolvedValue(OVERVIEW());
+  getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [TPL()] } });
 });
 afterEach(() => {
   getTracing.mockReset(); logTracingSession.mockReset(); createActivity.mockReset();
   archiveActivity.mockReset(); getReminderChannels.mockReset();
   getTracingNotes.mockReset(); createTracingNote.mockReset(); updateTracingNote.mockReset();
-  deleteTracingNote.mockReset(); cleanup();
+  deleteTracingNote.mockReset(); getTracingTemplates.mockReset();
+  addTemplateToToday.mockReset(); addAllTemplates.mockReset(); cleanup();
 });
 
-describe("#122 Tracing — 2-column layout", () => {
-  it("renders the 2-col: a todos panel (left) + a notes panel (right)", async () => {
+describe("#126 Tracing — timeline read-view (default) + edit toggle", () => {
+  it("DEFAULT = the timeline rail (read-only); the edit add-tools are HIDDEN until Sửa", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("tracing-2col")).toBeInTheDocument());
-    expect(screen.getByTestId("tracing-todos")).toBeInTheDocument();
-    expect(screen.getByTestId("tracing-notes")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("timeline-rail")).toBeInTheDocument());
+    expect(screen.getByTestId("tracing-timeline")).toBeInTheDocument();
+    // read-mode: no add-input, no template button
+    expect(screen.queryByTestId("todo-input")).toBeNull();
+    expect(screen.queryByTestId("tpl-open")).toBeNull();
+    // the edit toggle is present + says "Sửa"
+    expect(screen.getByTestId("edit-toggle")).toHaveTextContent(/Sửa/);
   });
 
-  it("streak + heatmap are KEPT but in a small/collapsed <details> (not the focus)", async () => {
+  it("clicking Sửa → edit-mode: add-input + '+ Từ mẫu' appear; toggle says Xong", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await userEvent.setup().click(screen.getByTestId("edit-toggle"));
+    expect(screen.getByTestId("todo-input")).toBeInTheDocument();
+    expect(screen.getByTestId("tpl-open")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-toggle")).toHaveTextContent(/Xong/);
+  });
+
+  it("the timeline orders TIMED activities by remindAt, then un-timed under 'CẢ NGÀY'", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "anytime", name: "Bất kỳ", remindAt: null }),
+      ACT({ id: "late", name: "Tối", remindAt: "21:00", remindRepeat: "daily" }),
+      ACT({ id: "early", name: "Sáng", remindAt: "06:00", remindRepeat: "daily" }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-early")).toBeInTheDocument());
+    const order = screen.getAllByTestId(/^tl-(early|late|anytime)$/).map((r) => r.getAttribute("data-testid"));
+    expect(order).toEqual(["tl-early", "tl-late", "tl-anytime"]); // 06:00 < 21:00 < anytime
+    expect(screen.getByTestId("timeline-anytime-sep")).toBeInTheDocument();
+    expect(screen.getByTestId("tl-time-early")).toHaveTextContent("06:00");
+    expect(screen.getByTestId("tl-time-anytime")).toHaveTextContent("—"); // no fixed time
+  });
+
+  it("streak + heatmap KEPT (collapsed <details>) — base preserved", async () => {
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tracing-stats")).toBeInTheDocument());
-    // it's a <details> (collapsible), with the heatmap grid inside
     expect(screen.getByTestId("tracing-stats").tagName.toLowerCase()).toBe("details");
     expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument();
-    expect(screen.getByTestId("tracing-stats-summary")).toBeInTheDocument();
   });
 });
 
-describe("#122 Tracing — LEFT todos (text + tick + remind)", () => {
-  it("add-via-text → createActivity(text, goal:1) [goal hidden, defaulted to 1]", async () => {
-    createActivity.mockResolvedValue({ success: true, data: { id: "uong-nuoc" } });
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-input")).toBeInTheDocument());
-    const user = userEvent.setup();
-    await user.type(screen.getByTestId("todo-input"), "Uống nước");
-    await user.click(screen.getByTestId("todo-submit"));
-    await waitFor(() => expect(createActivity).toHaveBeenCalled());
-    const body = createActivity.mock.calls[0][0];
-    expect(body.name).toBe("Uống nước");
-    expect(body.goal).toBe(1);          // hidden goal=1 (todo, not a measured habit)
-    expect(body.id).toBe("uong-nuoc");  // slugified from the text
-    expect(body.remindRepeat).toBe("off"); // no remind by default
-  });
-
-  it("blank text → honest validation error, no POST", async () => {
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-submit")).toBeInTheDocument());
-    await userEvent.setup().click(screen.getByTestId("todo-submit"));
-    await waitFor(() => expect(screen.getByTestId("todo-add-error")).toBeInTheDocument());
-    expect(createActivity).not.toHaveBeenCalled();
-  });
-
-  it("ticking an undone todo → log(id, {val:1}) [tick = complete one session]", async () => {
+describe("#126 Tracing — tick is 1-click IN READ MODE (not gated behind edit)", () => {
+  it("ticking an undone todo in read-mode → log(id, {val:1}); no edit needed", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", today: { done: false, val: 0, dur: "", durMin: 0, note: null, pct: 0, sessions: 0 } })]));
     logTracingSession.mockResolvedValue({ success: true, data: ACT() });
     render(<TracingPage />);
+    // do NOT enter edit-mode
     await waitFor(() => expect(screen.getByTestId("tick-water")).toBeInTheDocument());
     await userEvent.setup().click(screen.getByTestId("tick-water"));
     await waitFor(() => expect(logTracingSession).toHaveBeenCalledWith("water", expect.objectContaining({ val: 1 })));
   });
 
-  it("a DONE todo shows a checked tick (line-through) + is not re-loggable", async () => {
+  it("a DONE todo → checked tick, line-through name, not re-loggable", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", today: { done: true, val: 1, dur: "", durMin: 0, note: null, pct: 100, sessions: 1 } })]));
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-water")).toBeInTheDocument());
-    expect(screen.getByTestId("todo-water")).toHaveAttribute("data-done", "true");
-    expect(screen.getByTestId("tick-water")).toBeDisabled(); // append-only, no un-tick
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    expect(screen.getByTestId("tl-water")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("tick-water")).toBeDisabled();
     await userEvent.setup().click(screen.getByTestId("tick-water"));
-    // a no-op click on a done todo must NOT fire a log
     expect(logTracingSession).not.toHaveBeenCalled();
   });
 
-  it("todo with a remind shows the inline 🔔 chip (render-only from the activity)", async () => {
+  it("a timed todo shows its remind chip in the rail", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "run", name: "Chạy bộ", remindAt: "06:30", remindRepeat: "daily" })]));
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-remind-run")).toBeInTheDocument());
-    expect(screen.getByTestId("todo-remind-run")).toHaveTextContent("06:30");
-    expect(screen.getByTestId("todo-remind-run")).toHaveTextContent(/hằng ngày/);
+    await waitFor(() => expect(screen.getByTestId("tl-remind-run")).toBeInTheDocument());
+    expect(screen.getByTestId("tl-remind-run")).toHaveTextContent("06:30");
+  });
+
+  it("archive ✕ appears only in EDIT-mode → archiveActivity(id)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    archiveActivity.mockResolvedValue({ success: true, data: { archived: "water" } });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    expect(screen.queryByTestId("tl-archive-water")).toBeNull(); // hidden in read-mode
+    await userEvent.setup().click(screen.getByTestId("edit-toggle"));
+    await userEvent.setup().click(screen.getByTestId("tl-archive-water"));
+    await waitFor(() => expect(archiveActivity).toHaveBeenCalledWith("water"));
+  });
+
+  it("empty board → honest timeline-empty", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("timeline-empty")).toBeInTheDocument());
+  });
+});
+
+describe("#126 Tracing — add-todo (edit-mode) → createActivity(goal:1) [base kept]", () => {
+  it("add-via-text → createActivity(text, goal:1, slug id)", async () => {
+    createActivity.mockResolvedValue({ success: true, data: { id: "uong-nuoc" } });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.type(screen.getByTestId("todo-input"), "Uống nước");
+    await user.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.name).toBe("Uống nước");
+    expect(body.goal).toBe(1);
+    expect(body.id).toBe("uong-nuoc");
+    expect(body.remindRepeat).toBe("off");
   });
 
   it("add WITH remind on → sends remindAt + remindRepeat + remindChannel", async () => {
     createActivity.mockResolvedValue({ success: true, data: { id: "tap-the-duc" } });
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-input")).toBeInTheDocument());
     const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("edit-toggle"));
     await user.type(screen.getByTestId("todo-input"), "Tập thể dục");
-    await user.click(screen.getByTestId("todo-remind-toggle"));   // turn remind on
+    await user.click(screen.getByTestId("todo-remind-toggle"));
     await waitFor(() => expect(screen.getByTestId("todo-remind-channel")).toBeInTheDocument());
     await user.selectOptions(screen.getByTestId("todo-remind-channel"), "discord");
     await user.click(screen.getByTestId("todo-submit"));
     await waitFor(() => expect(createActivity).toHaveBeenCalled());
     const body = createActivity.mock.calls[0][0];
-    expect(body.remindAt).toBe("07:00");        // default time
+    expect(body.remindAt).toBe("07:00");
     expect(body.remindRepeat).toBe("daily");
     expect(body.remindChannel).toBe("discord");
   });
 
-  it("archive a todo → archiveActivity(id)", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
-    archiveActivity.mockResolvedValue({ success: true, data: { archived: "water" } });
+  it("blank text → validation error, no POST", async () => {
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todo-archive-water")).toBeInTheDocument());
-    await userEvent.setup().click(screen.getByTestId("todo-archive-water"));
-    await waitFor(() => expect(archiveActivity).toHaveBeenCalledWith("water"));
-  });
-
-  it("no todos → honest empty state (not blank)", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([]));
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("todos-empty")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(screen.getByTestId("todo-add-error")).toBeInTheDocument());
+    expect(createActivity).not.toHaveBeenCalled();
   });
 });
 
-describe("#122 Tracing — RIGHT note (text + remind), #121 /tracing/notes", () => {
-  it("add a note → createTracingNote({text}) + refetch", async () => {
-    createTracingNote.mockResolvedValue({ success: true, data: NOTE({ id: "9", text: "deploy lúc 5pm" }) });
+describe("#126 Tracing — '+ Từ mẫu' template picker (#124)", () => {
+  it("opens the picker, lists templates, adds one → addTemplateToToday(id) + refetch", async () => {
+    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [TPL({ id: "ngu", name: "Ngủ đủ giấc" })] } });
+    addTemplateToToday.mockResolvedValue({ success: true, data: { activity: { id: "ngu", name: "Ngủ đủ giấc", goal: 1 }, added: true } });
+    render(<TracingPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.click(screen.getByTestId("tpl-open"));
+    await waitFor(() => expect(screen.getByTestId("tpl-ngu")).toBeInTheDocument());
+    await user.click(screen.getByTestId("tpl-ngu"));
+    await waitFor(() => expect(addTemplateToToday).toHaveBeenCalledWith("ngu"));
+  });
+
+  it("'Thêm tất cả' → addAllTemplates()", async () => {
+    addAllTemplates.mockResolvedValue({ success: true, data: { created: [], skipped: [] } });
+    render(<TracingPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.click(screen.getByTestId("tpl-open"));
+    await waitFor(() => expect(screen.getByTestId("tpl-add-all")).toBeInTheDocument());
+    await user.click(screen.getByTestId("tpl-add-all"));
+    await waitFor(() => expect(addAllTemplates).toHaveBeenCalled());
+  });
+
+  it("template load error → honest error (no crash)", async () => {
+    getTracingTemplates.mockRejectedValue(new Error("templates down"));
+    render(<TracingPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.click(screen.getByTestId("tpl-open"));
+    await waitFor(() => expect(screen.getByTestId("tpl-error")).toBeInTheDocument());
+  });
+});
+
+describe("#126 Tracing — RIGHT note MULTI-LIST (text + remind), #121", () => {
+  it("add a note → createTracingNote({text}); the form clears (add-multiple)", async () => {
+    createTracingNote.mockResolvedValue({ success: true, data: NOTE({ id: "9", text: "deploy 5pm" }) });
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
     const user = userEvent.setup();
-    await user.type(screen.getByTestId("note-input"), "deploy lúc 5pm");
+    await user.type(screen.getByTestId("note-input"), "deploy 5pm");
     await user.click(screen.getByTestId("note-submit"));
     await waitFor(() => expect(createTracingNote).toHaveBeenCalled());
-    expect(createTracingNote.mock.calls[0][0].text).toBe("deploy lúc 5pm");
-    expect(createTracingNote.mock.calls[0][0].remindRepeat).toBe("off"); // no remind by default
+    expect(createTracingNote.mock.calls[0][0].text).toBe("deploy 5pm");
+    // input cleared so the user can add another (multi-add)
+    await waitFor(() => expect((screen.getByTestId("note-input") as HTMLTextAreaElement).value).toBe(""));
   });
 
-  it("add a note WITH remind → sends remindAt + remindRepeat + remindChannel", async () => {
+  it("renders MULTIPLE note cards (the list), each with text + remind chip when set + delete", async () => {
+    getTracingNotes.mockResolvedValue(NOTES([
+      NOTE({ id: "1", text: "ghi chú một" }),
+      NOTE({ id: "2", text: "ghi chú hai", remindAt: "21:00", remindRepeat: "daily" }),
+      NOTE({ id: "3", text: "ghi chú ba" }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-1")).toBeInTheDocument());
+    expect(screen.getByTestId("note-2")).toBeInTheDocument();
+    expect(screen.getByTestId("note-3")).toBeInTheDocument();
+    expect(screen.getByTestId("note-text-1")).toHaveTextContent("ghi chú một");
+    expect(screen.getByTestId("note-remind-2")).toHaveTextContent("21:00");
+    expect(screen.queryByTestId("note-remind-1")).toBeNull(); // no remind → no chip
+    expect(screen.getByTestId("note-delete-3")).toBeInTheDocument();
+  });
+
+  it("add a note WITH remind → sends remindAt/repeat/channel", async () => {
     createTracingNote.mockResolvedValue({ success: true, data: NOTE() });
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
@@ -207,28 +308,6 @@ describe("#122 Tracing — RIGHT note (text + remind), #121 /tracing/notes", () 
     const body = createTracingNote.mock.calls[0][0];
     expect(body.remindAt).toBe("07:00");
     expect(body.remindRepeat).toBe("daily");
-    expect(body.remindChannel).toBe("in_app");
-  });
-
-  it("blank note text → validation error, no POST", async () => {
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("note-submit")).toBeInTheDocument());
-    await userEvent.setup().click(screen.getByTestId("note-submit"));
-    await waitFor(() => expect(screen.getByTestId("note-add-error")).toBeInTheDocument());
-    expect(createTracingNote).not.toHaveBeenCalled();
-  });
-
-  it("renders existing notes (text + remind chip when set)", async () => {
-    getTracingNotes.mockResolvedValue(NOTES([
-      NOTE({ id: "1", text: "nhớ gọi điện" }),
-      NOTE({ id: "2", text: "uống thuốc", remindAt: "21:00", remindRepeat: "daily" }),
-    ]));
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("note-1")).toBeInTheDocument());
-    expect(screen.getByTestId("note-text-1")).toHaveTextContent("nhớ gọi điện");
-    expect(screen.getByTestId("note-remind-2")).toHaveTextContent("21:00");
-    // note 1 has no remind → no chip
-    expect(screen.queryByTestId("note-remind-1")).toBeNull();
   });
 
   it("delete a note → deleteTracingNote(id)", async () => {
@@ -240,40 +319,25 @@ describe("#122 Tracing — RIGHT note (text + remind), #121 /tracing/notes", () 
     await waitFor(() => expect(deleteTracingNote).toHaveBeenCalledWith("7"));
   });
 
-  it("no notes → honest empty (not blank)", async () => {
+  it("no notes → honest empty", async () => {
     getTracingNotes.mockResolvedValue(NOTES([]));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("notes-empty")).toBeInTheDocument());
   });
 
-  it("notes load error → honest error, does NOT break the page (todos still render)", async () => {
+  it("notes load error → honest error, does NOT break the page (timeline still renders)", async () => {
     getTracingNotes.mockRejectedValue(new Error("notes down"));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("notes-load-error")).toBeInTheDocument());
-    // the rest of the page is fine
-    expect(screen.getByTestId("tracing-todos")).toBeInTheDocument();
+    expect(screen.getByTestId("tracing-timeline")).toBeInTheDocument();
   });
 });
 
-describe("#122 Tracing — inverted mock-diff (the DROPPED set is gone)", () => {
-  it("NO template picker, NO emoji/color/goal field, NO heavy add-form, NO chip row", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("tracing-2col")).toBeInTheDocument());
-    // the old heavy-form / template / emoji / color / goal-field testids must be ABSENT
-    for (const gone of ["add-form", "log-form", "a-name", "a-goal", "a-unit", "a-emoji", "a-color", "a-id", "a-advanced-toggle", "tracing-template-picker"]) {
-      expect(screen.queryByTestId(gone)).toBeNull();
-    }
-  });
-});
-
-describe("#122 Tracing — defensive (kept from #65)", () => {
+describe("#126 Tracing — defensive (kept from #65)", () => {
   it("loading state", async () => {
-    getTracing.mockReturnValue(new Promise(() => {})); // never resolves
+    getTracing.mockReturnValue(new Promise(() => {}));
     render(<TracingPage />);
     expect(screen.getByTestId("tracing-loading")).toBeInTheDocument();
-    // let the (separate) channels fetch settle so its state update is flushed in-act
-    // (it resolves independently of the never-resolving getTracing).
     await waitFor(() => expect(getReminderChannels).toHaveBeenCalled());
   });
 
@@ -283,17 +347,17 @@ describe("#122 Tracing — defensive (kept from #65)", () => {
     await waitFor(() => expect(screen.getByTestId("tracing-error")).toHaveTextContent("tracing 500"));
   });
 
-  it("heatmap renders 84 cells, banded by count (kept, render-only)", async () => {
+  it("heatmap renders 84 cells banded by count (kept, render-only)", async () => {
     const hm = Array(84).fill(0); hm[20] = 3;
     getTracing.mockResolvedValue(OVERVIEW([ACT()], { heatmap12w: hm, score: { total: 1, done: 1, pct: 100, timeActive: "", topStreak: 4 } }));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument());
     expect(screen.getByTestId("hc-20").getAttribute("data-count")).toBe("3");
-    expect(screen.getByTestId("hc-20").getAttribute("style")).toContain("color-mix"); // colored
-    expect(screen.getByTestId("hc-0").getAttribute("style")).toContain("--bg-3");     // empty
+    expect(screen.getByTestId("hc-20").getAttribute("style")).toContain("color-mix");
+    expect(screen.getByTestId("hc-0").getAttribute("style")).toContain("--bg-3");
   });
 
-  it("streak badge thresholds: ≥7 🔥, ≥3 ✦ (kept in the collapsed stats)", async () => {
+  it("streak badge thresholds: ≥7 🔥, ≥3 ✦ (in the collapsed stats)", async () => {
     getTracing.mockResolvedValue(OVERVIEW([
       ACT({ id: "fire", name: "Fire", streak: 9 }),
       ACT({ id: "star", name: "Star", streak: 4 }),

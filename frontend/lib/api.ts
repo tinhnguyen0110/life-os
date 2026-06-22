@@ -918,6 +918,21 @@ export function bulkDeleteTracingTemplates(ids: string[]): Promise<ApiResponse<{
   return apiPost<{ deleted: number }>("/tracing/templates/bulk-delete", { ids });
 }
 
+/* ---- #124 "+ Từ mẫu" — add a saved template → today's activity (todo, goal=1, tickable) ---- */
+
+/** POST /tracing/templates/{id}/add — 1-click add a saved template to today. Returns
+ *  {activity, added}; added=false when an activity with that id already exists (idempotent,
+ *  returns the existing — no dup). 404 if the template id is unknown. */
+export function addTemplateToToday(id: string): Promise<ApiResponse<{ activity: Activity; added: boolean }>> {
+  return apiPost<{ activity: Activity; added: boolean }>(`/tracing/templates/${encodeURIComponent(id)}/add`, {});
+}
+
+/** POST /tracing/templates/add-all — add ALL non-hidden templates to today in one call.
+ *  Returns {created:[Activity], skipped:[ids]} (already-present ids are skipped, honest). */
+export function addAllTemplates(): Promise<ApiResponse<{ created: Activity[]; skipped: string[] }>> {
+  return apiPost<{ created: Activity[]; skipped: string[] }>("/tracing/templates/add-all", {});
+}
+
 /* ---- #121 / #122 Tracing day-notes — text + optional 🔔-remind (note→reminder link) ---- */
 
 /** GET /tracing/notes — all day-notes, newest-first. honest-empty {notes: []}. */
