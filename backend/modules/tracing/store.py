@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS tracing_note (
     remind_channel TEXT    NOT NULL DEFAULT 'in_app',  -- in_app | email | discord (#111)
     created        TEXT    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tracing_template_set (
+    id          TEXT    PRIMARY KEY,           -- #137 set id (slug or generated)
+    name        TEXT    NOT NULL,
+    activities  TEXT    NOT NULL DEFAULT '[]'  -- JSON array of members {content,time,remindRepeat,remindChannel} (model B)
+);
 """
 
 _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
@@ -394,3 +399,66 @@ def delete_note(note_id: int) -> bool:
         cur = conn.execute("DELETE FROM tracing_note WHERE id = ?", (int(note_id),))
         conn.commit()
         return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-TEMPLATE #137 T1: template-SETS (a named list of rich activities,      #
+# model B — activities is a JSON string the SERVICE serializes; the store is     #
+# JSON-agnostic, just persists the raw text). SCOPED to tracing_template_set —    #
+# NEVER touches tracing_activities/logs (the #72 lesson; import is a separate     #
+# create_activity path in the service).                                           #
+# --------------------------------------------------------------------------- #
+def list_template_sets() -> list[sqlite3.Row]:
+    """All template-sets (id, name, activities-JSON), name-order. honest-empty []."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT id, name, activities FROM tracing_template_set ORDER BY name ASC, id ASC"
+        ).fetchall()
+
+
+def get_template_set(set_id: str) -> sqlite3.Row | None:
+    """One template-set by id, or None."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            "SELECT id, name, activities FROM tracing_template_set WHERE id = ?", (set_id,)
+        ).fetchone()
+
+
+def upsert_template_set(*, id: str, name: str, activities_json: str) -> None:
+    """Create-or-replace a template-set (the whole set is read/written atomically — model B).
+    ``activities_json`` is the service-serialized member list."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO tracing_template_set(id, name, activities) VALUES (?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, activities=excluded.activities",
+            (id, name, activities_json),
+        )
+        conn.commit()
+
+
+def delete_template_set(set_id: str) -> bool:
+    """Delete one template-set. True if a row was removed. SCOPED to the single id."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM tracing_template_set WHERE id = ?", (set_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_all_template_sets() -> int:
+    """RESET: delete ALL template-sets (the service then re-seeds the default). Returns the count
+    deleted. 🔴 SCOPED: ``DELETE FROM tracing_template_set`` ONLY — NEVER touches activities/logs
+    (the #72 blanket-delete lesson: resetting templates must not wipe the user's real habits)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM tracing_template_set")
+        conn.commit()
+        return cur.rowcount

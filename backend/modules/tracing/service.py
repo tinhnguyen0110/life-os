@@ -17,7 +17,9 @@ Key rules:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -35,6 +37,9 @@ from .schema import (
     NoteUpdate,
     Template,
     TemplateInput,
+    TemplateMember,
+    TemplateSet,
+    TemplateSetInput,
     TodayStat,
     TracingOverview,
     TracingScore,
@@ -642,3 +647,134 @@ def delete_note(note_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.error("dev: note-reminder unlink failed for note %s: %s", nid, exc)
     return store.delete_note(nid)
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-TEMPLATE #137 T1: template-SETS (a saved named LIST of rich            #
+# activities). Model B — activities is a JSON blob (serialized here; the store    #
+# is JSON-agnostic). import-set→today reuses create_activity per member (goal=1   #
+# binary todo + time/remind preset, the #122/#124/#136 model).                    #
+# --------------------------------------------------------------------------- #
+def _slug(text: str) -> str:
+    """A lowercase ASCII slug for a set-name / member-content → id base. ASCII-folds Vietnamese
+    diacritics (đ→d, ố→o, ...) via NFKD so 'Buổi sáng' → 'buoi-sang' (clean + readable), then
+    non-alnum → '-', collapsed. Empty → 'activity' (a safe fallback id base)."""
+    import unicodedata
+    t = (text or "").strip().lower().replace("đ", "d")  # đ has no NFKD ASCII base — handle explicitly
+    folded = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
+    s = re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
+    return s or "activity"
+
+
+def _row_to_template_set(row: sqlite3.Row) -> TemplateSet:
+    """Map a row → TemplateSet, json.loads the activities blob (fail-soft: a malformed blob → [])."""
+    try:
+        raw = json.loads(row["activities"] or "[]")
+        members = [TemplateMember(**m) for m in raw] if isinstance(raw, list) else []
+    except Exception as exc:  # noqa: BLE001 — a corrupt blob → honest-empty member list, never crash
+        logger.warning("tracing: template-set %s has a malformed activities blob: %s", row["id"], exc)
+        members = []
+    return TemplateSet(id=row["id"], name=row["name"], activities=members)
+
+
+def _members_json(members: list[TemplateMember]) -> str:
+    """Serialize the member list → the JSON blob stored in the activities column."""
+    return json.dumps([m.model_dump() for m in members])
+
+
+def list_template_sets() -> list[TemplateSet]:
+    """All template-sets, name-order. honest-empty [] when none."""
+    return [_row_to_template_set(r) for r in store.list_template_sets()]
+
+
+def get_template_set(set_id: str) -> TemplateSet | None:
+    """One template-set by id, or None if absent."""
+    row = store.get_template_set(set_id)
+    return _row_to_template_set(row) if row is not None else None
+
+
+def create_template_set(inp: TemplateSetInput) -> TemplateSet:
+    """Create a template-set (server-set id = slug(name) + a numeric suffix if taken). Returns it."""
+    base = _slug(inp.name)
+    sid = base
+    n = 2
+    while store.get_template_set(sid) is not None:  # avoid an id collision across sets
+        sid = f"{base}-{n}"
+        n += 1
+    store.upsert_template_set(id=sid, name=inp.name, activities_json=_members_json(inp.activities))
+    created = store.get_template_set(sid)
+    assert created is not None
+    return _row_to_template_set(created)
+
+
+def replace_template_set(set_id: str, inp: TemplateSetInput) -> TemplateSet | None:
+    """Whole-set replace (name + members). None if the id is absent (router → 404)."""
+    if store.get_template_set(set_id) is None:
+        return None
+    store.upsert_template_set(id=set_id, name=inp.name, activities_json=_members_json(inp.activities))
+    row = store.get_template_set(set_id)
+    assert row is not None
+    return _row_to_template_set(row)
+
+
+def delete_template_set(set_id: str) -> bool:
+    """Delete one template-set. True if it existed. SCOPED (never touches activities/logs)."""
+    return store.delete_template_set(set_id)
+
+
+def import_template_set(set_id: str) -> tuple[list[ActivityView], list[str]] | None:
+    """#137: 1-click import — create today's activity for EACH member of the set. None if the set is
+    absent (router → 404). Each member → create_activity(name=content, goal=1.0 BINARY todo, time=
+    member.time, remindAt=member.time IF remindRepeat≠off else None, remindRepeat, remindChannel) →
+    _sync_reminder fires the reminder when remindRepeat≠off (the #75/#136 path). A UNIQUE activity id
+    per member (slug(content)+suffix avoiding existing ids) → NO 409 on re-import (decide-and-log).
+    Returns (createdViews, skipped) — skipped is honest-empty today (unique ids never collide)."""
+    s = get_template_set(set_id)
+    if s is None:
+        return None
+    created: list[ActivityView] = []
+    skipped: list[str] = []
+    for m in s.activities:
+        # a unique id: slug(content) + numeric suffix avoiding any existing activity (incl. archived)
+        base = _slug(m.content)
+        aid = base
+        n = 2
+        while get_activity(aid) is not None:
+            aid = f"{base}-{n}"
+            n += 1
+        remind_at = m.time if m.remindRepeat != "off" else None  # reminder fires at the member's time
+        inp = ActivityInput(
+            id=aid, name=m.content, goal=1.0,            # #122/#124: binary todo
+            time=m.time,                                  # #136: the scheduled time (independent)
+            remindAt=remind_at, remindRepeat=m.remindRepeat, remindChannel=m.remindChannel,
+        )
+        try:
+            act = create_activity(inp)  # reuses the create + _sync_reminder path
+            created.append(_derive_activity_view(act))
+        except Exception as exc:  # noqa: BLE001 — fail-soft per member; the rest still import
+            logger.error("tracing: import member %r from set %s failed: %s", m.content, set_id, exc)
+            skipped.append(m.content)
+    return created, skipped
+
+
+# #137: the default template-set re-seeded by reset (a sensible "Buổi sáng" morning routine).
+_DEFAULT_TEMPLATE_SET = {
+    "id": "buoi-sang",
+    "name": "Buổi sáng",
+    "activities": [
+        {"content": "Uống nước", "time": "07:00", "remindRepeat": "daily", "remindChannel": "in_app"},
+        {"content": "Tập thể dục", "time": "07:30", "remindRepeat": "daily", "remindChannel": "in_app"},
+        {"content": "Đọc sách", "time": "08:00", "remindRepeat": "off", "remindChannel": "in_app"},
+    ],
+}
+
+
+def reset_template_sets() -> list[TemplateSet]:
+    """RESET: discard ALL template-sets + re-seed the ONE sensible default ('Buổi sáng'). Returns the
+    resulting list (the default). 🔴 SCOPED to tracing_template_set — NEVER touches activities/logs
+    (the #72 lesson). Mirrors the #109 reset pattern."""
+    store.delete_all_template_sets()
+    d = _DEFAULT_TEMPLATE_SET
+    members = [TemplateMember(**m) for m in d["activities"]]  # type: ignore[arg-type]
+    store.upsert_template_set(id=str(d["id"]), name=str(d["name"]), activities_json=_members_json(members))
+    return list_template_sets()

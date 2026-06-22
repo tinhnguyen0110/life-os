@@ -31,7 +31,10 @@ from core.base import BaseModule
 from core.responses import ok
 
 from . import service
-from .schema import ActivityInput, ActivityUpdate, LogInput, NoteInput, NoteUpdate, TemplateInput
+from .schema import (
+    ActivityInput, ActivityUpdate, LogInput, NoteInput, NoteUpdate,
+    TemplateInput, TemplateSetInput,
+)
 
 logger = logging.getLogger("life-os.tracing.router")
 
@@ -240,6 +243,64 @@ def delete_note(note_id: str):
         return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
                                     hint="GET /tracing/notes for valid ids")
     return ok(data={"deleted": note_id})
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-TEMPLATE #137 T1: template-SETS (a saved named list of rich            #
+# activities). Static routes (/template-sets, /template-sets/reset) declared      #
+# BEFORE the {set_id} dynamic ones so the static path matches first.              #
+# --------------------------------------------------------------------------- #
+@router.get("/template-sets")
+def list_template_sets():
+    """All saved template-sets (a 'mẫu' = a named LIST of rich activities). honest-empty {sets:[]}.
+    Each: {id, name, activities:[{content, time, remindRepeat, remindChannel}]}."""
+    return ok(data={"sets": [s.model_dump() for s in service.list_template_sets()]})
+
+
+@router.post("/template-sets", status_code=201)
+def create_template_set(body: TemplateSetInput):
+    """Create a template-set. 201 + the TemplateSet (server-set id = slug(name) + suffix if taken).
+    422 on blank name / blank member content / bad member time (schema validators)."""
+    return ok(data=service.create_template_set(body).model_dump())
+
+
+@router.post("/template-sets/reset")
+def reset_template_sets():
+    """RESET: discard ALL template-sets + re-seed the default ('Buổi sáng'). 200 + {sets:[the default]}.
+    🔴 SCOPED — deletes ONLY tracing_template_set, NEVER the user's real activities/logs (#72)."""
+    return ok(data={"sets": [s.model_dump() for s in service.reset_template_sets()]})
+
+
+@router.post("/template-sets/{set_id}/import")
+def import_template_set(set_id: str):
+    """🔴 1-click import: create today's activity for EACH member (goal=1 binary todo + time/remind
+    preset). 200 + {created:[ActivityView], skipped:[content]}. 404 if the set is unknown. Unique
+    activity id per member → NO 409 on re-import. Reuses create_activity + _sync_reminder."""
+    result = service.import_template_set(set_id)
+    if result is None:
+        return agent_error_response("NOT_FOUND", f"template-set {set_id!r} not found",
+                                    hint="GET /tracing/template-sets for valid ids")
+    created, skipped = result
+    return ok(data={"created": [v.model_dump() for v in created], "skipped": skipped})
+
+
+@router.put("/template-sets/{set_id}")
+def replace_template_set(set_id: str, body: TemplateSetInput):
+    """Whole-set replace (name + members). 200 + the TemplateSet. 404 if absent. 422 on bad body."""
+    s = service.replace_template_set(set_id, body)
+    if s is None:
+        return agent_error_response("NOT_FOUND", f"template-set {set_id!r} not found",
+                                    hint="GET /tracing/template-sets for valid ids")
+    return ok(data=s.model_dump())
+
+
+@router.delete("/template-sets/{set_id}")
+def delete_template_set(set_id: str):
+    """Delete a template-set. 200 + {deleted}. 404 if absent. SCOPED (never touches activities)."""
+    if not service.delete_template_set(set_id):
+        return agent_error_response("NOT_FOUND", f"template-set {set_id!r} not found",
+                                    hint="GET /tracing/template-sets for valid ids")
+    return ok(data={"deleted": set_id})
 
 
 # The registry discovers this MODULE (adding this folder is the only wiring needed). No routines P1.

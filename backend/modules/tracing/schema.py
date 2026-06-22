@@ -362,3 +362,58 @@ class Note(BaseModel):
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
     created: str = Field(..., description="ISO-8601 (VN) when the note was created")
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-TEMPLATE #137 T1: a template-SET = a saved NAMED LIST of rich          #
+# activities (a reusable routine). 1-click import → all members become today's   #
+# activities (goal=1 binary todos w/ time+remind preset). Model B (DESIGN_137):  #
+# tracing_template_set {id, name, activities JSON[]}; read/written/imported WHOLE.#
+# (Replaces the rejected #109 1-word CHIP model — the chip CRUD stays dormant.)   #
+# --------------------------------------------------------------------------- #
+class TemplateMember(BaseModel):
+    """One activity in a template-set's list. content = the activity name (a binary todo on import);
+    time = a scheduled HH:MM (#136, independent of the reminder); remindRepeat≠off → the imported
+    activity gets a reminder at ``time``, on ``remindChannel`` (#75/#111/#136)."""
+
+    content: str = Field(..., min_length=1, max_length=120, description="the activity name (binary todo)")
+    time: str | None = Field(default=None, description="HH:MM VN scheduled time, or None (#136)")
+    remindRepeat: RemindRepeat = Field(default="off", description="off|daily|weekdays — off = no reminder")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+
+    @field_validator("content")
+    @classmethod
+    def _content_not_blank(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("content must not be blank")
+        return s
+
+    @field_validator("time")
+    @classmethod
+    def _time_hhmm(cls, v: str | None) -> str | None:
+        return _validate_hhmm(v)
+
+
+class TemplateSetInput(BaseModel):
+    """Create/replace payload for a template-set (POST + PUT). The id is server-set (POST) or the
+    path param (PUT); the body is name + the member list. A blank name → 422."""
+
+    name: str = Field(..., min_length=1, max_length=80, description="the set name, e.g. 'Buổi sáng'")
+    activities: list[TemplateMember] = Field(default_factory=list, description="ordered member list")
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("name must not be blank")
+        return s
+
+
+class TemplateSet(BaseModel):
+    """A saved template-set (GET list item + create/update echo). honest-mirror shape."""
+
+    id: str = Field(..., description="the set id (slug or generated)")
+    name: str = Field(..., description="the set name")
+    activities: list[TemplateMember] = Field(default_factory=list, description="ordered member list")
