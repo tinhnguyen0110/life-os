@@ -483,6 +483,19 @@ def log_session(activity_id: str, inp: LogInput) -> ActivityView:
     return _derive_activity_view(act)
 
 
+def clear_sessions_for_day(activity_id: str, date: str | None = None) -> tuple[str, int, ActivityView]:
+    """#136 UN-TICK: delete an activity's session logs for ``date`` (default today-VN) → its today
+    derived val drops to 0 → today.done flips false. Returns (resolvedDate, deletedCount, the
+    freshly-derived view) so the caller sees the un-done state + the date actually cleared (no need
+    to re-derive today-VN at the router). The activity MUST exist (router checks → 404). SCOPED to
+    (activity_id, date) only (#72). honest: deletedCount=0 if there were no sessions."""
+    day = date or vn_today()
+    deleted = store.delete_sessions_for_day(activity_id, day)
+    act = get_activity(activity_id)
+    assert act is not None  # router verified existence before calling
+    return day, deleted, _derive_activity_view(act)
+
+
 # --------------------------------------------------------------------------- #
 # TRACING-UX2 T1 (#121): day-notes — text + optional remind.                     #
 # A note's remind reuses the #75 wire via source="tracing-note" (the note id is   #

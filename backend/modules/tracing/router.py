@@ -57,6 +57,21 @@ def log_session(activity_id: str, body: LogInput):
     return ok(data=view.model_dump())
 
 
+@router.delete("/{activity_id}/sessions")
+def clear_sessions(activity_id: str, date: str | None = None):
+    """#136 UN-TICK (the tick-toggle's un-complete half): delete an activity's session logs for
+    ``date`` (default today-VN) → today.done flips FALSE, val→0. Returns
+    ``{activityId, date, deletedSessions:N, view}`` (the freshly-derived view so the FE renders
+    un-done immediately). 404 if the activity is unknown. 🔴 SCOPED to (activity_id, date) only —
+    never another activity/day (#72). honest deletedSessions:0 if there were none."""
+    if service.get_activity(activity_id) is None:
+        return agent_error_response("NOT_FOUND", f"activity {activity_id!r} not found",
+                                    hint="GET /tracing for valid activity ids")
+    resolved_date, deleted, view = service.clear_sessions_for_day(activity_id, date)
+    return ok(data={"activityId": activity_id, "date": resolved_date,
+                    "deletedSessions": deleted, "view": view.model_dump()})
+
+
 @router.post("/activities", status_code=201)
 def create_activity(body: ActivityInput):
     """Create an activity def. 201 + the created def. 409 if the id already exists. (Blank id/name

@@ -202,6 +202,21 @@ def insert_log(*, activity_id: str, date: str, ts: str, val: float,
         return int(lid)
 
 
+def delete_sessions_for_day(activity_id: str, date: str) -> int:
+    """#136: the UN-TICK — delete ONE activity's session logs for ONE day → its derived val for that
+    day drops to 0 → today.done flips false. Returns the deleted-session count. 🔴 SCOPED to exactly
+    (activity_id, date) (the #72 lesson — NEVER all logs, NEVER another activity, NEVER another day).
+    Index-backed by idx_tracing_logs_act_date."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "DELETE FROM tracing_logs WHERE activity_id = ? AND date = ?", (activity_id, date)
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def logs_for_activity(activity_id: str, *, since_date: str | None = None) -> list[sqlite3.Row]:
     """Raw sessions for one activity, oldest→newest (by ts). Optional ``since_date`` (inclusive,
     YYYY-MM-DD) windows to recent days (the 12-week derive only needs the last 84 days)."""
