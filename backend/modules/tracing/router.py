@@ -184,17 +184,33 @@ def list_notes():
 
 @router.post("/notes", status_code=201)
 def create_note(body: NoteInput):
-    """Create a day-note (text + optional remind). 201 + the Note. A note WITH remindAt +
-    remindRepeat≠off emits a linked reminder (source='tracing-note', channel #111). 422 on blank
-    text / bad HH:MM (schema validators)."""
+    """Create a day-note (text + optional remind). 201 + the Note. #125: remindDate+remindAt → a
+    one-shot future reminder (repeat='once'); 🔴 a PAST one-shot → 422. A note with remindRepeat≠off
+    (no date) → the #121 recurring reminder. 422 on blank text / bad HH:MM / bad date (validators)."""
+    if service.note_remind_in_past(body.remindDate, body.remindAt):
+        return agent_error_response(
+            "INVALID_INPUT", f"remind {body.remindDate} {body.remindAt} is in the past",
+            hint="a one-shot remindDate+remindAt must be in the FUTURE (VN time)")
     note = service.create_note(body)
     return ok(data=note.model_dump())
 
 
 @router.put("/notes/{note_id}")
 def update_note(note_id: str, body: NoteUpdate):
-    """Partial update of a day-note + re-sync the linked reminder. 404 if absent. Pass
-    remindRepeat='off' to CLEAR the remind (deletes the linked reminder)."""
+    """Partial update of a day-note + re-sync the linked reminder. 404 if absent. #125: a PAST
+    one-shot remindDate+remindAt → 422. Pass remindRepeat='off' to CLEAR the remind (deletes the
+    linked reminder, incl. a one-shot)."""
+    # past-date check needs the EFFECTIVE values (merge supplied over current) — only when a one-shot
+    # is actually being set (remindDate present in the body or already on the note + a remindAt).
+    current = service.get_note(note_id)
+    if current is not None:
+        eff_date = body.remindDate if body.remindDate is not None else current.remindDate
+        eff_at = body.remindAt if body.remindAt is not None else current.remindAt
+        # an explicit clear (remindRepeat='off') drops the one-shot → not a past-remind error
+        if body.remindRepeat != "off" and service.note_remind_in_past(eff_date, eff_at):
+            return agent_error_response(
+                "INVALID_INPUT", f"remind {eff_date} {eff_at} is in the past",
+                hint="a one-shot remindDate+remindAt must be in the FUTURE (VN time)")
     note = service.update_note(note_id, body)
     if note is None:
         return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",

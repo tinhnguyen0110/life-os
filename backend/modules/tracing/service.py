@@ -484,6 +484,7 @@ def _row_to_note(row: sqlite3.Row) -> Note:
         id=str(row["id"]),  # autoincrement PK → string id
         text=row["text"],
         remindAt=row["remind_at"] if "remind_at" in keys else None,
+        remindDate=row["remind_date"] if "remind_date" in keys else None,  # #125 one-shot future date
         remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
         remindChannel=row["remind_channel"] if "remind_channel" in keys else "in_app",
         created=row["created"],
@@ -491,16 +492,28 @@ def _row_to_note(row: sqlite3.Row) -> Note:
 
 
 def _sync_note_reminder(note: Note) -> None:
-    """ONE-WAY note→reminder (#121, mirrors _sync_reminder): note has remindAt + remindRepeat≠off →
-    UPSERT the linked reminder (source='tracing-note', linked id = the note id); else → DELETE it.
-    Fail-soft: a reminders hiccup logs but never breaks the note write (the note is source-of-truth)."""
+    """ONE-WAY note→reminder (#121 + #125). TWO remind KINDS for a note:
+      - #125 ONE-SHOT (remindDate set + remindAt): a `repeat="once"` reminder at the FUTURE
+        remindDate@remindAt (VN→UTC). Fires once, never recurs.
+      - #121 RECURRING (remindRepeat≠off, no remindDate): the today@remindAt daily/weekdays path.
+    Neither applicable → DELETE the linked reminder. source='tracing-note', linked id = note id.
+    Fail-soft: a reminders hiccup logs but never breaks the note write (the note is source-of-truth).
+    NOTE: past-date validation is the agent-facing surface's job (router → 422); this builds the
+    due_at as given (it's already validated future by the time we sync)."""
     from modules.reminders import service as rem
     from modules.reminders.schema import _to_utc_iso
     try:
-        if note.remindAt and note.remindRepeat != "off":
-            due_local = f"{vn_today()}T{note.remindAt}:00+07:00"
-            due_at = _to_utc_iso(due_local)
-            title = note.text.strip()[:120]  # the reminder title = the note text (capped for the alarm)
+        title = note.text.strip()[:120]  # the reminder title = the note text (capped for the alarm)
+        if note.remindDate and note.remindAt:
+            # #125 ONE-SHOT future-date: repeat="once" at remindDate@remindAt (VN-offset → UTC).
+            due_at = _to_utc_iso(f"{note.remindDate}T{note.remindAt}:00+07:00")
+            rem.upsert_for_activity(
+                activity_id=note.id, title=title, due_at=due_at,
+                repeat="once", channel=note.remindChannel, source=_NOTE_SOURCE,
+            )
+        elif note.remindAt and note.remindRepeat != "off":
+            # #121 RECURRING: today-VN @ remindAt, daily/weekdays.
+            due_at = _to_utc_iso(f"{vn_today()}T{note.remindAt}:00+07:00")
             rem.upsert_for_activity(
                 activity_id=note.id, title=title, due_at=due_at,
                 repeat=_REPEAT_MAP.get(note.remindRepeat, "daily"),
@@ -510,6 +523,21 @@ def _sync_note_reminder(note: Note) -> None:
             rem.delete_for_activity(note.id, source=_NOTE_SOURCE)
     except Exception as exc:  # noqa: BLE001 — reminder sync is an add-on; never break the note write
         logger.error("dev: note-reminder sync failed for note %s: %s", note.id, exc)
+
+
+def note_remind_in_past(remind_date: str | None, remind_at: str | None) -> bool:
+    """#125: True if a one-shot remind (remindDate + remindAt) is in the PAST (VN now). The agent-
+    facing surface (router) rejects it with a 422 (a remind in the past would never fire). Only a
+    FULL one-shot (both date+time) is checked; a date without a time isn't a one-shot yet → not past.
+    A bad format is NOT past here (the schema validator already 422s a malformed date/time)."""
+    if not (remind_date and remind_at):
+        return False
+    from datetime import datetime
+    try:
+        when = datetime.strptime(f"{remind_date} {remind_at}", "%Y-%m-%d %H:%M").replace(tzinfo=VN_TZ)
+    except ValueError:
+        return False  # malformed → schema validator handles the 422; not "past"
+    return when < datetime.now(VN_TZ)
 
 
 def list_notes() -> list[Note]:
@@ -528,10 +556,11 @@ def get_note(note_id: str) -> Note | None:
 
 
 def create_note(inp: NoteInput) -> Note:
-    """Create a day-note + sync its linked reminder (if remindAt + remindRepeat≠off)."""
+    """Create a day-note + sync its linked reminder (#125 one-shot if remindDate+remindAt, else the
+    #121 recurring path)."""
     nid = store.create_note(
-        text=inp.text, remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,
-        remind_channel=inp.remindChannel, created=vn_now_iso(),
+        text=inp.text, remind_at=inp.remindAt, remind_date=inp.remindDate,
+        remind_repeat=inp.remindRepeat, remind_channel=inp.remindChannel, created=vn_now_iso(),
     )
     row = store.get_note(nid)
     assert row is not None
@@ -541,21 +570,28 @@ def create_note(inp: NoteInput) -> Note:
 
 
 def update_note(note_id: str, upd: NoteUpdate) -> Note | None:
-    """Partial update of a day-note + re-sync the linked reminder. None if id absent.
-    Only supplied fields change; remindRepeat='off' clears the remind (deletes the linked reminder)."""
+    """Partial update of a day-note + re-sync the linked reminder. None if id absent. Only supplied
+    fields change. CLEAR semantics: remindRepeat='off' clears BOTH the #121 recurring AND the #125
+    one-shot (we also null remind_date on an explicit 'off') → the linked reminder is deleted. To
+    set/move a one-shot, pass remindDate + remindAt."""
     current = get_note(note_id)
     if current is None:
         return None
     text = upd.text if upd.text is not None else current.text
     remind_at = upd.remindAt if upd.remindAt is not None else current.remindAt
+    remind_date = upd.remindDate if upd.remindDate is not None else current.remindDate
     remind_repeat = upd.remindRepeat if upd.remindRepeat is not None else current.remindRepeat
     remind_channel = upd.remindChannel if upd.remindChannel is not None else current.remindChannel
-    row = store.update_note(int(note_id), text=text, remind_at=remind_at,
+    # explicit remindRepeat='off' is the universal CLEAR — also drop a lingering one-shot date so the
+    # sync's delete-branch fires (neither kind applies → reminder removed, no orphan one-shot).
+    if upd.remindRepeat == "off":
+        remind_date = None
+    row = store.update_note(int(note_id), text=text, remind_at=remind_at, remind_date=remind_date,
                             remind_repeat=remind_repeat, remind_channel=remind_channel)
     if row is None:
         return None
     note = _row_to_note(row)
-    _sync_note_reminder(note)  # re-sync: upserts or (on remindRepeat='off') deletes the linked reminder
+    _sync_note_reminder(note)  # re-sync: upsert (once/recurring) or delete (cleared)
     return note
 
 

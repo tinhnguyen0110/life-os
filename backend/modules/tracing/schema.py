@@ -61,6 +61,18 @@ def _validate_hhmm(v: str | None) -> str | None:
     return s
 
 
+def _validate_date(v: str | None) -> str | None:
+    """#125: validate a YYYY-MM-DD date string, or None. Raises ValueError (→ 422) on a bad date.
+    (Future-vs-past is checked at the agent-facing surface, not here — this only validates format.)"""
+    if v is None:
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    datetime.strptime(s, "%Y-%m-%d")  # raises ValueError on a malformed date → 422
+    return s
+
+
 # --------------------------------------------------------------------------- #
 # Inputs (create/update payloads — validated at the boundary → 422)            #
 # --------------------------------------------------------------------------- #
@@ -279,6 +291,10 @@ class NoteInput(BaseModel):
 
     text: str = Field(..., min_length=1, max_length=2000, description="the note text (the LogInput.note cap)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
+    remindDate: str | None = Field(
+        default=None,
+        description="#125: YYYY-MM-DD FUTURE date for a ONE-SHOT remind (None = no one-shot). "
+        "Set → a repeat='once' reminder at remindDate@remindAt; absent → the #121 remindRepeat path.")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
 
@@ -295,6 +311,11 @@ class NoteInput(BaseModel):
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
 
+    @field_validator("remindDate")
+    @classmethod
+    def _remind_date_fmt(cls, v: str | None) -> str | None:
+        return _validate_date(v)
+
 
 class NoteUpdate(BaseModel):
     """PUT /tracing/notes/{id} — partial update; only supplied fields change. To CLEAR the remind,
@@ -302,6 +323,7 @@ class NoteUpdate(BaseModel):
 
     text: str | None = Field(default=None, min_length=1, max_length=2000)
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
+    remindDate: str | None = Field(default=None, description="#125: YYYY-MM-DD future date for a one-shot remind")
     remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel | None = Field(default=None, description="in_app|email|discord (#111)")
 
@@ -320,6 +342,11 @@ class NoteUpdate(BaseModel):
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
 
+    @field_validator("remindDate")
+    @classmethod
+    def _remind_date_fmt(cls, v: str | None) -> str | None:
+        return _validate_date(v)
+
 
 class Note(BaseModel):
     """A day-note (GET /tracing/notes list item + the create/update echo). honest-mirror shape."""
@@ -327,6 +354,7 @@ class Note(BaseModel):
     id: str = Field(..., description="the note id (the autoincrement PK, stringified)")
     text: str = Field(..., description="the note text")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
+    remindDate: str | None = Field(default=None, description="#125: YYYY-MM-DD future date for a one-shot remind, or None")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
     created: str = Field(..., description="ISO-8601 (VN) when the note was created")

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tracing_note (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,  -- #121 day-note; exposed as a string id
     text           TEXT    NOT NULL,
     remind_at      TEXT,                               -- HH:MM VN, or NULL (#121, the #75 validator)
+    remind_date    TEXT,                               -- #125: YYYY-MM-DD future date for a one-shot, or NULL
     remind_repeat  TEXT    NOT NULL DEFAULT 'off',     -- daily | weekdays | off
     remind_channel TEXT    NOT NULL DEFAULT 'in_app',  -- in_app | email | discord (#111)
     created        TEXT    NOT NULL
@@ -67,7 +68,7 @@ _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
              "remind_at, remind_repeat, remind_channel")  # #75 remind_*; #111 remind_channel
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
 _TPL_COLS = "id, name, emoji, icon, unit, goal, color, hidden"  # #109 template override row
-_NOTE_COLS = "id, text, remind_at, remind_repeat, remind_channel, created"  # #121 day-note row
+_NOTE_COLS = "id, text, remind_at, remind_date, remind_repeat, remind_channel, created"  # #121/#125 day-note row
 
 
 def init_tracing_tables() -> sqlite3.Connection:
@@ -85,6 +86,11 @@ def init_tracing_tables() -> sqlite3.Connection:
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_repeat TEXT NOT NULL DEFAULT 'off'")
         if "remind_channel" not in cols:  # TRACING-UX T3 (#111) — default in_app for pre-#111 rows
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_channel TEXT NOT NULL DEFAULT 'in_app'")
+        # #125 migration: add remind_date to a pre-#125 tracing_note table (idempotent). NULL default
+        # = no one-shot for existing notes (backward-compat).
+        note_cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracing_note)").fetchall()}
+        if note_cols and "remind_date" not in note_cols:
+            conn.execute("ALTER TABLE tracing_note ADD COLUMN remind_date TEXT")
         conn.commit()
     return conn
 
@@ -307,16 +313,17 @@ def get_note(note_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def create_note(*, text: str, remind_at: str | None, remind_repeat: str,
-                remind_channel: str, created: str) -> int:
-    """Insert a day-note. Returns the new row id (an int; the reader stringifies it)."""
+def create_note(*, text: str, remind_at: str | None, remind_date: str | None,
+                remind_repeat: str, remind_channel: str, created: str) -> int:
+    """Insert a day-note. Returns the new row id (an int; the reader stringifies it). #125: persists
+    remind_date (the one-shot future date, or NULL)."""
     init_tracing_tables()
     conn = db.get_conn()
     with _lock:
         cur = conn.execute(
-            "INSERT INTO tracing_note (text, remind_at, remind_repeat, remind_channel, created) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (text, remind_at, remind_repeat, remind_channel, created),
+            "INSERT INTO tracing_note (text, remind_at, remind_date, remind_repeat, remind_channel, created) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (text, remind_at, remind_date, remind_repeat, remind_channel, created),
         )
         conn.commit()
         lid = cur.lastrowid
@@ -324,17 +331,17 @@ def create_note(*, text: str, remind_at: str | None, remind_repeat: str,
         return int(lid)
 
 
-def update_note(note_id: int, *, text: str, remind_at: str | None,
+def update_note(note_id: int, *, text: str, remind_at: str | None, remind_date: str | None,
                 remind_repeat: str, remind_channel: str) -> sqlite3.Row | None:
-    """Update a day-note (text + remind fields). Returns the updated row, or None if absent.
-    SCOPED to the single id (the #72 lesson — never a blanket UPDATE)."""
+    """Update a day-note (text + remind fields incl. #125 remind_date). Returns the updated row, or
+    None if absent. SCOPED to the single id (the #72 lesson — never a blanket UPDATE)."""
     init_tracing_tables()
     conn = db.get_conn()
     with _lock:
         cur = conn.execute(
-            "UPDATE tracing_note SET text = ?, remind_at = ?, remind_repeat = ?, "
+            "UPDATE tracing_note SET text = ?, remind_at = ?, remind_date = ?, remind_repeat = ?, "
             "remind_channel = ? WHERE id = ?",
-            (text, remind_at, remind_repeat, remind_channel, int(note_id)),
+            (text, remind_at, remind_date, remind_repeat, remind_channel, int(note_id)),
         )
         conn.commit()
         if cur.rowcount == 0:
