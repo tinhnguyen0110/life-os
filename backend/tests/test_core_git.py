@@ -146,3 +146,25 @@ def test_reader_reexports_are_the_shared_symbols():
     assert reader._is_git_repo is core_git.is_git_repo
     assert reader._RepoUnreadable is core_git.RepoUnreadable
     assert reader._READ_ONLY_GIT is core_git.READ_ONLY_GIT
+
+
+# --------------------------------------------------------------------------- #
+# #118: code_insight re-exports + its exact log call byte-identical               #
+# --------------------------------------------------------------------------- #
+def test_code_insight_reexports_are_the_shared_symbols():
+    from modules.code_insight import service as ci
+    assert ci._git is core_git.run_read_git
+    assert ci._READ_ONLY_GIT is core_git.READ_ONLY_GIT
+
+
+def test_code_insight_log_byte_identical_to_inline(repo):
+    """code_insight._recent_commits' exact `git log` via the shared _git (=run_read_git, strip)
+    == the old inline subprocess.run().stdout.strip() — byte-identical on a FIXED repo (#118)."""
+    _MAX_COMMITS = 15
+    args = ["log", f"-n{_MAX_COMMITS}", "--no-merges", "--pretty=format:%h\x1f%s\x1f%cs"]
+    old = subprocess.run(["git", "-C", str(repo), *args],
+                         capture_output=True, text=True, timeout=10).stdout.strip()
+    from modules.code_insight import service as ci
+    new = ci._git(str(repo), args)
+    assert new == old, "code_insight._git must be byte-identical to its old inline subprocess.run"
+    assert "\x1f" in new  # the \x1f-delimited format actually came back

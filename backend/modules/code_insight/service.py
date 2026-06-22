@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from datetime import datetime, timezone
+
+from core import git as core_git  # PROJECTS-UNIFY T5 (#118): shared read-only git-exec layer
 
 from .schema import CodeInsight, RepoCommit
 
@@ -26,8 +27,14 @@ _MAX_COMMITS = 15          # recent git-log
 # Dirs skipped in the structure listing (the LOC_SKIP-style ignore — noise an agent doesn't want).
 _SKIP_DIRS = frozenset({".git", "node_modules", "vendor", "dist", "build", "__pycache__",
                         ".next", ".venv", "venv", ".mypy_cache", ".pytest_cache", "target"})
-# READ-ONLY git whitelist (mirrors projects/reader._READ_ONLY_GIT — mutating ops structurally refused).
-_READ_ONLY_GIT = frozenset({"log", "rev-parse", "rev-list", "status", "ls-files", "show-ref"})
+# PROJECTS-UNIFY T5 (#118): the read-only git-exec layer is shared in core/git.py (the SINGLE
+# git-read source, with projects + dev_activity). This is a thin re-export so code_insight's
+# `_git`/`_READ_ONLY_GIT` keep working BYTE-IDENTICALLY (its caller fail-softs via `except
+# Exception`, and the whitelist test asserts ValueError on a mutating op — both preserved).
+# core's READ_ONLY_GIT (7-item) is a superset of code_insight's 6 uses; code_insight only runs
+# `log`. The exception type on a git failure changes RuntimeError→RepoUnreadable, but the lone
+# caller catches `Exception` (no observable change; no test pins the type/warning string).
+_READ_ONLY_GIT = core_git.READ_ONLY_GIT
 # Manifest file → stack name (presence-detect).
 _STACK_MARKERS: list[tuple[str, str]] = [
     ("package.json", "node"), ("requirements.txt", "python"), ("pyproject.toml", "python"),
@@ -72,16 +79,11 @@ def resolve_repo(repo: str) -> str | None:
     return None
 
 
-def _git(repo_path: str, args: list[str], *, timeout: float = 10.0) -> str:
-    """Run ONE read-only git command (whitelist-enforced). Raises on non-zero/timeout/missing-git
-    (the caller fail-softs that sub-read). NEVER a mutating subcommand."""
-    if not args or args[0] not in _READ_ONLY_GIT:
-        raise ValueError(f"refusing non-read-only git op: {args[:1]}")
-    proc = subprocess.run(["git", "-C", repo_path, *args], capture_output=True, text=True,
-                          check=False, timeout=timeout)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {args[0]} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
+# PROJECTS-UNIFY T5 (#118): `_git` is now the shared core.git.run_read_git (strip + raise +
+# whitelist, 10s default) — same signature, same contract code_insight relied on (the lone caller
+# _recent_commits fail-softs via `except Exception`; the whitelist test asserts ValueError on a
+# mutating op). Zero caller change.
+_git = core_git.run_read_git
 
 
 def _structure(root: str, warnings: list[str]) -> list[str]:
