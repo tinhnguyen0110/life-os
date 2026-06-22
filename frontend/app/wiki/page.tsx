@@ -22,35 +22,12 @@ import { searchWiki, ApiError } from "@/lib/api";
 import { Icon } from "@/lib/icons";
 import { WikiImport } from "@/components/WikiImport";
 import { WikiTrash } from "@/components/WikiTrash";
+import { StatTile } from "./_StatTile";
+import { InboxRow, ActivityRow } from "./_rows";
 import type {
-  WikiInboxItem,
   WikiOrphan,
-  WikiActivity,
-  WikiOpKind,
   WikiSearchHit,
 } from "@/lib/types";
-
-/** op-log label + color (mirrors mock OP map). */
-const OP: Record<WikiOpKind, { lbl: string; color: string }> = {
-  create: { lbl: "create", color: "var(--green)" },
-  edit: { lbl: "edit", color: "var(--blue)" },
-  link: { lbl: "link", color: "var(--accent)" },
-  link_candidate: { lbl: "candidate", color: "var(--amber)" },
-  refine: { lbl: "refine", color: "var(--violet)" },
-  merge: { lbl: "merge", color: "var(--violet)" },
-  moc_proposal: { lbl: "MOC", color: "var(--amber)" },
-  delete: { lbl: "delete", color: "var(--red)" },
-};
-
-function StatTile({ label, value, sub, cls }: { label: string; value: string | number; sub: string; cls?: string }) {
-  return (
-    <div className="wtile" data-testid="wtile">
-      <span className="wtile-l">{label}</span>
-      <span className={`wtile-v ${cls ?? ""}`} data-testid="wtile-v">{value}</span>
-      <span className="wtile-s">{sub}</span>
-    </div>
-  );
-}
 
 export default function WikiVaultPage() {
   const { overview, status, errMsg, warning, reload } = useWikiOverview();
@@ -221,17 +198,6 @@ export default function WikiVaultPage() {
   const orphans = overview.orphans ?? [];
   const activity = overview.recentActivity ?? [];
 
-  const inboxRow = (it: WikiInboxItem) => (
-    <Link key={it.id} href="/wiki/inbox" className="wlist-row clickable" data-testid="vault-inbox-row">
-      <span className="runi run" style={{ width: 16, height: 16, fontSize: 9 }}>{it.linkCount}</span>
-      <div className="wlr-body">
-        <div className="wlr-t">{it.title ?? <span className="faint">chưa có title</span>}</div>
-        <div className="wlr-s mut">{it.rawContent.slice(0, 70)}…</div>
-      </div>
-      <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10, whiteSpace: "nowrap" }}>{it.captured}</span>
-    </Link>
-  );
-
   const orphanRow = (o: WikiOrphan) =>
     bulkMode ? (
       // #94 bulk-mode: a checkbox row (no navigation) to multi-select for soft-delete.
@@ -258,20 +224,6 @@ export default function WikiVaultPage() {
         <span className="faint" style={{ fontFamily: "var(--mono)", fontSize: 10 }}>{o.lastTouched}</span>
       </Link>
     );
-
-  const actRow = (a: WikiActivity, i: number) => {
-    const op = OP[a.op] ?? { lbl: a.op, color: "var(--tx-1)" };
-    return (
-      <div className="wact-row" key={`${a.ts}-${a.noteId}-${i}`} data-testid="vault-act-row">
-        <span className="wact-ts num">{a.ts.slice(11, 19) || a.ts}</span>
-        <span className="wact-op" style={{ color: op.color, background: `color-mix(in oklch,${op.color} 14%,transparent)` }}>{op.lbl}</span>
-        <span className={`wact-actor ${a.actor}`}>{a.actor === "agent" ? "◇ AI" : "● bạn"}</span>
-        <span className="wact-detail mut">
-          {a.detail ?? `${a.noteTitle || `#${a.noteId}`}`}
-        </span>
-      </div>
-    );
-  };
 
   return (
     <div data-testid="vault-screen">
@@ -374,7 +326,7 @@ export default function WikiVaultPage() {
           <div className="wlist" data-testid="vault-inbox-list">
             {inbox.length === 0
               ? <div className="wlist-empty" data-testid="vault-inbox-empty">Không có note fleeting — inbox sạch.</div>
-              : inbox.slice(0, 4).map(inboxRow)}
+              : inbox.slice(0, 4).map((it) => <InboxRow key={it.id} it={it} />)}
           </div>
         </div>
         <div className="panel">
@@ -445,7 +397,7 @@ export default function WikiVaultPage() {
           <div className="wact-list" data-testid="vault-act-list">
             {activity.length === 0
               ? <div className="wlist-empty" data-testid="vault-act-empty">Chưa có hoạt động.</div>
-              : activity.map(actRow)}
+              : activity.map((a, i) => <ActivityRow key={`${a.ts}-${a.noteId}-${i}`} a={a} />)}
           </div>
         </div>
         <div className="panel wproposal-mini">
