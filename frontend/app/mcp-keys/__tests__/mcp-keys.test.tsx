@@ -32,10 +32,16 @@ const CATALOG = () => ({
   success: true,
   data: {
     tools: [
-      { name: "fin_a", server: "finance", capability: "read", neutral: false, description: "finance a" },
-      { name: "fin_b", server: "finance", capability: "read", neutral: false, description: "finance b" },
-      { name: "trc_a", server: "tracing", capability: "read", neutral: false, description: "tracing a" },
-      { name: "wri_a", server: "write", capability: "propose", neutral: false, description: "write a" },
+      // fin_a HAS params (the #129 params-table test); fin_b is a no-arg tool ("không tham số").
+      { name: "fin_a", server: "finance", capability: "read", neutral: false, description: "finance a",
+        fullDescription: "finance a — the full docstring with details.",
+        params: [{ name: "channel", type: "str", required: true }, { name: "days", type: "int", required: false, default: 90 }] },
+      { name: "fin_b", server: "finance", capability: "read", neutral: false, description: "finance b",
+        fullDescription: "finance b — full docstring, no args.", params: [] },
+      { name: "trc_a", server: "tracing", capability: "read", neutral: false, description: "tracing a",
+        fullDescription: "tracing a full", params: [] },
+      { name: "wri_a", server: "write", capability: "propose", neutral: false, description: "write a",
+        fullDescription: "write a full", params: [] },
     ],
     counts: { read: 3, write: 1, total: 4, byMount: { finance: 2, tracing: 1, write: 1 }, allMounts: 4, note: "x" },
     capabilityBoundary: { read: "reads only", write: "enqueue only" },
@@ -116,8 +122,12 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
 
     // now sends {label, scope} (scope = empty by default → sees-nothing, honest)
     await waitFor(() => expect(createMcpKey).toHaveBeenCalledWith({ label: "agent-x", scope: { domains: [], tools: [] } }));
-    // the full token is shown ONCE
+    // #128 — the token is shown ONCE but MASKED by default (the full secret is NOT on screen)
     const once = await screen.findByTestId("key-once");
+    expect(within(once).getByTestId("key-once-token")).not.toHaveTextContent("Knew_secret_TOKEN_999");
+    expect(within(once).getByTestId("key-once-token").textContent).toMatch(/•/); // masked dots
+    // reveal-on-demand → the full token appears
+    await user.click(within(once).getByTestId("key-once-reveal"));
     expect(within(once).getByTestId("key-once-token")).toHaveTextContent("Knew_secret_TOKEN_999");
     // dismissing hides it (the token won't reappear)
     await user.click(screen.getByTestId("key-once-dismiss"));
@@ -256,5 +266,73 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     await waitFor(() => expect(screen.getByTestId("scope-cat-error")).toHaveTextContent("catalog 500"));
     // the create form itself still renders (label input present — create still possible)
     expect(screen.getByTestId("key-label-input")).toBeInTheDocument();
+  });
+});
+
+describe("#129 MCP Keys — tool-detail expand (fullDescription + params table)", () => {
+  beforeEach(() => { getMcpCatalog.mockResolvedValue(CATALOG()); });
+
+  it("a tool row EXPANDS → its fullDescription + a params TABLE (name/type/required/default)", async () => {
+    getMcpKeys.mockResolvedValue(LIST([]));
+    render(<McpKeysPage />);
+    await waitFor(() => expect(screen.getByTestId("tool-row-fin_a")).toBeInTheDocument());
+    // collapsed by default — no detail
+    expect(screen.queryByTestId("tool-detail-fin_a")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("tool-expand-fin_a"));
+    // expanded: full description + the params table
+    expect(screen.getByTestId("tool-fulldesc-fin_a")).toHaveTextContent("the full docstring with details");
+    const table = screen.getByTestId("tool-params-fin_a");
+    expect(within(table).getByTestId("tool-param-fin_a-channel")).toHaveTextContent("channel");
+    expect(within(table).getByTestId("tool-param-fin_a-channel")).toHaveTextContent("str");
+    expect(within(table).getByTestId("tool-param-fin_a-channel")).toHaveTextContent("có"); // required
+    // a param WITH a default shows it; required-no-default shows "—"
+    expect(within(table).getByTestId("tool-param-fin_a-days")).toHaveTextContent("90");
+  });
+
+  it("🔴 a NO-ARG tool → 'không tham số' (honest-empty, not a fabricated row)", async () => {
+    getMcpKeys.mockResolvedValue(LIST([]));
+    render(<McpKeysPage />);
+    await waitFor(() => expect(screen.getByTestId("tool-row-fin_b")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("tool-expand-fin_b"));
+    expect(screen.getByTestId("tool-noparams-fin_b")).toHaveTextContent("không tham số");
+    expect(screen.queryByTestId("tool-params-fin_b")).toBeNull(); // no params table
+  });
+
+  it("expanding a tool does NOT toggle its scope checkbox (the ⓘ stops propagation)", async () => {
+    getMcpKeys.mockResolvedValue(LIST([]));
+    render(<McpKeysPage />);
+    await waitFor(() => expect(screen.getByTestId("tool-check-fin_a")).toBeInTheDocument());
+    const check = screen.getByTestId("tool-check-fin_a") as HTMLInputElement;
+    expect(check.checked).toBe(false);
+    await userEvent.setup().click(screen.getByTestId("tool-expand-fin_a"));
+    expect(check.checked).toBe(false); // still unchecked — expand ≠ tick
+    expect(screen.getByTestId("tool-detail-fin_a")).toBeInTheDocument();
+  });
+});
+
+describe("#128 MCP Keys — polish: key value masked (reveal-on-demand)", () => {
+  beforeEach(() => { getMcpCatalog.mockResolvedValue(CATALOG()); });
+
+  it("a freshly-created key is MASKED by default; reveal shows it, toggle re-masks", async () => {
+    getMcpKeys.mockResolvedValue(LIST([]));
+    createMcpKey.mockResolvedValue(CREATED({ key: "Ksecret_LONG_value_42", label: "z" }));
+    render(<McpKeysPage />);
+    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("key-label-input"), "z");
+    await user.click(screen.getByTestId("key-create-btn"));
+    const token = await screen.findByTestId("key-once-token");
+    // masked: the raw secret is NOT on screen
+    expect(token).not.toHaveTextContent("Ksecret_LONG_value_42");
+    expect(token.textContent).toMatch(/•/);
+    // the copy button is still offered (copies the real key — the #88 wiring is unchanged)
+    expect(screen.getByTestId("key-once-copy")).toBeInTheDocument();
+    // reveal → full key visible; toggle again → masked
+    await user.click(screen.getByTestId("key-once-reveal"));
+    expect(screen.getByTestId("key-once-token")).toHaveTextContent("Ksecret_LONG_value_42");
+    await user.click(screen.getByTestId("key-once-reveal"));
+    expect(screen.getByTestId("key-once-token")).not.toHaveTextContent("Ksecret_LONG_value_42");
   });
 });

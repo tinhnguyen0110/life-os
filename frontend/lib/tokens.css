@@ -1093,11 +1093,28 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wimport-actions { margin-top:14px; display:flex; justify-content:flex-end; }
 
 /* #88-part-2 scope editor + catalog audit */
-.scope-editor { max-height:340px; overflow:auto; border:1px solid var(--line-2); border-radius:var(--r); padding:8px 10px; }
-.scope-domain { margin-bottom:10px; }
-.scope-domain-head { display:flex; align-items:center; gap:8px; cursor:pointer; padding:3px 0; font-weight:600; }
+.scope-editor { max-height:380px; overflow:auto; border:1px solid var(--line-2); border-radius:var(--r); padding:10px 12px; }
+.scope-domain { margin-bottom:12px; }
+.scope-domain-head { display:flex; align-items:center; gap:8px; cursor:pointer; padding:4px 0; font-weight:600; }
 .scope-domain-name { font-family:var(--mono); font-size:12px; }
-.scope-tools { padding-left:22px; display:flex; flex-direction:column; gap:2px; margin-top:2px; }
-.scope-tool { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11.5px; padding:1px 0; }
+/* #128 — a touch more breathing room in the tick grid (was gap:2px/padding:1px — cramped) */
+.scope-tools { padding-left:22px; display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+.scope-tool-wrap { border-radius:6px; }
+.scope-tool-wrap:hover { background:color-mix(in oklch, var(--bg-2) 60%, transparent); }
+.scope-tool { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11.5px; padding:3px 6px; border-radius:6px; }
 .scope-tool-name { font-family:var(--mono); color:var(--tx-0); flex-shrink:0; }
 .scope-tool-desc { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* #129 — the ⓘ tool-detail expand toggle + the expanded detail (full desc + params table) */
+.tool-info { flex-shrink:0; background:transparent; border:0; color:var(--tx-2); cursor:pointer; font-size:12px; line-height:1; padding:2px 5px; border-radius:5px; font-family:var(--mono); }
+.tool-info:hover { color:var(--accent); background:color-mix(in oklch, var(--accent) 14%, transparent); }
+.tool-info.on { color:var(--accent); }
+.tool-detail { margin:2px 0 8px 30px; padding:8px 10px; border-left:2px solid var(--accent); background:color-mix(in oklch, var(--bg-2) 50%, transparent); border-radius:0 6px 6px 0; }
+.tool-fulldesc { font-family:var(--mono); font-size:10.5px; line-height:1.5; color:var(--tx-1); white-space:pre-wrap; word-break:break-word; margin:0 0 8px; }
+.tool-noparams { font-size:11px; font-style:italic; }
+.tool-params { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10.5px; }
+.tool-params th { text-align:left; color:var(--tx-2); font-weight:600; padding:2px 8px 4px 0; border-bottom:1px solid var(--line-2); }
+.tool-params td { padding:3px 8px 3px 0; border-bottom:1px solid color-mix(in oklch, var(--line) 50%, transparent); vertical-align:top; }
+.tool-params tr:last-child td { border-bottom:0; }
+.tool-params .tp-name { color:var(--tx-0); font-weight:600; }
+.tool-params .tp-type { color:var(--violet, var(--accent)); }

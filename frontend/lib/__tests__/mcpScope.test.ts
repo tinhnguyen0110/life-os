@@ -12,6 +12,7 @@ import type { McpCatalogTool, McpScope } from "../types";
 
 const T = (name: string, server: string): McpCatalogTool => ({
   name, server, capability: "read", neutral: false, description: `${name} desc`,
+  fullDescription: `${name} full desc`, params: [],
 });
 // 2 domains: "finance" (3 tools), "tracing" (2 tools)
 const CATALOG: McpCatalogTool[] = [

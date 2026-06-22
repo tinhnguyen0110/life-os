@@ -2187,7 +2187,22 @@ export interface McpCatalogTool {
   capability: string;
   /** whether the tool is neutral (no side-class). */
   neutral: boolean;
+  /** the 1-line summary (the collapsed label). */
   description: string;
+  /** #129 — the full tool docstring (shown when a tool row is expanded). */
+  fullDescription: string;
+  /** #129 — the tool's call-params (name/type/required/default). [] = a no-arg tool
+   *  ("không tham số"). Mirrors the FROZEN #129-BE catalog shape. */
+  params: McpToolParam[];
+}
+
+/** #129 — one call-parameter of a tool (the expanded params table row). `default` is
+ *  present only when the param HAS a default (omitted for required/no-default params). */
+export interface McpToolParam {
+  name: string;
+  type: string;
+  required: boolean;
+  default?: unknown;
 }
 
 /** Catalog counts — BE-computed (render-only). byMount = the per-DOMAIN tool count

@@ -21,6 +21,14 @@ import type { McpKey, McpScope } from "@/lib/types";
 /** the MCP endpoint base (mounts live at <base>/mcp/<server>/mcp). */
 const MCP_BASE = `${apiBase}/mcp`;
 
+/** #128 — mask a key value for display: show a short prefix + a dotted tail (never the
+ *  full secret on screen unless the user reveals). Short keys → all dots. */
+function maskKey(key: string): string {
+  if (!key) return "";
+  if (key.length <= 8) return "•".repeat(key.length);
+  return `${key.slice(0, 6)}${"•".repeat(Math.max(8, key.length - 6))}`;
+}
+
 export default function McpKeysPage() {
   const { keys, status, errMsg, reload, create, update, remove } = useMcpKeys();
   const { catalog, status: catStatus, errMsg: catErr, reload: catReload } = useMcpCatalog();
@@ -46,6 +54,10 @@ export default function McpKeysPage() {
   // the catalog-audit panel toggle
   const [showAudit, setShowAudit] = useState(false);
 
+  // #128 — mask the just-created key VALUE (reveal-on-demand security hygiene). Default
+  // masked; the user reveals to copy by eye, or just clicks Copy (no reveal needed).
+  const [keyRevealed, setKeyRevealed] = useState(false);
+
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = label.trim();
@@ -54,6 +66,7 @@ export default function McpKeysPage() {
     try {
       const row = await create({ label: trimmed, scope: createScope });
       setJustCreated(row);
+      setKeyRevealed(false); // #128 — a fresh key starts MASKED
       setLabel("");
       setCreateScope(EMPTY_SCOPE);
     } catch (err) {
@@ -179,8 +192,16 @@ export default function McpKeysPage() {
       {justCreated && (
         <div className="panel" style={{ padding: "12px 14px", marginTop: 12, borderColor: "var(--accent)" }} data-testid="key-once">
           <div className="kicker pos" style={{ marginBottom: 6 }}>✓ Đã tạo · sao chép key NGAY (chỉ hiện một lần)</div>
-          <code className="key-once-token" data-testid="key-once-token" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>{justCreated.key}</code>
-          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          {/* #128 — the key value is MASKED by default; reveal-on-demand (security hygiene).
+              Copy works without revealing (clipboard, never on-screen). */}
+          <code className="key-once-token" data-testid="key-once-token" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>
+            {keyRevealed ? justCreated.key : maskKey(justCreated.key)}
+          </code>
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn sm" type="button" data-testid="key-once-reveal"
+              onClick={() => setKeyRevealed((r) => !r)} aria-pressed={keyRevealed}>
+              {keyRevealed ? "🙈 Ẩn" : "👁 Hiện"}
+            </button>
             <button className="btn sm" type="button" data-testid="key-once-copy"
               onClick={() => navigator.clipboard?.writeText(justCreated.key)}>Sao chép</button>
             <button className="btn sm" type="button" data-testid="key-once-dismiss"
