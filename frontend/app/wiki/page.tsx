@@ -320,7 +320,12 @@ export default function WikiVaultPage() {
         <div className="panel">
           <div className="phead">
             <span className="kicker">Inbox cần refine</span>
-            <span className="wstatus" style={{ color: "var(--amber)", background: "var(--amber-dim)" }}>{inbox.length} fleeting</span>
+            {/* #143-W2: this badge counts the INBOX/refine-queue (overview.inbox) — a DIFFERENT
+                metric from the KPI "Fleeting" tile (stats.byStatus.fleeting = fleeting-STATUS notes).
+                Both were labeled "fleeting" → confusing (two numbers, one word). Label this one by
+                its true meaning — the refine queue (matches this panel's "Inbox cần refine" kicker) —
+                so the two read distinctly + honestly. Pure label, no logic. */}
+            <span className="wstatus" style={{ color: "var(--amber)", background: "var(--amber-dim)" }} data-testid="vault-inbox-count">{inbox.length} cần refine</span>
             <Link className="link" href="/wiki/inbox" style={{ marginLeft: "auto" }}>triage →</Link>
           </div>
           <div className="wlist" data-testid="vault-inbox-list">
@@ -403,7 +408,18 @@ export default function WikiVaultPage() {
         <div className="panel wproposal-mini">
           <div className="phead">
             <span className="kicker">Proposal queue</span>
-            <span className="wstatus" style={{ color: "var(--accent)", background: "var(--accent-dim)" }} data-testid="vault-proposal-count">
+            {/* #143-W4: accent ONLY when there's something to review; an EMPTY queue (0) RECEDES
+                (muted --tx-2, no accent fill) — same quiet-empty-state principle as the tracing R2
+                pill. Reserve the loud accent for "there's a proposal waiting". Style-only. */}
+            <span
+              className="wstatus"
+              style={
+                overview.proposalCount > 0
+                  ? { color: "var(--accent)", background: "var(--accent-dim)" }
+                  : { color: "var(--tx-2)", background: "transparent" }
+              }
+              data-testid="vault-proposal-count"
+            >
               {overview.proposalCount} chờ duyệt
             </span>
           </div>
