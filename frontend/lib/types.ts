@@ -1804,6 +1804,40 @@ export interface TracingOverview {
   score: TracingScore;
 }
 
+/* ============================================================================
+   #109 Tracing templates — pre-made activity presets. The picker prefills the add
+   form (id/name/goal/unit/emoji/color) so the user doesn't define a habit from scratch.
+   8 seed by default; user overrides/adds via PUT, removes/hides via DELETE/bulk.
+   Mirrors the FROZEN #109-BE shape. source="seed" (default) | "user" (overridden/added).
+   ============================================================================ */
+export interface TracingTemplate {
+  id: string;
+  name: string;
+  /** target value (e.g. 8 ly nước). */
+  goal: number;
+  unit: string;
+  emoji: string;
+  /** an icon key (BE-side; may be ""). */
+  icon: string;
+  /** hex accent for the chip. */
+  color: string;
+  source: "seed" | "user";
+}
+
+/** GET /tracing/templates → the template list. */
+export interface TracingTemplateList {
+  templates: TracingTemplate[];
+}
+
+/** PUT /tracing/templates/{id} body — upsert a user template/override. */
+export interface TracingTemplateInput {
+  name: string;
+  goal: number;
+  unit: string;
+  emoji: string;
+  color: string;
+}
+
 /** POST /tracing/{id}/log body — one raw session. val<0 → 422. */
 export interface TracingLogInput {
   val: number;

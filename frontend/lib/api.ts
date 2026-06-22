@@ -79,6 +79,9 @@ import type {
   TracingLogInput,
   ActivityInput,
   ActivityPatch,
+  TracingTemplate,
+  TracingTemplateList,
+  TracingTemplateInput,
   DevActivityOverview,
   DevScanResult,
   CodeInsight,
@@ -855,6 +858,35 @@ export function updateActivity(id: string, body: ActivityPatch): Promise<ApiResp
  *  its logged sessions survive. Returns {archived:id}. 404 if unknown. */
 export function archiveActivity(id: string): Promise<ApiResponse<{ archived: string }>> {
   return apiDelete<{ archived: string }>(`/tracing/activities/${encodeURIComponent(id)}`);
+}
+
+/* ---- #109 Tracing templates — activity presets that prefill the add form ---- */
+
+/** GET /tracing/templates — the preset list (8 seed by default + any user overrides). */
+export function getTracingTemplates(): Promise<ApiResponse<TracingTemplateList>> {
+  return apiGet<TracingTemplateList>("/tracing/templates");
+}
+
+/** PUT /tracing/templates/{id} — upsert a user template/override. Returns the saved one. */
+export function upsertTracingTemplate(id: string, body: TracingTemplateInput): Promise<ApiResponse<TracingTemplate>> {
+  return apiPut<TracingTemplate>(`/tracing/templates/${encodeURIComponent(id)}`, body);
+}
+
+/** DELETE /tracing/templates/{id} — remove a user template / tombstone-hide a seed.
+ *  Returns {deleted, changed}. */
+export function deleteTracingTemplate(id: string): Promise<ApiResponse<{ deleted: string; changed: boolean }>> {
+  return apiDelete<{ deleted: string; changed: boolean }>(`/tracing/templates/${encodeURIComponent(id)}`);
+}
+
+/** POST /tracing/templates/reset — back to the 8 pure seed (drops user overrides/hides).
+ *  Returns {reset, count}. */
+export function resetTracingTemplates(): Promise<ApiResponse<{ reset: boolean; count: number }>> {
+  return apiPost<{ reset: boolean; count: number }>("/tracing/templates/reset", {});
+}
+
+/** POST /tracing/templates/bulk-delete — remove/hide many (idempotent). Returns {deleted}. */
+export function bulkDeleteTracingTemplates(ids: string[]): Promise<ApiResponse<{ deleted: number }>> {
+  return apiPost<{ deleted: number }>("/tracing/templates/bulk-delete", { ids });
 }
 
 /* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----

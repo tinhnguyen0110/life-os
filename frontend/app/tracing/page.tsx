@@ -19,6 +19,7 @@
 import { useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
 import { apiBase, ApiError } from "@/lib/api";
+import { TracingTemplatePicker } from "@/components/TracingTemplatePicker";
 import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
@@ -198,6 +199,16 @@ export default function TracingPage() {
       {adding && (
         <div className="panel" data-testid="add-form">
           <div className="phead"><span className="kicker">Hoạt động mới</span></div>
+          {/* #109 — template picker: tick a preset → prefill the form below (keeps the
+              user's reminder toggle state; only the activity fields are filled). */}
+          <div style={{ padding: "10px 16px 0" }}>
+            <TracingTemplatePicker
+              onPick={(t) => setAdding((prev) => ({
+                ...(prev ?? EMPTY_ADD),
+                id: t.id, name: t.name, goal: t.goal, unit: t.unit, emoji: t.emoji, color: t.color,
+              }))}
+            />
+          </div>
           <form onSubmit={onAdd} style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div className="field"><span className="flabel">ID (không dấu, vd water)</span>
               <input className="finput" value={adding.id} onChange={(e) => setAdding({ ...adding, id: e.target.value })} data-testid="a-id" placeholder="water" /></div>
