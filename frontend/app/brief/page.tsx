@@ -9,6 +9,7 @@
    States: loading · error · ready(+calm).
    ============================================================ */
 import { useBrief } from "@/lib/useBrief";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { fmtClock, relativeTime, fmtUSD, fmtRate, orDash } from "@/lib/format";
 import { apiBase } from "@/lib/api";
 import type { Brief, Priority, Severity } from "@/lib/types";
@@ -82,15 +83,17 @@ export default function BriefPage() {
         </div>
       )}
 
-      {status === "loading" && (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="brief-loading">Đang tạo brief…</div>
-      )}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="brief-error">
-          Không tạo được brief: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="brief-loading"
+        loadingLabel="Đang tạo brief…"
+        errorTestid="brief-error"
+        errorLabel={<>Không tạo được brief: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && brief && (
         <>

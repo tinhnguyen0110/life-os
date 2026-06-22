@@ -10,6 +10,7 @@
    ============================================================ */
 import { useState } from "react";
 import { useActivity } from "@/lib/useActivity";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { relativeTime, fmtClock, fmtDuration, fmtRate, orDash } from "@/lib/format";
 import { apiBase } from "@/lib/api";
 import type { ActivityRun, RunStatus } from "@/lib/types";
@@ -87,15 +88,17 @@ export default function ActivityPage() {
         </div>
       )}
 
-      {status === "loading" && (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="activity-loading">Đang tải activity…</div>
-      )}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="activity-error">
-          Không tải được activity: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="activity-loading"
+        loadingLabel="Đang tải activity…"
+        errorTestid="activity-error"
+        errorLabel={<>Không tải được activity: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <>

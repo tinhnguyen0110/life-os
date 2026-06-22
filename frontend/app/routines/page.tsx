@@ -8,6 +8,7 @@
    ============================================================ */
 import { useMemo, useState } from "react";
 import { useRoutines } from "@/lib/useRoutines";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { relativeTime } from "@/lib/format";
 import { apiBase } from "@/lib/api";
 import { Icon } from "@/lib/icons";
@@ -91,13 +92,17 @@ export default function RoutinesPage() {
         </div>
       )}
 
-      {status === "loading" && <div className="hint" style={{ padding: "24px 4px" }} data-testid="routines-loading">Đang tải routines…</div>}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="routines-error">
-          Không tải được routines: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="routines-loading"
+        loadingLabel="Đang tải routines…"
+        errorTestid="routines-error"
+        errorLabel={<>Không tải được routines: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <>
