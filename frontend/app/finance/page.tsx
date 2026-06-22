@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useFinance, driftLabel } from "@/lib/useFinance";
 import { useSafeRouter } from "@/lib/useNav";
 import { KpiCard } from "@/components/shared/KpiCard";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { EquityCurve } from "@/components/EquityCurve";
 import { fmtUSD, fmtSign, fmtPct, relativeTime, deltaGlyph } from "@/lib/format";
 import { apiBase, getCryptoBasis, setCryptoBasis } from "@/lib/api";
@@ -214,29 +215,6 @@ export default function FinancePage() {
 
   const allocations = data.allocations ?? [];
 
-  if (status === "loading") {
-    return (
-      <section className="view" data-screen="S5">
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="finance-loading">
-          Đang tải tài chính…
-        </div>
-      </section>
-    );
-  }
-
-  if (status === "error") {
-    return (
-      <section className="view" data-screen="S5">
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="finance-error">
-          Không tải được tài chính: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>
-            Thử lại
-          </button>
-        </div>
-      </section>
-    );
-  }
-
   const totalTone = (data.pnlTotal?.abs ?? 0) < 0 ? "neg" : "pos";
   // #81 — net-worth day-change via the SHARED honest 3-way rule: null/flat → ▬/faint
   // (was 2-way `changeNeg ? ▼ : ▲` → a no-data or $0 day rendered a green ▲, false-gain).
@@ -244,7 +222,20 @@ export default function FinancePage() {
   const sparkHtml =
     data.series && data.series.length >= 2 ? spark(data.series, "var(--accent)", 640, 130) : "";
 
+  // #138-P1a — the loading/error branch is the shared <LoadErrorShell>; the exact
+  // copy + testids + section wrapper are passed verbatim so the output is byte-identical.
   return (
+    <LoadErrorShell
+      status={status}
+      sectionClassName="view"
+      dataScreen="S5"
+      loadingTestid="finance-loading"
+      loadingLabel="Đang tải tài chính…"
+      errorTestid="finance-error"
+      errorLabel={<>Không tải được tài chính: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+      reload={reload}
+      reloadLabel="Thử lại"
+    >
     <section className="view" data-screen="S5" data-testid="finance-screen">
       <div className="vtitle">
         <h1>Tài chính</h1>
@@ -344,5 +335,6 @@ export default function FinancePage() {
         </div>
       </div>
     </section>
+    </LoadErrorShell>
   );
 }
