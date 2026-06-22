@@ -3,6 +3,7 @@
    Every endpoint returns { success, data, warning? } (ApiResponse<T>).
    No auth (single-user, localhost). Sprint 0: only /health is live.
    ============================================================ */
+import { markWikiTreeStale } from "./wikiTreeBus";
 import type {
   ApiResponse,
   HealthData,
@@ -502,27 +503,33 @@ export function getWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
   return apiGet<WikiNote>(`/wiki/notes/${id}`);
 }
 
-/** W3 capture — create a (default fleeting) wiki note. Returns the created note. */
+/** W3 capture — create a (default fleeting) wiki note. Returns the created note.
+ *  #108: bumps the wiki-tree bus on success so the Explorer count reflects the new
+ *  note's folder (a create into a NEW folder otherwise left the Explorer stale). */
 export function createWikiNote(body: WikiNoteCreateInput): Promise<ApiResponse<WikiNote>> {
-  return apiPost<WikiNote>("/wiki/notes", body);
+  return apiPost<WikiNote>("/wiki/notes", body).then(bumpTree);
 }
 
 /** #93 import — POST /wiki/import. Multi-file, FAIL-SOFT: the response carries a
  *  per-file {ok, noteId, title, error}; a bad file (wrong ext / empty) returns
- *  ok:false + an agent-error (code/message/hint), it does NOT fail the whole call. */
+ *  ok:false + an agent-error (code/message/hint), it does NOT fail the whole call.
+ *  #108: bumps the tree bus on success (imported notes can land in new folders). */
 export function importWiki(body: WikiImportInput): Promise<ApiResponse<WikiImportResponse>> {
-  return apiPost<WikiImportResponse>("/wiki/import", body);
+  return apiPost<WikiImportResponse>("/wiki/import", body).then(bumpTree);
 }
 
-/** W2 edit — partial update (PUT /wiki/notes/{id}). Bad enum → ApiError(422) per-field. */
+/** W2 edit — partial update (PUT /wiki/notes/{id}). Bad enum → ApiError(422) per-field.
+ *  #108: bumps the tree bus on success (a `folder` change moves the note between
+ *  folders → both old + new counts change). */
 export function updateWikiNote(id: number, body: WikiNoteUpdateInput): Promise<ApiResponse<WikiNote>> {
-  return apiPut<WikiNote>(`/wiki/notes/${id}`, body);
+  return apiPut<WikiNote>(`/wiki/notes/${id}`, body).then(bumpTree);
 }
 
 /** #94 SOFT-delete a wiki note → moves to trash (recoverable via restore). Returns
- *  `{deleted, deletedAt}`. Inbound links become ghost server-side. 404 if unknown. */
+ *  `{deleted, deletedAt}`. Inbound links become ghost server-side. 404 if unknown.
+ *  #108: bumps the tree bus (the note leaves its folder → count drops). */
 export function deleteWikiNote(id: number): Promise<ApiResponse<WikiSoftDeleteResult>> {
-  return apiDelete<WikiSoftDeleteResult>(`/wiki/notes/${id}`);
+  return apiDelete<WikiSoftDeleteResult>(`/wiki/notes/${id}`).then(bumpTree);
 }
 
 /** #94 GET /wiki/trash — the soft-deleted notes (newest-deleted-first) + count. */
@@ -530,15 +537,25 @@ export function getWikiTrash(): Promise<ApiResponse<WikiTrash>> {
   return apiGet<WikiTrash>("/wiki/trash");
 }
 
-/** #94 POST /wiki/notes/{id}/restore — bring a soft-deleted note back. Returns the note. */
+/** #94 POST /wiki/notes/{id}/restore — bring a soft-deleted note back. Returns the note.
+ *  #108: bumps the tree bus (the restored note re-enters its folder → count rises). */
 export function restoreWikiNote(id: number): Promise<ApiResponse<WikiNote>> {
-  return apiPost<WikiNote>(`/wiki/notes/${id}/restore`, {});
+  return apiPost<WikiNote>(`/wiki/notes/${id}/restore`, {}).then(bumpTree);
 }
 
 /** #94 POST /wiki/notes/bulk-delete — soft-delete many. FAIL-SOFT: per-id results
- *  ({id, ok, error}); a bad id returns ok:false + agent-error, doesn't fail the batch. */
+ *  ({id, ok, error}); a bad id returns ok:false + agent-error, doesn't fail the batch.
+ *  #108: bumps the tree bus on success (the deleted notes leave their folders). */
 export function bulkDeleteWikiNotes(ids: number[]): Promise<ApiResponse<WikiBulkDeleteResult>> {
-  return apiPost<WikiBulkDeleteResult>("/wiki/notes/bulk-delete", { ids });
+  return apiPost<WikiBulkDeleteResult>("/wiki/notes/bulk-delete", { ids }).then(bumpTree);
+}
+
+/** #108 helper — mark the wiki tree stale (the Explorer refetches its counts) then pass
+ *  the response through unchanged. Only runs on a RESOLVED (successful) write; a throw
+ *  skips it (the tree didn't change). */
+function bumpTree<T>(res: T): T {
+  markWikiTreeStale();
+  return res;
 }
 
 /** W2 — a note's connections: linked + unlinked mentions + outbound (resolved/ghost). */

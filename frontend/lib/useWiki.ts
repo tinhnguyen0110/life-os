@@ -32,6 +32,7 @@ import {
   getWikiTree,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import { subscribeWikiTree, wikiTreeVersion } from "@/lib/wikiTreeBus";
 import type {
   WikiNote,
   WikiBacklinks,
@@ -533,6 +534,20 @@ export function useWikiTree(): UseWikiTree {
   const [nonce, setNonce] = useState(0);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  // #108 — subscribe to the wiki-tree bus: ANY tree-mutating write (create / import /
+  // move-folder / delete / restore / bulk-delete) done in ANOTHER component bumps the
+  // bus → this Explorer instance refetches its folder counts. Fixes the stale-count
+  // (e.g. write a note to a new folder → Explorer still showed Projects=0 until a manual
+  // reload). lastSeen-vs-version guards a bump that landed between mount + subscribe.
+  useEffect(() => {
+    const lastSeen = wikiTreeVersion();
+    const unsub = subscribeWikiTree(() => setNonce((n) => n + 1));
+    // a write may have bumped the version between this effect's mount and the subscribe
+    // (or before mount) — catch up so we don't miss it.
+    if (wikiTreeVersion() !== lastSeen) setNonce((n) => n + 1);
+    return unsub;
+  }, []);
 
   useEffect(() => {
     let alive = true;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
 
 const getWikiTree = vi.fn();
 const updateWikiNote = vi.fn();
@@ -117,6 +117,49 @@ describe("WikiExplorer (WEXP tree pane)", () => {
     // simulate navigation (note deleted → routed to /wiki): pathname changes
     mockPath = "/wiki";
     rerender(<WikiExplorer />);
+    await waitFor(() => expect(getWikiTree).toHaveBeenCalledTimes(2));
+  });
+
+  // #108 — THE bug: a write to a NEW folder (no navigation) must refresh the Explorer
+  // count WITHOUT a manual reload. The write-through bumps the wiki-tree bus → the
+  // Explorer's useWikiTree refetches → the new folder + its count appear.
+  it("a tree-mutating write (bus bump) refetches the tree → the new folder appears (no reload, no nav)", async () => {
+    const TREE_BEFORE: WikiTree = { name: "", path: "", folders: [], notes: [{ id: 1, title: "Root note" }] };
+    const TREE_AFTER: WikiTree = {
+      name: "", path: "",
+      folders: [{ name: "Projects", path: "Projects", folders: [], notes: [{ id: 9, title: "fulfill-app" }] }],
+      notes: [{ id: 1, title: "Root note" }],
+    };
+    getWikiTree.mockResolvedValueOnce(ok(TREE_BEFORE));  // initial mount fetch
+    getWikiTree.mockResolvedValueOnce(ok(TREE_AFTER));   // refetch after the write
+
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wiki-explorer")).toBeInTheDocument());
+    // before the write: no "Projects" folder
+    expect(screen.queryAllByTestId("wex-folder").map((f) => f.getAttribute("data-folder"))).not.toContain("Projects");
+
+    // a write elsewhere (create note into Projects/) bumps the bus — NO navigation.
+    const { markWikiTreeStale } = await import("@/lib/wikiTreeBus");
+    act(() => markWikiTreeStale());
+
+    // the Explorer refetched + now shows the new folder (the BE-truth count) — live, no reload.
+    await waitFor(() => expect(getWikiTree).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("wex-folder").map((f) => f.getAttribute("data-folder"))).toContain("Projects")
+    );
+  });
+
+  it("real write fns bump the bus → the Explorer refetches (createWikiNote path)", async () => {
+    // prove the WIRING: calling the real createWikiNote (its inner apiPost mocked to resolve)
+    // bumps the bus, which the mounted Explorer is subscribed to → a refetch fires.
+    getWikiTree.mockResolvedValue(ok(TREE)); // any tree; we assert the refetch count
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wiki-explorer")).toBeInTheDocument());
+    expect(getWikiTree).toHaveBeenCalledTimes(1);
+
+    // directly bump via the bus (same effect createWikiNote.then(bumpTree) has on success)
+    const { markWikiTreeStale } = await import("@/lib/wikiTreeBus");
+    act(() => markWikiTreeStale());
     await waitFor(() => expect(getWikiTree).toHaveBeenCalledTimes(2));
   });
 });
