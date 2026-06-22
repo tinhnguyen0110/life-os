@@ -127,6 +127,34 @@ def test_unsupported_extension_is_agent_error(wiki_db):
     assert "pdf" in row["error"]["message"].lower() or "supported" in row["error"]["message"].lower()
 
 
+# --- #127 W2: STRICT .md/.txt import (the rejection contract) ---------------- #
+@pytest.mark.parametrize("filename", ["doc.pdf", "img.png", "sheet.docx", "a.zip", "x.exe",
+                                      "weird.PDF", "up.DOCX"])
+def test_W2_unsupported_ext_rejected_no_note(wiki_db, filename):
+    """🔴 W2 strict-import (the load-bearing case): a non-.md/.txt filename → INVALID_INPUT
+    agent-error + NO note created. Case-insensitive (the ext is lowered before the check)."""
+    res = wsvc.import_files([(filename, "whatever content\nbody")])
+    row = res["imported"][0]
+    assert row["ok"] is False
+    assert row["error"]["code"] == "INVALID_INPUT" and row["error"]["retryable"] is False
+    assert res["createdCount"] == 0, "an unsupported file must create NO note"
+
+
+@pytest.mark.parametrize("filename", ["note.md", "plain.txt", "up.MD", "up.TXT"])
+def test_W2_supported_ext_imports(wiki_db, filename):
+    """.md / .txt (any case) → a note IS created (the accept side of the contract)."""
+    res = wsvc.import_files([(filename, "Title line\nbody text")])
+    assert res["imported"][0]["ok"] is True and res["createdCount"] == 1
+
+
+def test_W2_no_extension_imports_as_text(wiki_db):
+    """DECIDED + frozen: a NO-extension filename (e.g. 'README') imports as a plain .txt-style note
+    (the `if ext and ...` rule — a no-ext file is treated as text, NOT rejected). Documented so W3
+    knows the contract: reject is for KNOWN-bad extensions, not for the absence of one."""
+    res = wsvc.import_files([("README", "Readme title\nbody")])
+    assert res["imported"][0]["ok"] is True and res["createdCount"] == 1
+
+
 def test_bad_status_enum_is_agent_error_not_silent_default(wiki_db):
     """A frontmatter status NOT in the Literal → agent-error (honest), NOT a silent default."""
     md = "---\ntitle: T\nstatus: not-a-real-status\n---\nbody"
