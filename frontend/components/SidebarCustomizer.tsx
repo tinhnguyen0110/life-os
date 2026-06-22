@@ -11,6 +11,7 @@
    the effective per-section order so up/down reflects what the user sees.
    ============================================================ */
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { NAV } from "@/lib/nav";
 import { Icon } from "@/lib/icons";
 import { useSidebarPrefs } from "@/lib/useSidebarPrefs";
@@ -29,7 +30,7 @@ export function SidebarCustomizer({ open, onClose }: { open: boolean; onClose: (
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const hidden = new Set(prefs.hidden);
   // Effective ordered NAV (applyPrefs with an EMPTY hidden set → keeps every item
@@ -38,7 +39,9 @@ export function SidebarCustomizer({ open, onClose }: { open: boolean; onClose: (
   const ordered = applyPrefs({ hidden: [], order: prefs.order }, NAV);
   const hiddenCount = prefs.hidden.length;
 
-  return (
+  // #142-P2: portal to <body> so no ancestor `transform`/`filter` can capture the
+  // `position:fixed` panel (keeps it viewport-anchored — same fix + reason as B1/Popover).
+  return createPortal(
     <>
       <div id="sbcust-backdrop" onClick={onClose} data-testid="sbcust-backdrop" />
       <div id="sbcust" className="show" role="dialog" aria-label="Tùy chỉnh sidebar" data-testid="sbcust-panel">
@@ -122,7 +125,8 @@ export function SidebarCustomizer({ open, onClose }: { open: boolean; onClose: (
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 

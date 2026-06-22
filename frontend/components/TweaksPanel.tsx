@@ -8,6 +8,7 @@
    is dropped — entry point is Settings per S13 dispatch).
    ============================================================ */
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { THEMES, BG, type ThemeKey, type BgKey } from "@/lib/tweaks";
 import { useTweaks } from "@/lib/useTweaks";
 
@@ -30,11 +31,14 @@ export function TweaksPanel({ open, onClose }: { open: boolean; onClose: () => v
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const cur = THEMES[tweaks.theme] ?? THEMES.copper;
 
-  return (
+  // #142-P2: portal to <body> so an ancestor with a `transform` (e.g. the settings
+  // content grid's hover-translate) can't capture the `position:fixed` panel and pin it
+  // off-screen relative to that ancestor instead of the viewport (the real B1 bug).
+  return createPortal(
     <>
       <div id="tweaks-backdrop" onClick={onClose} data-testid="tweaks-backdrop" />
       <div id="tweaks" className="show" role="dialog" aria-label="Tweaks giao diện" data-testid="tweaks-panel">
@@ -115,7 +119,8 @@ export function TweaksPanel({ open, onClose }: { open: boolean; onClose: () => v
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 

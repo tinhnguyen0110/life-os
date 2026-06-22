@@ -487,7 +487,10 @@ select.finput { cursor:pointer; }
    so clicking outside closes it. Floating bottom-right panel preserved.
    ============================================================ */
 #tweaks-backdrop { position:fixed; inset:0; z-index:399; background:transparent; }
-#tweaks { position:fixed; bottom:44px; right:16px; width:286px; z-index:400; overflow:hidden;
+/* #142-P2: viewport-edge guard — max-width keeps the fixed 286px panel on a NARROW
+   window (≤ viewport − 32px for the 16px L/R margin); the body max-height (below)
+   keeps it on a SHORT window. */
+#tweaks { position:fixed; bottom:44px; right:16px; width:286px; max-width:calc(100vw - 32px); z-index:400; overflow:hidden;
   background:color-mix(in oklch, var(--bg-1) 92%, transparent); backdrop-filter:blur(14px);
   border:1px solid var(--line-2); border-radius:14px; box-shadow:0 24px 60px -20px rgba(0,0,0,.85); font-family:var(--sans); }
 #tweaks .tw-head { display:flex; align-items:center; gap:9px; padding:13px 15px; border-bottom:1px solid var(--line); }
@@ -495,7 +498,9 @@ select.finput { cursor:pointer; }
 #tweaks .tw-head b { font-size:13px; font-weight:600; flex:1; }
 #tweaks .tw-head .x { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; color:var(--tx-2); border:0; background:transparent; }
 #tweaks .tw-head .x:hover { background:var(--bg-3); color:var(--tx-0); }
-#tweaks .tw-body { padding:14px 15px 16px; max-height:80vh; overflow:auto; }
+/* #142-P2: clamp the body so panel (head ~48px + bottom:44px offset + 8px margin) fits a
+   SHORT viewport — min() keeps the 80vh cap on a tall window, clamps on a short one. */
+#tweaks .tw-body { padding:14px 15px 16px; max-height:min(80vh, calc(100vh - 100px)); overflow:auto; }
 #tweaks .tw-sec { font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--tx-2); margin:4px 0 9px; }
 #tweaks .tw-sec:not(:first-child) { margin-top:18px; }
 #tweaks .swatches { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
@@ -519,7 +524,9 @@ select.finput { cursor:pointer; }
    anchored to the sidebar so it opens near the customize button (top-left).
    ============================================================ */
 #sbcust-backdrop { position:fixed; inset:0; z-index:399; background:transparent; }
-#sbcust { position:fixed; top:54px; left:16px; width:296px; z-index:400; overflow:hidden;
+/* #142-P2: viewport-edge guard — max-width keeps the fixed 296px panel on a NARROW
+   window; the body max-height (below) keeps it on a SHORT window. */
+#sbcust { position:fixed; top:54px; left:16px; width:296px; max-width:calc(100vw - 32px); z-index:400; overflow:hidden;
   background:color-mix(in oklch, var(--bg-1) 92%, transparent); backdrop-filter:blur(14px);
   border:1px solid var(--line-2); border-radius:14px; box-shadow:0 24px 60px -20px rgba(0,0,0,.85); font-family:var(--sans); }
 #sbcust .sbc-head { display:flex; align-items:center; gap:9px; padding:13px 15px; border-bottom:1px solid var(--line); }
@@ -527,7 +534,9 @@ select.finput { cursor:pointer; }
 #sbcust .sbc-head b { font-size:13px; font-weight:600; flex:1; }
 #sbcust .sbc-head .x { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; color:var(--tx-2); border:0; background:transparent; }
 #sbcust .sbc-head .x:hover { background:var(--bg-3); color:var(--tx-0); }
-#sbcust .sbc-body { padding:12px 14px 14px; max-height:74vh; overflow:auto; }
+/* #142-P2: clamp the body so panel (head ~48px + top:54px offset + 8px margin) fits a
+   SHORT viewport — min() keeps the 74vh cap on a tall window, clamps on a short one. */
+#sbcust .sbc-body { padding:12px 14px 14px; max-height:min(74vh, calc(100vh - 110px)); overflow:auto; }
 #sbcust .sbc-intro { font-size:11px; color:var(--tx-2); line-height:1.5; margin-bottom:8px; }
 #sbcust .sbc-sec { font-family:var(--mono); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--tx-2); padding:11px 2px 4px; }
 #sbcust .sbc-row { display:flex; align-items:center; gap:9px; padding:5px 6px; border-radius:8px; }
