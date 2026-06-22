@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+from core import git as core_git  # PROJECTS-UNIFY T4 (#115): shared read-only git-exec layer
 
 from .schema import Health, ProjectMetrics, ProjectStatus
 
@@ -40,9 +41,15 @@ def slug(folder_name: str) -> str:
 # READ-ONLY whitelist. The reader may ONLY run these git subcommands. Any other
 # subcommand (pull/fetch/clone/commit/add/checkout/...) is rejected before exec,
 # making a mutating op structurally impossible (read-only HARD invariant).
-_READ_ONLY_GIT = frozenset(
-    {"rev-list", "rev-parse", "log", "status", "ls-files", "cat-file", "show-ref"}
-)
+# PROJECTS-UNIFY T4 (#115): the read-only git-exec layer now lives in core/git.py (shared
+# with dev_activity). These module-local names are thin re-exports so every existing caller
+# (the 6 _git(...) sites here, _is_git_repo, the 7 `except _RepoUnreadable`, the test import
+# `from modules.projects.reader import _git, _READ_ONLY_GIT`) keeps working byte-identically.
+# Behavior is verbatim the old reader._git (strip + raise + whitelist, 10s default).
+_READ_ONLY_GIT = core_git.READ_ONLY_GIT
+_RepoUnreadable = core_git.RepoUnreadable  # alias the class → `except _RepoUnreadable` catches the shared raise
+_git = core_git.run_read_git              # same signature (repo_path, args, *, timeout=10.0) -> str
+_is_git_repo = core_git.is_git_repo       # same (repo_path) -> bool
 
 # Health thresholds in whole UTC days (architect Logic block — verbatim).
 _ACT_MAX_DAYS = 7
@@ -58,45 +65,6 @@ _EXT_LANG: dict[str, str] = {
     ".css": "CSS", ".scss": "CSS", ".html": "HTML", ".md": "Markdown",
     ".sql": "SQL", ".vue": "Vue", ".dart": "Dart", ".lua": "Lua", ".r": "R",
 }
-
-
-class _RepoUnreadable(Exception):
-    """Internal: repo path is missing / not a git repo / git unavailable."""
-
-
-def _git(repo_path: Path, args: list[str], *, timeout: float = 10.0) -> str:
-    """Run ONE read-only git command in ``repo_path`` and return stdout (stripped).
-
-    Enforces the read-only whitelist before exec. Raises ``_RepoUnreadable`` on a
-    non-zero exit, timeout, or missing git binary — callers translate that to a
-    fail-open dead status. NEVER runs a mutating subcommand.
-    """
-    if not args or args[0] not in _READ_ONLY_GIT:
-        # Defensive: refuse anything not on the read-only whitelist.
-        raise ValueError(f"refusing non-read-only git op: {args[:1]}")
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_path), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise _RepoUnreadable(str(exc)) from exc
-    if proc.returncode != 0:
-        raise _RepoUnreadable(f"git {args[0]} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
-
-
-def _is_git_repo(repo_path: Path) -> bool:
-    """True iff ``repo_path`` exists and is inside a git work tree."""
-    if not repo_path.is_dir():
-        return False
-    try:
-        return _git(repo_path, ["rev-parse", "--is-inside-work-tree"]) == "true"
-    except _RepoUnreadable:
-        return False
 
 
 def _last_commit_iso(repo_path: Path) -> str | None:

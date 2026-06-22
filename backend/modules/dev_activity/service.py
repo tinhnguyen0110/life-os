@@ -15,11 +15,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+
+from core import git as core_git  # PROJECTS-UNIFY T4 (#115): shared read-only git-exec layer
 
 from . import store
 
@@ -111,10 +112,17 @@ def _scan_repo(path: str, since_day: str, emails: set[str], agg: dict,
     ``seen_shas`` so the remote pull can DEDUP (a commit seen local AND remote counts ONCE)."""
     repo = os.path.basename(path.rstrip("/"))
     try:
-        out = subprocess.run(
-            ["git", "-C", path, "log", "--no-merges", "--all", f"--since={since_day}",
+        # PROJECTS-UNIFY T4 (#115): route through the shared read-only git-exec
+        # (core.git.run_read_git_proc) — `log` is on the whitelist. PRESERVED EXACTLY: the
+        # 60s timeout, the RAW (un-stripped) .stdout the line-parser needs, and the fail-SOFT
+        # try/except (any error → skip this repo + warn, the scan continues). run_read_git_proc
+        # returns the raw CompletedProcess (no strip, no raise-on-nonzero) so behavior is
+        # byte-identical to the old inline subprocess.run.
+        out = core_git.run_read_git_proc(
+            path,
+            ["log", "--no-merges", "--all", f"--since={since_day}",
              "--numstat", f"--pretty=format:{_LOG_FORMAT}", "--date=iso-strict"],
-            capture_output=True, text=True, timeout=60,
+            timeout=60,
         ).stdout
     except Exception as exc:  # noqa: BLE001 — any git failure → skip this repo, continue the scan
         logger.warning("dev_activity: git log failed for %s: %s", path, exc)
