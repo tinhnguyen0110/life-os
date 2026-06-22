@@ -757,12 +757,27 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 
 /* explorer tree */
 .wex { display:flex; flex-direction:column; padding:8px 6px; font-size:12.5px; }
-.wex-head { display:flex; align-items:center; gap:8px; padding:4px 6px 8px; }
-.wex-refresh { margin-left:auto; background:none; border:0; color:var(--tx-2); cursor:pointer; display:grid; place-items:center; }
+.wex-head { display:flex; align-items:center; gap:6px; padding:4px 6px 8px; }
+.wex-refresh { background:none; border:0; color:var(--tx-2); cursor:pointer; display:grid; place-items:center; }
 .wex-refresh svg { width:13px; height:13px; }
+/* #127-W3 — toolbar ops (new-folder + import) */
+.wex-tool { background:none; border:0; color:var(--tx-2); cursor:pointer; display:grid; place-items:center; font-size:14px; line-height:1; padding:2px 4px; border-radius:5px; }
+.wex-tool:hover { color:var(--accent); background:color-mix(in oklch, var(--accent) 14%, transparent); }
+.wex-tool svg { width:13px; height:13px; }
 .wex-tree { display:flex; flex-direction:column; gap:1px; }
-.wex-folder-head { display:flex; align-items:center; gap:6px; width:100%; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; border-radius:6px; text-align:left; font-size:12.5px; }
+/* #127-W3 — folder head row holds the toggle + the ⋯ ops menu (ops shows on hover) */
+.wex-folder-head-row { display:flex; align-items:center; gap:2px; position:relative; }
+.wex-folder-head { display:flex; align-items:center; gap:6px; flex:1; min-width:0; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; border-radius:6px; text-align:left; font-size:12.5px; }
 .wex-folder-head:hover { background:var(--bg-2); }
+.wex-folder-ops { position:relative; flex-shrink:0; }
+.wex-ops-btn { background:none; border:0; color:var(--tx-2); cursor:pointer; padding:2px 6px; border-radius:5px; font-size:13px; line-height:1; opacity:0; transition:opacity .12s; }
+.wex-folder-head-row:hover .wex-ops-btn, .wex-ops-btn[aria-expanded="true"] { opacity:1; }
+.wex-ops-btn:hover { color:var(--accent); background:color-mix(in oklch, var(--accent) 14%, transparent); }
+.wex-ops-menu { position:absolute; right:0; top:100%; z-index:20; background:var(--bg-1); border:1px solid var(--line-2); border-radius:8px; box-shadow:0 6px 20px -6px #000; padding:4px; min-width:170px; display:flex; flex-direction:column; }
+.wex-ops-menu button { background:none; border:0; color:var(--tx-1); cursor:pointer; text-align:left; padding:6px 10px; border-radius:6px; font-size:12px; font-family:var(--sans); white-space:nowrap; }
+.wex-ops-menu button:hover { background:var(--bg-2); color:var(--tx-0); }
+.wex-ops-menu button.neg { color:var(--red); }
+.wex-ops-menu button.neg:hover { background:color-mix(in oklch, var(--red) 16%, transparent); }
 .wex-caret { display:inline-block; transition:transform .12s; font-size:10px; color:var(--tx-2); }
 .wex-caret.open { transform:rotate(90deg); }
 .wex-folder-name { font-weight:600; color:var(--tx-0); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

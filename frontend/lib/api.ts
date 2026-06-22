@@ -36,6 +36,10 @@ import type {
   WikiNoteUpdateInput,
   WikiImportInput,
   WikiImportResponse,
+  WikiFolderCreateInput,
+  WikiFolderCreateResult,
+  WikiFolderDeleteResult,
+  WikiFolderMoveResult,
   WikiTrash,
   WikiSoftDeleteResult,
   WikiBulkDeleteResult,
@@ -681,6 +685,32 @@ export function getWikiMocs(): Promise<ApiResponse<WikiMocList>> {
  *  explorer pane. Empty vault → groups: []. (WEXP-BE freezes the shape.) */
 export function getWikiTree(): Promise<ApiResponse<WikiTree>> {
   return apiGet<WikiTree>("/wiki/tree");
+}
+
+/* ---- #127 W3 — wiki folder lifecycle ops (the dev work-dir; REST/FE-only, not MCP).
+   All bump the tree bus so the Explorer refetches. The W1 FROZEN contracts. ---- */
+
+/** POST /wiki/folders — create a (possibly nested) folder. A nested path ("A/B/C")
+ *  nests through each segment (the empty-folder anchor). dup → 409, empty → 422. */
+export function createWikiFolder(body: WikiFolderCreateInput): Promise<ApiResponse<WikiFolderCreateResult>> {
+  return apiPost<WikiFolderCreateResult>("/wiki/folders", body).then(bumpTree);
+}
+
+/** DELETE /wiki/folders/{path} — SCOPED soft-delete the subtree (recoverable). 🔴 observe
+ *  "gone" via the refreshed /wiki/tree, NOT get_note (still returns the tombstone). 422 on root. */
+export function deleteWikiFolder(path: string): Promise<ApiResponse<WikiFolderDeleteResult>> {
+  return apiDelete<WikiFolderDeleteResult>(`/wiki/folders/${encodeWikiPath(path)}`).then(bumpTree);
+}
+
+/** PUT /wiki/folders/{path}/move — re-prefix the subtree to `to`. 409 target-exists, 422 into-own-subtree. */
+export function moveWikiFolder(path: string, to: string): Promise<ApiResponse<WikiFolderMoveResult>> {
+  return apiPut<WikiFolderMoveResult>(`/wiki/folders/${encodeWikiPath(path)}/move`, { to }).then(bumpTree);
+}
+
+/** encode a "/"-delimited folder path for the URL WITHOUT escaping the slashes (the BE
+ *  route is {path:path} = a catch-all; each SEGMENT is encoded, the slashes are kept). */
+function encodeWikiPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 /* ---- A1b citation verify + A1a sync conflicts (W7) ---- */

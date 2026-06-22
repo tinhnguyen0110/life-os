@@ -1,22 +1,32 @@
 "use client";
 /* ============================================================
-   WikiExplorer — the LEFT file-tree pane (WEXP-FE). Obsidian-style: collapsible
-   virtual folders (from each note's `folder` field via GET /wiki/tree), click a
-   file → open /wiki/[id] in the content pane, + a move-note UX (move a note to a
-   folder → PUT {folder} → tree refetches).
+   WikiExplorer — the LEFT file-tree pane (WEXP-FE #108 · #127-W3 ops menu).
 
-   Folders are VIRTUAL (the path string is "/"-delimited, e.g. "pkm/zettel") — the
-   FE nests the flat groups into a tree by splitting the path. Fail-soft: tree error
-   → an inline notice, never blanks the pane. Empty vault → honest empty.
+   #108: Obsidian-style collapsible folders (GET /wiki/tree), click a file → open
+   /wiki/[id], move a note → PUT {folder} → tree refetches.
+
+   #127-W3 (the wiki work-dir ops — the HEADLINE: create a sub-folder INSIDE a folder +
+   delete, ON the browser UI). Adds an ops menu:
+   • toolbar: "+ Thư mục" (new folder at root) + "Nhập" (import .md/.txt — file picker AND
+     paste).
+   • per-folder ⋯ menu: "Thư mục con mới" (NESTED create → POST /wiki/folders {path:
+     parent+"/"+name}) · "Đổi tên / Chuyển" (move/rename → PUT /wiki/folders/{path}/move)
+     · "Xóa" (in-page confirm #72, NOT window.confirm → DELETE /wiki/folders/{path} →
+     the subtree leaves the tree; soft-delete, recoverable).
+   🔴 the W1 gotcha: after a delete, "gone" is observed via the REFRESHED /wiki/tree
+   (reload()), NOT get_note (still returns the tombstone). All folder ops bump the tree bus.
    ============================================================ */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWikiTree } from "@/lib/useWiki";
 import { Icon } from "@/lib/icons";
-import { ApiError } from "@/lib/api";
-import type { WikiTreeNode, WikiTreeNote } from "@/lib/types";
+import {
+  ApiError, createWikiFolder, deleteWikiFolder, moveWikiFolder, importWiki,
+} from "@/lib/api";
+import type { WikiTreeNode, WikiTreeNote, WikiImportResult } from "@/lib/types";
 
 const EMPTY_NODE: WikiTreeNode = { name: "", path: "", folders: [], notes: [] };
+const ALLOWED_EXT = [".md", ".txt"]; // mirror the BE _ALLOWED_EXT (client-side guard too)
 
 /** All folder paths in the (backend-nested) tree — for the move-to-folder picker. */
 function allFolderPaths(node: WikiTreeNode, out: string[] = []): string[] {
@@ -25,6 +35,12 @@ function allFolderPaths(node: WikiTreeNode, out: string[] = []): string[] {
     allFolderPaths(child, out);
   }
   return out;
+}
+
+/** ApiError message + hint (agent-error #46/#70). */
+function errText(e: unknown): string {
+  if (e instanceof ApiError) return e.hint ? `${e.message} (${e.hint})` : e.message;
+  return (e as Error).message;
 }
 
 function NoteRow({
@@ -47,33 +63,55 @@ function NoteRow({
 }
 
 function FolderNode({
-  node, depth, openFolders, toggle, activeId, onOpen, onMove,
+  node, depth, openFolders, toggle, activeId, onOpen, onMove, onFolderOp,
 }: {
   node: WikiTreeNode; depth: number;
   openFolders: Set<string>; toggle: (path: string) => void;
   activeId: number | null;
   onOpen: (id: number) => void; onMove: (note: WikiTreeNote) => void;
+  onFolderOp: (op: "new-sub" | "rename" | "delete", node: WikiTreeNode) => void;
 }) {
   const isOpen = openFolders.has(node.path);
   const childFolders = [...node.folders].sort((a, b) => a.name.localeCompare(b.name));
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div className="wex-folder" data-testid="wex-folder" data-folder={node.path}>
-      <button
-        type="button"
-        className="wex-folder-head"
-        style={{ paddingLeft: 6 + depth * 12 }}
-        onClick={() => toggle(node.path)}
-        aria-expanded={isOpen}
-        data-testid="wex-folder-toggle"
-      >
-        <span className={`wex-caret ${isOpen ? "open" : ""}`}>▸</span>
-        <span className="wex-folder-name">{node.name}</span>
-        <span className="faint wex-count">{node.notes.length}</span>
-      </button>
+      <div className="wex-folder-head-row">
+        <button
+          type="button"
+          className="wex-folder-head"
+          style={{ paddingLeft: 6 + depth * 12 }}
+          onClick={() => toggle(node.path)}
+          aria-expanded={isOpen}
+          data-testid="wex-folder-toggle"
+        >
+          <span className={`wex-caret ${isOpen ? "open" : ""}`}>▸</span>
+          <span className="wex-folder-name">{node.name}</span>
+          <span className="faint wex-count">{node.notes.length}</span>
+        </button>
+        {/* #127-W3 — the per-folder ops ⋯ menu */}
+        <div className="wex-folder-ops" data-testid={`wex-folder-ops-${node.path}`}>
+          <button type="button" className="wex-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`wex-ops-toggle-${node.path}`} title="Thao tác thư mục">⋯</button>
+          {menuOpen && (
+            <div className="wex-ops-menu" role="menu" data-testid={`wex-ops-menu-${node.path}`}>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-sub", node); }} data-testid={`wex-op-newsub-${node.path}`}>
+                ＋ Thư mục con mới
+              </button>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("rename", node); }} data-testid={`wex-op-rename-${node.path}`}>
+                ✎ Đổi tên / Chuyển
+              </button>
+              <button type="button" role="menuitem" className="neg" onClick={() => { setMenuOpen(false); onFolderOp("delete", node); }} data-testid={`wex-op-delete-${node.path}`}>
+                ✕ Xóa
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
       {isOpen && (
         <div className="wex-folder-body">
           {childFolders.map((c) => (
-            <FolderNode key={c.path} node={c} depth={depth + 1} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={onOpen} onMove={onMove} />
+            <FolderNode key={c.path} node={c} depth={depth + 1} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={onOpen} onMove={onMove} onFolderOp={onFolderOp} />
           ))}
           <div style={{ paddingLeft: 6 + (depth + 1) * 12 }}>
             {node.notes.map((n) => <NoteRow key={n.id} note={n} activeId={activeId} onOpen={onOpen} onMove={onMove} />)}
@@ -90,29 +128,22 @@ export function WikiExplorer() {
   const { tree, status, errMsg, reload, move } = useWikiTree();
   const root = tree ?? EMPTY_NODE;
 
-  // active note id from the current /wiki/<id> path (numeric segment).
   const activeId = useMemo(() => {
     const seg = pathname?.split("/")[2];
     const n = seg ? parseInt(seg, 10) : NaN;
     return Number.isNaN(n) ? null : n;
   }, [pathname]);
 
-  // Refetch the tree when the wiki route CHANGES (not on mount — useWikiTree already
-  // fetches once on mount). The tree changes on create / delete / move; the most common
-  // signal of one is a navigation (e.g. deleting a note routes back to /wiki). Without
-  // this the explorer kept showing a just-deleted note until a manual refresh. The
-  // prev-pathname ref (seeded with the current path) skips the initial render so we
-  // don't double-fetch on mount; subsequent path changes trigger a refetch.
+  // refetch the tree on wiki-route change (#108).
   const prevPath = useRef(pathname);
   useEffect(() => {
-    if (prevPath.current === pathname) return; // unchanged (incl. first run) → skip
+    if (prevPath.current === pathname) return;
     prevPath.current = pathname;
     reload();
   }, [pathname, reload]);
 
   const folderPaths = useMemo(() => allFolderPaths(root), [root]);
 
-  // open-folder state (top-level folders open by default for discoverability).
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
   const toggle = (path: string) =>
     setOpenFolders((prev) => {
@@ -121,10 +152,18 @@ export function WikiExplorer() {
       return next;
     });
 
-  // move-note modal state
+  // move-note modal (#108)
   const [moving, setMoving] = useState<WikiTreeNote | null>(null);
   const [moveErr, setMoveErr] = useState("");
   const [moveBusy, setMoveBusy] = useState(false);
+
+  // #127-W3 — folder-op state (a single op modal driven by `folderOp`).
+  type FolderOp = { kind: "new-root" | "new-sub" | "rename" | "delete"; node: WikiTreeNode | null };
+  const [folderOp, setFolderOp] = useState<FolderOp | null>(null);
+  const [opVal, setOpVal] = useState("");           // the new-folder name / new path
+  const [opBusy, setOpBusy] = useState(false);
+  const [opErr, setOpErr] = useState("");
+  const [showImport, setShowImport] = useState(false);
 
   async function doMove(folder: string) {
     if (!moving) return;
@@ -133,9 +172,50 @@ export function WikiExplorer() {
       await move(moving.id, folder.trim());
       setMoving(null);
     } catch (e) {
-      setMoveErr(e instanceof ApiError ? e.message : (e as Error).message);
+      setMoveErr(errText(e));
     } finally {
       setMoveBusy(false);
+    }
+  }
+
+  function startFolderOp(op: "new-sub" | "rename" | "delete", node: WikiTreeNode) {
+    setFolderOp({ kind: op, node });
+    setOpErr("");
+    // prefill: rename → the current path; new-sub → empty (just the child name).
+    setOpVal(op === "rename" ? node.path : "");
+  }
+  function startNewRoot() {
+    setFolderOp({ kind: "new-root", node: null });
+    setOpErr(""); setOpVal("");
+  }
+
+  async function runFolderOp() {
+    if (!folderOp) return;
+    setOpErr(""); setOpBusy(true);
+    try {
+      if (folderOp.kind === "delete" && folderOp.node) {
+        await deleteWikiFolder(folderOp.node.path);
+      } else if (folderOp.kind === "new-root") {
+        const name = opVal.trim();
+        if (!name) { setOpErr("Nhập tên thư mục."); setOpBusy(false); return; }
+        await createWikiFolder({ path: name });
+      } else if (folderOp.kind === "new-sub" && folderOp.node) {
+        const name = opVal.trim().replace(/^\/+|\/+$/g, "");
+        if (!name) { setOpErr("Nhập tên thư mục con."); setOpBusy(false); return; }
+        // 🔴 the NESTED create — parent path + "/" + the child name.
+        await createWikiFolder({ path: `${folderOp.node.path}/${name}` });
+      } else if (folderOp.kind === "rename" && folderOp.node) {
+        const to = opVal.trim().replace(/^\/+|\/+$/g, "");
+        if (!to) { setOpErr("Nhập đường dẫn mới."); setOpBusy(false); return; }
+        if (to === folderOp.node.path) { setFolderOp(null); setOpBusy(false); return; }
+        await moveWikiFolder(folderOp.node.path, to);
+      }
+      reload(); // 🔴 observe the change via the refreshed tree (the W1 gotcha)
+      setFolderOp(null); setOpVal("");
+    } catch (e) {
+      setOpErr(errText(e));
+    } finally {
+      setOpBusy(false);
     }
   }
 
@@ -145,6 +225,10 @@ export function WikiExplorer() {
     <div className="wex" data-testid="wiki-explorer">
       <div className="wex-head">
         <span className="kicker">Explorer</span>
+        <span className="sp" style={{ flex: 1 }} />
+        {/* #127-W3 toolbar: new root folder + import */}
+        <button type="button" className="wex-tool" onClick={startNewRoot} title="Thư mục mới (gốc)" data-testid="wex-new-folder">＋</button>
+        <button type="button" className="wex-tool" onClick={() => setShowImport(true)} title="Nhập .md/.txt" data-testid="wex-import-open"><Icon name="i-doc" /></button>
         <button type="button" className="wex-refresh" onClick={reload} title="Tải lại cây" data-testid="wex-refresh"><Icon name="i-refresh" /></button>
       </div>
 
@@ -156,14 +240,13 @@ export function WikiExplorer() {
         </div>
       ) : topFolders.length === 0 && root.notes.length === 0 ? (
         <div className="hint" style={{ padding: "12px 10px" }} data-testid="wex-empty">
-          Chưa có note nào. Capture ở Inbox rồi gắn folder để cây xuất hiện.
+          Chưa có thư mục nào. Bấm ＋ để tạo thư mục, hoặc nhập .md/.txt.
         </div>
       ) : (
         <div className="wex-tree" data-testid="wex-tree">
           {topFolders.map((f) => (
-            <FolderNode key={f.path} node={f} depth={0} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={(id) => router.push(`/wiki/${id}`)} onMove={setMoving} />
+            <FolderNode key={f.path} node={f} depth={0} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={(id) => router.push(`/wiki/${id}`)} onMove={setMoving} onFolderOp={startFolderOp} />
           ))}
-          {/* root-level notes (folder "") */}
           {root.notes.length > 0 && (
             <div className="wex-root-notes" data-testid="wex-root-notes">
               {root.notes.map((n) => <NoteRow key={n.id} note={n} activeId={activeId} onOpen={(id) => router.push(`/wiki/${id}`)} onMove={setMoving} />)}
@@ -172,7 +255,7 @@ export function WikiExplorer() {
         </div>
       )}
 
-      {/* move-to-folder modal */}
+      {/* move-note modal (#108) */}
       {moving && (
         <div className="wex-move" data-testid="wex-move-modal">
           <div className="wex-move-box">
@@ -180,6 +263,61 @@ export function WikiExplorer() {
             <MoveForm folders={folderPaths} busy={moveBusy} err={moveErr} onCancel={() => { setMoving(null); setMoveErr(""); }} onMove={doMove} />
           </div>
         </div>
+      )}
+
+      {/* #127-W3 — the folder-op modal (new-root / new-sub / rename / delete-confirm) */}
+      {folderOp && (
+        <div className="wex-move" data-testid="wex-folderop-modal">
+          <div className="wex-move-box">
+            {folderOp.kind === "delete" ? (
+              <div data-testid="wex-delete-confirm">
+                <div className="kicker neg" style={{ marginBottom: 8 }}>Xóa thư mục “{folderOp.node?.path}”?</div>
+                <div className="hint faint" style={{ marginBottom: 10, lineHeight: 1.5 }}>
+                  Cả thư mục con + note bên trong sẽ vào thùng rác (khôi phục được). Thư mục khác không ảnh hưởng.
+                </div>
+                {opErr && <div className="hint" style={{ color: "var(--red)", marginBottom: 6 }} data-testid="wex-op-error">⚠ {opErr}</div>}
+                <div style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn sm ghost" onClick={() => setFolderOp(null)} disabled={opBusy} data-testid="wex-delete-cancel">Hủy</button>
+                  <button type="button" className="btn sm neg" onClick={runFolderOp} disabled={opBusy} data-testid="wex-delete-confirm-yes">
+                    {opBusy ? "Đang xóa…" : "Xóa thư mục"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="kicker" style={{ marginBottom: 8 }}>
+                  {folderOp.kind === "new-root" && "Thư mục mới (gốc)"}
+                  {folderOp.kind === "new-sub" && `Thư mục con của “${folderOp.node?.path}”`}
+                  {folderOp.kind === "rename" && `Đổi tên / chuyển “${folderOp.node?.path}”`}
+                </div>
+                <input
+                  className="wex-move-input"
+                  value={opVal}
+                  onChange={(e) => setOpVal(e.target.value)}
+                  placeholder={folderOp.kind === "new-sub" ? "tên thư mục con (vd: zettel)" : folderOp.kind === "rename" ? "đường dẫn mới (vd: pkm/zettel)" : "tên thư mục (vd: pkm)"}
+                  data-testid="wex-op-input"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === "Enter") runFolderOp(); }}
+                />
+                {opErr && <div className="hint" style={{ color: "var(--red)", marginTop: 6 }} data-testid="wex-op-error">⚠ {opErr}</div>}
+                <div style={{ display: "flex", gap: 7, justifyContent: "flex-end", marginTop: 8 }}>
+                  <button type="button" className="btn sm ghost" onClick={() => setFolderOp(null)} disabled={opBusy}>Hủy</button>
+                  <button type="button" className="btn sm accent" onClick={runFolderOp} disabled={opBusy} data-testid="wex-op-submit">
+                    {opBusy ? "Đang lưu…" : "Lưu"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* #127-W3 — the import modal (file picker + paste, .md/.txt only) */}
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onDone={() => { reload(); }}
+        />
       )}
     </div>
   );
@@ -211,6 +349,106 @@ function MoveForm({
         <button type="button" className="btn sm accent" onClick={() => onMove(val)} disabled={busy} data-testid="wex-move-submit">
           {busy ? "Đang chuyển…" : "Chuyển"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** #127-W3 — import .md/.txt: a file picker (multi) AND a paste box (filename + content).
+ *  Rejects non-.md/.txt client-side; ALSO surfaces the BE per-file agent-error honestly. */
+function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<WikiImportResult[] | null>(null);
+  const [err, setErr] = useState("");
+  // paste mode
+  const [pasteName, setPasteName] = useState("");
+  const [pasteBody, setPasteBody] = useState("");
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  function extOk(filename: string): boolean {
+    const lower = filename.toLowerCase();
+    return ALLOWED_EXT.some((e) => lower.endsWith(e));
+  }
+
+  async function importFiles(files: { filename: string; content: string }[]) {
+    if (files.length === 0) { setErr("Chưa có tệp nào."); return; }
+    setErr(""); setBusy(true);
+    try {
+      const res = await importWiki({ files });
+      setResults(res.data.imported);
+      if (res.data.createdCount > 0) onDone(); // refresh the tree if anything landed
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = Array.from(e.target.files ?? []);
+    // client-side reject non-.md/.txt (the BE rejects too — this is the friendly guard).
+    const bad = list.filter((f) => !extOk(f.name));
+    if (bad.length > 0) {
+      setErr(`Chỉ nhận .md/.txt — bỏ qua: ${bad.map((f) => f.name).join(", ")}`);
+    }
+    const good = list.filter((f) => extOk(f.name));
+    const files = await Promise.all(good.map(async (f) => ({ filename: f.name, content: await f.text() })));
+    if (files.length > 0) await importFiles(files);
+  }
+
+  async function onPasteImport() {
+    const name = pasteName.trim();
+    if (!name) { setErr("Nhập tên tệp (vd: ghi-chu.md)."); return; }
+    if (!extOk(name)) { setErr("Tên tệp phải là .md hoặc .txt."); return; }
+    if (!pasteBody.trim()) { setErr("Nội dung trống."); return; }
+    await importFiles([{ filename: name, content: pasteBody }]);
+  }
+
+  return (
+    <div className="wex-move" data-testid="wex-import-modal">
+      <div className="wex-move-box" style={{ minWidth: 320 }}>
+        <div className="kicker" style={{ marginBottom: 8 }}>Nhập ghi chú (.md / .txt)</div>
+
+        {/* file picker */}
+        <div style={{ marginBottom: 10 }}>
+          <input ref={fileRef} type="file" accept=".md,.txt,text/markdown,text/plain" multiple
+            onChange={onPickFiles} data-testid="wex-import-file" style={{ display: "none" }} />
+          <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="wex-import-pick">
+            Chọn tệp…
+          </button>
+          <span className="hint faint" style={{ marginLeft: 8 }}>chỉ .md / .txt</span>
+        </div>
+
+        {/* paste */}
+        <div className="kicker faint" style={{ marginBottom: 4, fontSize: 10 }}>hoặc dán nội dung</div>
+        <input className="wex-move-input" value={pasteName} onChange={(e) => setPasteName(e.target.value)}
+          placeholder="tên tệp (vd: ghi-chu.md)" data-testid="wex-import-paste-name" style={{ marginBottom: 6 }} />
+        <textarea className="wex-move-input" value={pasteBody} onChange={(e) => setPasteBody(e.target.value)} rows={4}
+          placeholder="# Tiêu đề&#10;nội dung markdown…" data-testid="wex-import-paste-body" style={{ resize: "vertical", marginBottom: 6 }} />
+        <button type="button" className="btn sm accent" disabled={busy} onClick={onPasteImport} data-testid="wex-import-paste-submit">
+          {busy ? "Đang nhập…" : "Nhập từ nội dung"}
+        </button>
+
+        {err && <div className="hint" style={{ color: "var(--red)", marginTop: 8 }} data-testid="wex-import-error">⚠ {err}</div>}
+
+        {/* per-file results (honest — ok / rejected) */}
+        {results && (
+          <div style={{ marginTop: 10 }} data-testid="wex-import-results">
+            {results.map((r, i) => (
+              <div key={i} className="hint" style={{ lineHeight: 1.5 }} data-testid={`wex-import-result-${i}`}>
+                {r.ok ? (
+                  <span className="pos">✓ {r.filename} → #{r.noteId}</span>
+                ) : (
+                  <span className="neg" data-testid={`wex-import-rejected-${i}`}>✕ {r.filename}: {r.error?.message}{r.error?.hint ? ` (${r.error.hint})` : ""}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 7, justifyContent: "flex-end", marginTop: 10 }}>
+          <button type="button" className="btn sm ghost" onClick={onClose} data-testid="wex-import-close">Đóng</button>
+        </div>
       </div>
     </div>
   );

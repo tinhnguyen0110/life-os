@@ -1353,6 +1353,47 @@ export interface WikiTreeNode {
 /** GET /wiki/tree payload = the root WikiTreeNode (data IS the node). */
 export type WikiTree = WikiTreeNode;
 
+/* ---- #127 W1/W3 — wiki folder lifecycle (the dev work-dir ops). Mirror the FROZEN
+   W1 response shapes (verified live). Folders are a human-curation surface (REST/FE-only,
+   user CHỐT — not MCP). create = nested any depth (the empty-folder anchor); delete =
+   SCOPED soft-delete the subtree (recoverable); move = re-prefix. ---- */
+
+/** POST /wiki/folders body — create a (possibly nested) folder. path = "/"-delimited;
+ *  a nested path ("A/B/C") nests through each segment (the empty-folder anchor). */
+export interface WikiFolderCreateInput {
+  path: string;
+  desc?: string;
+}
+
+/** POST /wiki/folders response. created=false when the folder already existed (idempotent). */
+export interface WikiFolderCreateResult {
+  path: string;
+  desc: string;
+  created: boolean;
+}
+
+/** DELETE /wiki/folders/{path} response — the SCOPED soft-delete (subtree tombstoned,
+ *  recoverable). deletedNotes = the note ids tombstoned; removedMeta = the meta keys dropped.
+ *  🔴 "gone" is observed via the refreshed /wiki/tree, NOT get_note (still returns the tombstone). */
+export interface WikiFolderDeleteResult {
+  folder: string;
+  deletedNotes: number[];
+  removedMeta: string[];
+  warnings: string[];
+}
+
+/** PUT /wiki/folders/{path}/move body + response — re-prefix the subtree. */
+export interface WikiFolderMoveInput {
+  to: string;
+}
+export interface WikiFolderMoveResult {
+  from: string;
+  to: string;
+  movedNotes: number[];
+  movedMeta: number;
+  warnings: string[];
+}
+
 /* ---- Decision Journal + Calibration (W7-A2 / F1-H1) — MIRRORS backend
    modules/decision_journal/schema.py. A GENERAL decision (not a trade): decision +
    thesis + falsification condition + confidence% (the probability claim) → on
