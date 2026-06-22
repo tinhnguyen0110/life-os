@@ -118,34 +118,55 @@ function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false
   );
 }
 
+/** human label for a reminder channel (GAP 2 — show the SET channel on the card face). */
+function channelLabel(c: RemindChannel | undefined): string {
+  return c === "discord" ? "Discord" : c === "email" ? "Email" : "In-app";
+}
+/** human label for the recurring frequency. */
+function freqLabel(repeat: RemindRepeat): string {
+  return repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : "";
+}
+
 /** a compact remind chip shown on a timed todo/note. #125: when `date` is set it's a
- *  ONE-SHOT (date @ time); otherwise it's the recurring (repeat) chip. */
-function RemindChip({ at, repeat, date, testid }: { at: string; repeat: RemindRepeat; date?: string | null; testid: string }) {
+ *  ONE-SHOT (date @ time); otherwise the recurring (repeat) chip. #136 GAP-2: the SET
+ *  frequency + channel are shown ON the card face (e.g. "🔔 07:00 · hằng ngày · Discord")
+ *  so the user sees what they configured without opening the editor. */
+function RemindChip({ at, repeat, date, channel, testid }: { at: string; repeat: RemindRepeat; date?: string | null; channel?: RemindChannel; testid: string }) {
+  const ch = channelLabel(channel);
   return (
     <span className="tagchip acc" data-testid={testid} title={date ? "Nhắc một lần" : "Nhắc nhở"}>
       🔔 {date ? (
         <><span className="num">{date}</span> lúc <span className="num">{at}</span></>
       ) : (
-        <><span className="num">{at}</span> {repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : ""}</>
+        <><span className="num">{at}</span> · {freqLabel(repeat)}</>
       )}
+      {" · "}<span data-testid={`${testid}-channel`}>{ch}</span>
     </span>
   );
 }
 
-/** Order activities for the timeline rail: TIMED (remindAt set) ascending by time first,
- *  then UN-TIMED (anytime) in their given order. Pure. */
+/** #136 G3 — the effective time on the rail = the dedicated `time` field (independent of
+ *  the reminder), falling back to remindAt when time isn't set. */
+function railTime(a: ActivityView): string | null {
+  return a.time || a.remindAt || null;
+}
+
+/** Order activities for the timeline rail: TIMED (railTime set) ascending first, then
+ *  UN-TIMED (anytime) in their given order. Pure. */
 function timelineOrder(acts: ActivityView[]): { timed: ActivityView[]; anytime: ActivityView[] } {
-  const timed = acts.filter((a) => !!a.remindAt).slice().sort((a, b) => (a.remindAt! < b.remindAt! ? -1 : a.remindAt! > b.remindAt! ? 1 : 0));
-  const anytime = acts.filter((a) => !a.remindAt);
+  const timed = acts.filter((a) => !!railTime(a)).slice().sort((a, b) => {
+    const ta = railTime(a)!, tb = railTime(b)!;
+    return ta < tb ? -1 : ta > tb ? 1 : 0;
+  });
+  const anytime = acts.filter((a) => !railTime(a));
   return { timed, anytime };
 }
 
 export default function TracingPage() {
-  const { data, status, errMsg, warning, reload, log, add, archive } = useTracing();
+  const { data, status, errMsg, warning, reload, log, add, edit, archive, untick } = useTracing();
   const notesApi = useTracingNotes();
 
-  // #126 — edit-mode (default = read-only timeline). Toggling reveals the add/edit affordances.
-  const [editMode, setEditMode] = useState(false);
+  // #136 — NO global edit-mode. Timeline is the default; edit is PER-CARD (each row's ⋯).
 
   // #111 — reminder channels; fetched once; render-safe fallback.
   const IN_APP_ONLY: ReminderChannelOption[] = [{ id: "in_app", label: "In-app", available: true }];
@@ -247,18 +268,48 @@ export default function TracingPage() {
     } catch (err) { setAddErr(errText(err)); } finally { setAddBusy(false); }
   }
 
-  // tick = log one completing session (val=1 ≥ goal=1). 1-click, works in READ mode.
+  // #136 — tick = TOGGLE. tick an undone row → done (log val=1); tick a DONE row → UN-complete
+  // (clear today's log). 1-click, works in the read/timeline view (NOT gated by edit).
   async function onTickTodo(a: ActivityView) {
-    if (a.today.done) return; // append-only; no un-tick
     setRowErr(""); setBusyId(a.id);
     try {
-      await log(a.id, { val: 1, dur_min: null, note: null });
+      if (a.today.done) {
+        await untick(a.id);     // clear today's log → done=false (BE endpoint, #136)
+      } else {
+        await log(a.id, { val: 1, dur_min: null, note: null });
+      }
     } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
   }
 
   async function onArchiveTodo(id: string) {
     setRowErr(""); setBusyId(id);
     try { await archive(id); } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
+  }
+
+  // #136 — inline RENAME (the missing Update): PUT /tracing/activities/{id} {name}.
+  async function onRenameTodo(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) { setRowErr("Tên việc không được trống."); return; }
+    setRowErr(""); setBusyId(id);
+    try { await edit(id, { name: trimmed }); } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
+  }
+
+  // #136 — set/clear a todo's reminder (time + freq + channel) → PUT.
+  async function onSetReminder(id: string, r: RemindState) {
+    setRowErr(""); setBusyId(id);
+    try {
+      await edit(id, {
+        remindAt: r.on ? r.time : null,
+        remindRepeat: r.on ? r.repeat : "off",
+        remindChannel: r.on ? r.channel : undefined,
+      });
+    } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
+  }
+
+  // #136 G3-(ii) — set/clear a todo's dedicated TIME (independent of the reminder) → PUT {time}.
+  async function onSetTime(id: string, time: string | null) {
+    setRowErr(""); setBusyId(id);
+    try { await edit(id, { time }); } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
   }
 
   async function onAddNote(e: React.FormEvent) {
@@ -290,42 +341,211 @@ export default function TracingPage() {
     try { await notesApi.remove(n.id); } catch (err) { setNoteRowErr(errText(err)); } finally { setNoteBusyId(null); }
   }
 
-  /** one timeline row — giờ · dot · việc (tick + name) · chi tiết. */
+  // #136 — set/clear a NOTE's reminder PER-CARD (mirrors the activity per-card reminder).
+  // Notes support BOTH kinds: recurring (repeat) and one-shot (a future date → remindDate).
+  async function onSetNoteReminder(n: TracingNote, r: RemindState) {
+    const isOnce = r.on && r.kind === "once";
+    if (isOnce && !r.date) { setNoteRowErr("Chọn ngày cho nhắc một lần."); return; }
+    setNoteRowErr(""); setNoteBusyId(n.id);
+    try {
+      await notesApi.update(n.id, {
+        remindAt: r.on ? r.time : null,
+        remindDate: isOnce ? r.date : null,
+        remindRepeat: r.on && !isOnce ? r.repeat : "off",
+        remindChannel: r.on ? r.channel : undefined,
+      });
+    } catch (err) { setNoteRowErr(errText(err)); } finally { setNoteBusyId(null); }
+  }
+
+  /** #136 — one timeline row with its OWN per-card edit (⋯ menu: rename inline / set
+   *  reminder / delete). NO global edit toggle. Tick = toggle (done ↔ un-complete). */
   function TimelineRow({ a }: { a: ActivityView }) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [editing, setEditing] = useState(false);       // inline rename
+    const [nameVal, setNameVal] = useState(a.name);
+    const [remOpen, setRemOpen] = useState(false);       // the per-card reminder editor
+    const [timeOpen, setTimeOpen] = useState(false);     // #136 G3 — the per-card time editor
+    const [timeVal, setTimeVal] = useState(railTime(a) ?? "");
+    const [rem, setRem] = useState<RemindState>({
+      ...EMPTY_REMIND,
+      on: !!a.remindAt && a.remindRepeat !== "off",
+      time: a.remindAt ?? "07:00",
+      repeat: (a.remindRepeat && a.remindRepeat !== "off" ? a.remindRepeat : "daily"),
+      channel: a.remindChannel ?? "in_app",
+    });
+
+    async function saveName() {
+      if (nameVal.trim() && nameVal.trim() !== a.name) await onRenameTodo(a.id, nameVal);
+      setEditing(false);
+    }
+    async function saveReminder() {
+      await onSetReminder(a.id, rem);
+      setRemOpen(false);
+    }
+    async function saveTime() {
+      await onSetTime(a.id, timeVal.trim() || null); // #136 G3 — empty clears the time
+      setTimeOpen(false);
+    }
+
     return (
       <div className="tlx-row" data-testid={`tl-${a.id}`} data-done={a.today.done}
         style={{ display: "grid", gridTemplateColumns: "54px 16px 1fr auto", alignItems: "center", gap: 10, padding: "9px 6px", borderBottom: "1px solid var(--bg-2)" }}>
-        {/* giờ */}
-        <span className="num faint" data-testid={`tl-time-${a.id}`} style={{ fontSize: 12, textAlign: "right" }}>
-          {a.remindAt ?? "—"}
-        </span>
+        {/* giờ — #136 G3: the dedicated time (fallback remindAt). Click to set/edit. */}
+        <button type="button" className="tl-time-btn num faint" data-testid={`tl-time-${a.id}`}
+          onClick={() => { setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }} title="Đặt giờ"
+          style={{ fontSize: 12, textAlign: "right", background: "none", border: 0, cursor: "pointer", color: railTime(a) ? "var(--tx-1)" : "var(--tx-2)", fontFamily: "var(--mono)" }}>
+          {railTime(a) ?? "—"}
+        </button>
         {/* color-dot */}
         <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: a.today.done ? "var(--green)" : (a.color || "var(--tx-2)"), justifySelf: "center", boxShadow: a.today.done ? "0 0 6px -1px var(--green)" : undefined }} />
-        {/* việc — 1-click tick + name */}
+        {/* việc — TOGGLE tick + icon + name + (G4-A) metric/sub-detail from REAL fields */}
         <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
           <button type="button" className={`todo-tick${a.today.done ? " on" : ""}`} onClick={() => onTickTodo(a)}
-            disabled={busyId === a.id || a.today.done} data-testid={`tick-${a.id}`} aria-pressed={a.today.done}
-            aria-label={a.today.done ? "Đã xong" : "Đánh dấu xong"} title={a.today.done ? "Đã xong hôm nay" : "Đánh dấu xong"}
-            style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, cursor: a.today.done ? "default" : "pointer",
+            disabled={busyId === a.id} data-testid={`tick-${a.id}`} aria-pressed={a.today.done}
+            aria-label={a.today.done ? "Bỏ đánh dấu xong" : "Đánh dấu xong"} title={a.today.done ? "Bấm để bỏ hoàn thành" : "Đánh dấu xong"}
+            style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, cursor: "pointer",
               border: `1.5px solid ${a.today.done ? "var(--green)" : "var(--tx-2)"}`, background: a.today.done ? "var(--green)" : "transparent",
               color: "var(--bg-0)", fontSize: 12, lineHeight: 1, fontWeight: 700 }}>
             {a.today.done ? "✓" : ""}
           </button>
-          <span data-testid={`tl-name-${a.id}`} style={{ fontSize: 13, color: a.today.done ? "var(--tx-2)" : "var(--tx-0)", textDecoration: a.today.done ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {a.name}
-          </span>
+          {/* #136 G4-A — the activity emoji as a leading icon (real field; "•" fallback) */}
+          {a.emoji && <span aria-hidden="true" data-testid={`tl-icon-${a.id}`} style={{ fontSize: 14, flexShrink: 0 }}>{a.emoji}</span>}
+          <div style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 1 }}>
+            {editing ? (
+              <input className="finput" data-testid={`tl-rename-input-${a.id}`} value={nameVal} autoFocus
+                onChange={(e) => setNameVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") { setNameVal(a.name); setEditing(false); } }}
+                onBlur={saveName} style={{ fontSize: 13, padding: "2px 6px" }} />
+            ) : (
+              <span data-testid={`tl-name-${a.id}`} onDoubleClick={() => { setNameVal(a.name); setEditing(true); }}
+                title="Bấm đúp để đổi tên"
+                style={{ fontSize: 13, color: a.today.done ? "var(--tx-2)" : "var(--tx-0)", textDecoration: a.today.done ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "text" }}>
+                {a.name}
+              </span>
+            )}
+            {/* #136 G4-A — sub-detail line: metric (val+unit) · dur · today's note — REAL fields
+                only (no fabricated km/pace/location). Rendered only when there's something. */}
+            {!editing && (a.today.val > 0 || a.today.dur || a.today.note) && (
+              <span className="faint" data-testid={`tl-detail-${a.id}`} style={{ fontSize: 10.5, fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {[
+                  a.today.val > 0 ? `${a.today.val}${a.unit ? ` ${a.unit}` : ""}` : null,
+                  a.today.dur || null,
+                  a.today.note || null,
+                ].filter(Boolean).join(" · ")}
+              </span>
+            )}
+          </div>
         </div>
-        {/* chi tiết — streak / remind chip / archive(edit) */}
-        <div className="row" style={{ gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
+        {/* chi tiết — streak / remind chip / per-card ⋯ ops */}
+        <div className="row" style={{ gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", position: "relative" }}>
           {a.streak > 0 && <span className="num faint" data-testid={`tl-streak-${a.id}`} style={{ fontSize: 10.5 }}>{a.streak}d {streakBadge(a.streak)}</span>}
           {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
-            <RemindChip at={a.remindAt} repeat={a.remindRepeat} testid={`tl-remind-${a.id}`} />
+            <RemindChip at={a.remindAt} repeat={a.remindRepeat} channel={a.remindChannel} testid={`tl-remind-${a.id}`} />
           )}
-          {editMode && (
-            <button className="btn sm ghost" type="button" onClick={() => onArchiveTodo(a.id)} disabled={busyId === a.id}
-              data-testid={`tl-archive-${a.id}`} title="Xóa khỏi danh sách">✕</button>
+          {/* #136 — the per-card ⋯ menu (rename / reminder / delete) */}
+          <div className="tl-ops" style={{ position: "relative" }}>
+            <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`tl-ops-${a.id}`} title="Sửa việc này">⋯</button>
+            {menuOpen && (
+              <div className="tl-ops-menu" role="menu" data-testid={`tl-ops-menu-${a.id}`}>
+                <button type="button" role="menuitem" data-testid={`tl-op-rename-${a.id}`}
+                  onClick={() => { setMenuOpen(false); setNameVal(a.name); setEditing(true); }}>✎ Đổi tên</button>
+                <button type="button" role="menuitem" data-testid={`tl-op-time-${a.id}`}
+                  onClick={() => { setMenuOpen(false); setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }}>🕐 Đặt giờ</button>
+                <button type="button" role="menuitem" data-testid={`tl-op-remind-${a.id}`}
+                  onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
+                <button type="button" role="menuitem" className="neg" data-testid={`tl-op-delete-${a.id}`}
+                  onClick={() => { setMenuOpen(false); onArchiveTodo(a.id); }}>✕ Xóa</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* #136 G3 — the per-card TIME editor (a HH:MM, independent of the reminder) */}
+        {timeOpen && (
+          <div style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }} data-testid={`tl-time-editor-${a.id}`}>
+            <span className="hint faint">Giờ:</span>
+            <input className="finput num" type="time" style={{ width: 120 }} value={timeVal}
+              onChange={(e) => setTimeVal(e.target.value)} data-testid={`tl-time-input-${a.id}`} aria-label="Giờ của việc" />
+            <button type="button" className="btn sm ghost" onClick={() => { setTimeVal(""); void onSetTime(a.id, null); setTimeOpen(false); }}
+              disabled={busyId === a.id} data-testid={`tl-time-clear-${a.id}`}>Xóa giờ</button>
+            <span className="sp" style={{ flex: 1 }} />
+            <button type="button" className="btn sm ghost" onClick={() => setTimeOpen(false)} disabled={busyId === a.id}>Hủy</button>
+            <button type="button" className="btn sm accent" onClick={saveTime} disabled={busyId === a.id} data-testid={`tl-time-save-${a.id}`}>
+              {busyId === a.id ? "…" : "Lưu giờ"}
+            </button>
+          </div>
+        )}
+
+        {/* #136 — the per-card reminder editor (time + freq + channel; reuse RemindControls) */}
+        {remOpen && (
+          <div style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`tl-remind-editor-${a.id}`}>
+            <RemindControls value={rem} onChange={setRem} channels={channels} idPrefix={`tlrem-${a.id}`} />
+            <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+              <button type="button" className="btn sm ghost" onClick={() => setRemOpen(false)} disabled={busyId === a.id}>Hủy</button>
+              <button type="button" className="btn sm accent" onClick={saveReminder} disabled={busyId === a.id} data-testid={`tl-remind-save-${a.id}`}>
+                {busyId === a.id ? "…" : "Lưu nhắc nhở"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /** #136 — one NOTE card with its OWN per-card ⋯ (set reminder / delete). Mirrors the
+   *  activity per-card pattern; notes support BOTH remind kinds (recurring + one-shot). */
+  function NoteCard({ n }: { n: TracingNote }) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [remOpen, setRemOpen] = useState(false);
+    const hasRem = !!n.remindAt && (!!n.remindDate || n.remindRepeat !== "off");
+    const [rem, setRem] = useState<RemindState>({
+      ...EMPTY_REMIND,
+      on: hasRem,
+      kind: n.remindDate ? "once" : "recurring",
+      time: n.remindAt ?? "07:00",
+      date: n.remindDate ?? "",
+      repeat: (n.remindRepeat && n.remindRepeat !== "off" ? n.remindRepeat : "daily"),
+      channel: n.remindChannel ?? "in_app",
+    });
+    async function saveRem() { await onSetNoteReminder(n, rem); setRemOpen(false); }
+
+    return (
+      <div className="note-card" data-testid={`note-${n.id}`}
+        style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 10, padding: "10px 8px", borderBottom: "1px solid var(--bg-2)", position: "relative" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div data-testid={`note-text-${n.id}`} style={{ fontSize: 13, color: "var(--tx-0)", whiteSpace: "pre-wrap" }}>{n.text}</div>
+          {hasRem && (
+            <div style={{ marginTop: 4 }}>
+              <RemindChip at={n.remindAt as string} repeat={n.remindRepeat} date={n.remindDate} channel={n.remindChannel} testid={`note-remind-${n.id}`} />
+            </div>
           )}
         </div>
+        {/* #136 — per-note ⋯ menu (set reminder / delete) */}
+        <div className="tl-ops" style={{ position: "relative" }}>
+          <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`note-ops-${n.id}`} title="Sửa ghi chú này">⋯</button>
+          {menuOpen && (
+            <div className="tl-ops-menu" role="menu" data-testid={`note-ops-menu-${n.id}`}>
+              <button type="button" role="menuitem" data-testid={`note-op-remind-${n.id}`}
+                onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
+              <button type="button" role="menuitem" className="neg" data-testid={`note-op-delete-${n.id}`}
+                onClick={() => { setMenuOpen(false); onDeleteNote(n); }}>✕ Xóa</button>
+            </div>
+          )}
+        </div>
+        {/* the per-note reminder editor (recurring + one-shot, reuse RemindControls allowOnce) */}
+        {remOpen && (
+          <div style={{ width: "100%", padding: "8px 2px 2px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`note-remind-editor-${n.id}`}>
+            <RemindControls value={rem} onChange={setRem} channels={channels} idPrefix={`nrem-${n.id}`} allowOnce />
+            <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+              <button type="button" className="btn sm ghost" onClick={() => setRemOpen(false)} disabled={noteBusyId === n.id}>Hủy</button>
+              <button type="button" className="btn sm accent" onClick={saveRem} disabled={noteBusyId === n.id} data-testid={`note-remind-save-${n.id}`}>
+                {noteBusyId === n.id ? "…" : "Lưu nhắc nhở"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -335,12 +555,7 @@ export default function TracingPage() {
       <div className="vtitle">
         <h1>Daily Tracing</h1>
         <span className="sub">{data.date || "—"} · {sc.done}/{sc.total} việc xong{sc.timeActive ? ` · ${sc.timeActive} active` : ""}</span>
-        <span className="sp" />
-        {/* #126 — edit-mode toggle */}
-        <button type="button" className={`btn${editMode ? " accent" : ""}`} onClick={() => setEditMode((m) => !m)}
-          data-testid="edit-toggle" aria-pressed={editMode}>
-          {editMode ? "✓ Xong" : "✎ Sửa"}
-        </button>
+        {/* #136 — NO global "Sửa" toggle; edit is per-card (the ⋯ on each row). */}
       </div>
 
       {warning && (
@@ -367,9 +582,9 @@ export default function TracingPage() {
               <span className="hint" style={{ marginLeft: "auto" }}>{sc.done}/{sc.total} xong</span>
             </div>
 
-            {/* edit-mode: add-via-text + "+ Từ mẫu" */}
-            {editMode && (
-              <div style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-edit-tools">
+            {/* #136 — add-via-text + "+ Từ mẫu" ALWAYS visible (not gated behind a global
+                edit toggle — the template button was hidden before, the user's complaint). */}
+            <div style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-tools">
                 <form onSubmit={onAddTodo} style={{ display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-form">
                   <div className="row" style={{ gap: 8 }}>
                     <input className="finput" style={{ flex: 1 }} value={todoText} onChange={(e) => setTodoText(e.target.value)}
@@ -406,7 +621,6 @@ export default function TracingPage() {
                   </div>
                 )}
               </div>
-            )}
 
             {rowErr && <div style={{ padding: "4px 16px" }}><span className="hint neg" data-testid="todo-row-error">⚠ {rowErr}</span></div>}
 
@@ -416,7 +630,7 @@ export default function TracingPage() {
                 <div style={{ padding: "22px 12px", textAlign: "center" }} data-testid="timeline-empty">
                   <div className="hint" style={{ fontSize: 13 }}>Chưa có việc nào hôm nay.</div>
                   <div className="hint faint" style={{ marginTop: 4 }}>
-                    {editMode ? "Gõ ở trên + Enter, hoặc “+ Từ mẫu”." : "Bấm “✎ Sửa” để thêm việc."}
+                    Gõ ở trên + Enter, hoặc bấm “+ Từ mẫu”.
                   </div>
                 </div>
               ) : (
@@ -465,22 +679,7 @@ export default function TracingPage() {
                   <div className="hint faint" style={{ fontSize: 12.5 }}>Chưa có ghi chú nào.</div>
                 </div>
               ) : (
-                notesApi.notes.map((n) => (
-                  <div className="note-card" key={n.id} data-testid={`note-${n.id}`}
-                    style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 8px", borderBottom: "1px solid var(--bg-2)" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div data-testid={`note-text-${n.id}`} style={{ fontSize: 13, color: "var(--tx-0)", whiteSpace: "pre-wrap" }}>{n.text}</div>
-                      {/* #125 — a one-shot (remindDate set) OR a recurring (repeat≠off) chip */}
-                      {n.remindAt && (n.remindDate || n.remindRepeat !== "off") && (
-                        <div style={{ marginTop: 4 }}>
-                          <RemindChip at={n.remindAt} repeat={n.remindRepeat} date={n.remindDate} testid={`note-remind-${n.id}`} />
-                        </div>
-                      )}
-                    </div>
-                    <button className="btn sm ghost" type="button" onClick={() => onDeleteNote(n)} disabled={noteBusyId === n.id}
-                      data-testid={`note-delete-${n.id}`} title="Xóa ghi chú">✕</button>
-                  </div>
-                ))
+                notesApi.notes.map((n) => <NoteCard key={n.id} n={n} />)
               )}
             </div>
           </div>

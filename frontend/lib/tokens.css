@@ -294,6 +294,21 @@ select.finput { cursor:pointer; }
 .seg button:last-child { border-right:0; }
 .seg button.on { background:var(--accent); color:#180f04; font-weight:600; }
 
+/* #136 — per-card todo ⋯ ops menu (rename / reminder / delete on each timeline row).
+   The ⋯ appears on hover; the menu is a small floating popover. */
+.tl-ops-btn { background:none; border:0; color:var(--tx-2); cursor:pointer; padding:2px 6px; border-radius:5px; font-size:13px; line-height:1; opacity:.55; transition:opacity .12s; }
+/* #136 — reveal the ⋯ on hover of EITHER an activity row (.tlx-row) OR a note card
+   (.note-card) — the note-card path was missing → the note ⋯ stayed opacity:0/invisible
+   (team-lead caught it live; jsdom can't see opacity). Also keep a faint always-on
+   baseline (.55) so it's discoverable on touch / without hover. */
+.tlx-row:hover .tl-ops-btn, .note-card:hover .tl-ops-btn, .tl-ops-btn[aria-expanded="true"] { opacity:1; }
+.tl-ops-btn:hover { color:var(--accent); background:color-mix(in oklch, var(--accent) 14%, transparent); }
+.tl-ops-menu { position:absolute; right:0; top:100%; z-index:20; background:var(--bg-1); border:1px solid var(--line-2); border-radius:8px; box-shadow:0 6px 20px -6px #000; padding:4px; min-width:140px; display:flex; flex-direction:column; }
+.tl-ops-menu button { background:none; border:0; color:var(--tx-1); cursor:pointer; text-align:left; padding:6px 10px; border-radius:6px; font-size:12px; font-family:var(--sans); white-space:nowrap; }
+.tl-ops-menu button:hover { background:var(--bg-2); color:var(--tx-0); }
+.tl-ops-menu button.neg { color:var(--red); }
+.tl-ops-menu button.neg:hover { background:color-mix(in oklch, var(--red) 16%, transparent); }
+
 /* #123 — underline sub-nav (the /projects [Đang chạy | Nghĩa địa | Dev Activity] tabs).
    A lighter, GitHub-ish tab style: a bottom hairline; the active tab = accent underline +
    bright text, inactive = muted. Distinct from .seg (the boxed segmented control, still

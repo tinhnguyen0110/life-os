@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   getTracing,
   logTracingSession,
+  untickActivity,
   createActivity,
   updateActivity,
   archiveActivity,
@@ -44,6 +45,8 @@ export interface UseTracing {
   reload: () => void;
   /** log one session; returns the updated ActivityView. fail-closed (throws → caller surfaces). */
   log: (id: string, body: TracingLogInput) => Promise<ActivityView>;
+  /** #136 — un-tick: clear today's log → done=false (the tick-toggle un-complete). */
+  untick: (id: string) => Promise<void>;
   add: (body: ActivityInput) => Promise<Activity>;
   edit: (id: string, body: ActivityPatch) => Promise<Activity>;
   archive: (id: string) => Promise<void>;
@@ -93,6 +96,14 @@ export function useTracing(): UseTracing {
     [reload],
   );
 
+  const untick = useCallback(
+    async (id: string) => {
+      await untickActivity(id); // #136 — clear today's log → done=false; fail-closed
+      reload();
+    },
+    [reload],
+  );
+
   const add = useCallback(
     async (body: ActivityInput) => {
       const res = await createActivity(body);
@@ -119,5 +130,5 @@ export function useTracing(): UseTracing {
     [reload],
   );
 
-  return { data, status, errMsg, warning, reload, log, add, edit, archive };
+  return { data, status, errMsg, warning, reload, log, untick, add, edit, archive };
 }

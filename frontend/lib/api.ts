@@ -902,6 +902,14 @@ export function logTracingSession(id: string, body: TracingLogInput): Promise<Ap
   return apiPost<ActivityView>(`/tracing/${encodeURIComponent(id)}/log`, body);
 }
 
+/** #136 — UN-TICK: clear TODAY's logged sessions for an activity → today.done=false (the
+ *  tick-toggle un-complete). BE FROZE the shape (architect decision (a)): DELETE
+ *  /tracing/{id}/sessions?date=<today-VN> (date defaults to today server-side) →
+ *  {activityId, date, deletedSessions}. 404 unknown. The caller refetches /tracing. */
+export function untickActivity(id: string): Promise<ApiResponse<{ activityId: string; date: string; deletedSessions: number }>> {
+  return apiDelete<{ activityId: string; date: string; deletedSessions: number }>(`/tracing/${encodeURIComponent(id)}/sessions`);
+}
+
 /** Add an activity (POST /tracing/activities). Dup id → ApiError(409); blank/neg → 422.
  *  Returns the bare Activity (caller refetches GET /tracing for the derived board). */
 export function createActivity(body: ActivityInput): Promise<ApiResponse<Activity>> {

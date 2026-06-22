@@ -1847,6 +1847,12 @@ export interface ActivityView {
   remindAt?: string | null;
   /** #75: the nudge cadence. "off" / absent ⇒ no reminder. */
   remindRepeat?: RemindRepeat;
+  /** #111 / #136: the reminder delivery channel (in_app/email/discord). The BE
+   *  ActivityView carries it; the per-card reminder editor reads/writes it. */
+  remindChannel?: RemindChannel;
+  /** #136 G3-(ii): a HH:MM scheduled time-of-day, INDEPENDENT of the reminder (a time
+   *  with no reminder firing). The timeline rails by `time` (fallback remindAt). */
+  time?: string | null;
 }
 
 /** #75 — a habit's reminder-nudge cadence. */
@@ -1939,6 +1945,8 @@ export interface ActivityInput {
   /** #111 — which channel the linked reminder fires on (default in_app). CAMEL wire,
    *  like remindAt. Only relevant when remindAt is set. */
   remindChannel?: RemindChannel;
+  /** #136 G3-(ii) — a HH:MM scheduled time, independent of the reminder. */
+  time?: string | null;
 }
 
 /** #111 — a reminder delivery channel. in_app always available; email/discord depend
@@ -1969,6 +1977,12 @@ export interface ActivityPatch {
   /** #75 — set/clear the habit's reminder (CAMEL wire). null clears it. */
   remindAt?: string | null;
   remindRepeat?: RemindRepeat;
+  /** #111 / #136 — the reminder delivery channel (in_app/email/discord). The BE
+   *  ActivityUpdate accepts it; the FE per-card reminder picker sends it. */
+  remindChannel?: RemindChannel;
+  /** #136 G3-(ii) — set/clear a HH:MM scheduled time, independent of the reminder.
+   *  null clears it. PUT /tracing/activities/{id} {time}. */
+  time?: string | null;
 }
 
 /** The bare stored activity (POST/PUT activities response — NOT the derived view).

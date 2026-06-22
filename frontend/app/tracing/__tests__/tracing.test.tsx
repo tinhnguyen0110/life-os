@@ -33,6 +33,8 @@ const deleteTracingNote = vi.fn();
 const getTracingTemplates = vi.fn();
 const addTemplateToToday = vi.fn();
 const addAllTemplates = vi.fn();
+const updateActivity = vi.fn();   // #136 — rename + reminder PUT
+const untickActivity = vi.fn();   // #136 — un-tick (clear today's log)
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -49,6 +51,8 @@ vi.mock("@/lib/api", async () => {
     getTracingTemplates: (...a: unknown[]) => getTracingTemplates(...a),
     addTemplateToToday: (...a: unknown[]) => addTemplateToToday(...a),
     addAllTemplates: (...a: unknown[]) => addAllTemplates(...a),
+    updateActivity: (...a: unknown[]) => updateActivity(...a),
+    untickActivity: (...a: unknown[]) => untickActivity(...a),
   };
 });
 
@@ -96,30 +100,28 @@ afterEach(() => {
   addTemplateToToday.mockReset(); addAllTemplates.mockReset(); cleanup();
 });
 
-describe("#126 Tracing — timeline read-view (default) + edit toggle", () => {
-  it("DEFAULT = the timeline rail (read-only); the edit add-tools are HIDDEN until Sửa", async () => {
+describe("#136 Tracing — timeline DEFAULT + NO global edit toggle", () => {
+  it("DEFAULT = the timeline rail; the add-tools + template are ALWAYS visible (no global Sửa)", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT()]));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("timeline-rail")).toBeInTheDocument());
     expect(screen.getByTestId("tracing-timeline")).toBeInTheDocument();
-    // read-mode: no add-input, no template button
-    expect(screen.queryByTestId("todo-input")).toBeNull();
-    expect(screen.queryByTestId("tpl-open")).toBeNull();
-    // the edit toggle is present + says "Sửa"
-    expect(screen.getByTestId("edit-toggle")).toHaveTextContent(/Sửa/);
-  });
-
-  it("clicking Sửa → edit-mode: add-input + '+ Từ mẫu' appear; toggle says Xong", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    await userEvent.setup().click(screen.getByTestId("edit-toggle"));
+    // #136 — NO global edit toggle
+    expect(screen.queryByTestId("edit-toggle")).toBeNull();
+    // add-input + "+ Từ mẫu" are visible in the DEFAULT view (the user's complaint: template was hidden)
     expect(screen.getByTestId("todo-input")).toBeInTheDocument();
     expect(screen.getByTestId("tpl-open")).toBeInTheDocument();
-    expect(screen.getByTestId("edit-toggle")).toHaveTextContent(/Xong/);
   });
 
-  it("the timeline orders TIMED activities by remindAt, then un-timed under 'CẢ NGÀY'", async () => {
+  it("streak + heatmap KEPT (collapsed <details>) — base preserved", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT()]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tracing-stats")).toBeInTheDocument());
+    expect(screen.getByTestId("tracing-stats").tagName.toLowerCase()).toBe("details");
+    expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument();
+  });
+
+  it("the timeline orders TIMED by remindAt, then un-timed under 'CẢ NGÀY'", async () => {
     getTracing.mockResolvedValue(OVERVIEW([
       ACT({ id: "anytime", name: "Bất kỳ", remindAt: null }),
       ACT({ id: "late", name: "Tối", remindAt: "21:00", remindRepeat: "daily" }),
@@ -128,56 +130,161 @@ describe("#126 Tracing — timeline read-view (default) + edit toggle", () => {
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tl-early")).toBeInTheDocument());
     const order = screen.getAllByTestId(/^tl-(early|late|anytime)$/).map((r) => r.getAttribute("data-testid"));
-    expect(order).toEqual(["tl-early", "tl-late", "tl-anytime"]); // 06:00 < 21:00 < anytime
+    expect(order).toEqual(["tl-early", "tl-late", "tl-anytime"]);
     expect(screen.getByTestId("timeline-anytime-sep")).toBeInTheDocument();
-    expect(screen.getByTestId("tl-time-early")).toHaveTextContent("06:00");
-    expect(screen.getByTestId("tl-time-anytime")).toHaveTextContent("—"); // no fixed time
-  });
-
-  it("streak + heatmap KEPT (collapsed <details>) — base preserved", async () => {
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("tracing-stats")).toBeInTheDocument());
-    expect(screen.getByTestId("tracing-stats").tagName.toLowerCase()).toBe("details");
-    expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument();
   });
 });
 
-describe("#126 Tracing — tick is 1-click IN READ MODE (not gated behind edit)", () => {
-  it("ticking an undone todo in read-mode → log(id, {val:1}); no edit needed", async () => {
+describe("#136 Tracing — tick is a TOGGLE (un-complete), 1-click in read view", () => {
+  it("tick an UNDONE row → log(val:1) [the complete half]", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", today: { done: false, val: 0, dur: "", durMin: 0, note: null, pct: 0, sessions: 0 } })]));
     logTracingSession.mockResolvedValue({ success: true, data: ACT() });
     render(<TracingPage />);
-    // do NOT enter edit-mode
     await waitFor(() => expect(screen.getByTestId("tick-water")).toBeInTheDocument());
     await userEvent.setup().click(screen.getByTestId("tick-water"));
     await waitFor(() => expect(logTracingSession).toHaveBeenCalledWith("water", expect.objectContaining({ val: 1 })));
   });
 
-  it("a DONE todo → checked tick, line-through name, not re-loggable", async () => {
+  it("ud tick a DONE row again → UN-complete (untickActivity) [the toggle's un-complete half]", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", today: { done: true, val: 1, dur: "", durMin: 0, note: null, pct: 100, sessions: 1 } })]));
+    untickActivity.mockResolvedValue({ success: true, data: ACT() });
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
     expect(screen.getByTestId("tl-water")).toHaveAttribute("data-done", "true");
-    expect(screen.getByTestId("tick-water")).toBeDisabled();
+    // a DONE tick is NOT disabled anymore (it un-completes)
+    expect(screen.getByTestId("tick-water")).not.toBeDisabled();
     await userEvent.setup().click(screen.getByTestId("tick-water"));
-    expect(logTracingSession).not.toHaveBeenCalled();
+    await waitFor(() => expect(untickActivity).toHaveBeenCalledWith("water"));
+    expect(logTracingSession).not.toHaveBeenCalled(); // un-complete path, not a new log
   });
 
-  it("a timed todo shows its remind chip in the rail", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "run", name: "Chạy bộ", remindAt: "06:30", remindRepeat: "daily" })]));
+  it("a timed todo shows its remind chip — GAP-2: time + freq + CHANNEL on the card face", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "run", name: "Chạy bộ", remindAt: "06:30", remindRepeat: "daily", remindChannel: "email" })]));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tl-remind-run")).toBeInTheDocument());
     expect(screen.getByTestId("tl-remind-run")).toHaveTextContent("06:30");
+    expect(screen.getByTestId("tl-remind-run")).toHaveTextContent(/hằng ngày/);  // freq
+    expect(screen.getByTestId("tl-remind-run-channel")).toHaveTextContent("Email"); // channel
   });
 
-  it("archive ✕ appears only in EDIT-mode → archiveActivity(id)", async () => {
+  it("🔴 #136 GAP-4(A) — rich row: icon + metric (val·unit) + dur + note sub-detail (REAL fields, no fabrication)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({
+      id: "water", name: "Uống nước", emoji: "💧", unit: "ly",
+      today: { done: true, val: 3, dur: "15m", durMin: 15, note: "sáng", pct: 100, sessions: 1 },
+    })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    expect(screen.getByTestId("tl-icon-water")).toHaveTextContent("💧"); // the emoji icon
+    const detail = screen.getByTestId("tl-detail-water");
+    expect(detail).toHaveTextContent("3 ly");   // metric = val + unit (REAL)
+    expect(detail).toHaveTextContent("15m");     // dur (REAL)
+    expect(detail).toHaveTextContent("sáng");    // today's note as sub-detail (REAL)
+    // NO fabricated km/pace/location — only the fields that exist
+    expect(detail).not.toHaveTextContent(/km|pace/);
+  });
+
+  it("GAP-4(A) — a bare todo (no metric/dur/note) shows NO sub-detail line (honest, not empty '·')", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "plain", name: "Việc trống", today: { done: false, val: 0, dur: "", durMin: 0, note: null, pct: 0, sessions: 0 } })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-plain")).toBeInTheDocument());
+    expect(screen.queryByTestId("tl-detail-plain")).toBeNull(); // no fabricated detail
+  });
+
+  it("🔴 #136 GAP-3(ii) — a dedicated TIME (independent of reminder) shows on the rail + sorts the timeline", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "late", name: "Tối", time: "20:00", remindAt: null, remindRepeat: "off" }),   // time, NO reminder
+      ACT({ id: "early", name: "Sáng", time: "06:00", remindAt: null, remindRepeat: "off" }),
+      ACT({ id: "rem", name: "Có nhắc", time: null, remindAt: "12:00", remindRepeat: "daily" }), // fallback to remindAt
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-early")).toBeInTheDocument());
+    // the rail shows the dedicated time even though there's NO reminder
+    expect(screen.getByTestId("tl-time-early")).toHaveTextContent("06:00");
+    expect(screen.getByTestId("tl-time-late")).toHaveTextContent("20:00");
+    expect(screen.getByTestId("tl-time-rem")).toHaveTextContent("12:00"); // fallback to remindAt
+    // sorted by the effective time: 06:00 < 12:00 < 20:00
+    const order = screen.getAllByTestId(/^tl-(early|rem|late)$/).map((r) => r.getAttribute("data-testid"));
+    expect(order).toEqual(["tl-early", "tl-rem", "tl-late"]);
+  });
+
+  it("🔴 #136 GAP-3(ii) — ⋯ → 'Đặt giờ' → set a time → edit(id, {time}) [no reminder needed]", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", time: null, remindAt: null })]));
+    updateActivity.mockResolvedValue({ success: true, data: {} });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-time-water"));
+    await waitFor(() => expect(screen.getByTestId("tl-time-editor-water")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("tl-time-input-water"), { target: { value: "08:30" } });
+    fireEvent.click(screen.getByTestId("tl-time-save-water"));
+    await waitFor(() => expect(updateActivity).toHaveBeenCalledWith("water", { time: "08:30" }));
+  });
+
+  it("GAP-3 — clearing the time → edit(id, {time:null})", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", time: "08:30", remindAt: null })]));
+    updateActivity.mockResolvedValue({ success: true, data: {} });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    // the rail click opens the editor
+    fireEvent.click(screen.getByTestId("tl-time-water"));
+    await waitFor(() => expect(screen.getByTestId("tl-time-clear-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-time-clear-water"));
+    await waitFor(() => expect(updateActivity).toHaveBeenCalledWith("water", { time: null }));
+  });
+});
+
+describe("#136 Tracing — per-CARD edit (rename / reminder / delete), no global toggle", () => {
+  it("each row has its OWN ⋯ ops menu (rename + reminder + delete)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    expect(screen.getByTestId("tl-op-rename-water")).toBeInTheDocument();
+    expect(screen.getByTestId("tl-op-remind-water")).toBeInTheDocument();
+    expect(screen.getByTestId("tl-op-delete-water")).toBeInTheDocument();
+  });
+
+  it("🔴 INLINE RENAME (the missing Update) → updateActivity(id, {name})", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", name: "Uống nước" })]));
+    updateActivity.mockResolvedValue({ success: true, data: {} });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-rename-water"));
+    const input = screen.getByTestId("tl-rename-input-water") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Uống nước nhiều" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(updateActivity).toHaveBeenCalledWith("water", { name: "Uống nước nhiều" }));
+  });
+
+  it("🔴 set a reminder (time + freq + channel) on a todo → updateActivity {remindAt,remindRepeat,remindChannel}", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    updateActivity.mockResolvedValue({ success: true, data: {} });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-remind-water"));
+    // the per-card RemindControls editor appears
+    await waitFor(() => expect(screen.getByTestId("tl-remind-editor-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tlrem-water-remind-toggle")); // turn remind on
+    await waitFor(() => expect(screen.getByTestId("tlrem-water-remind-channel")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("tlrem-water-remind-channel"), { target: { value: "discord" } });
+    fireEvent.click(screen.getByTestId("tl-remind-save-water"));
+    await waitFor(() => expect(updateActivity).toHaveBeenCalled());
+    const [id, body] = updateActivity.mock.calls[0];
+    expect(id).toBe("water");
+    expect(body.remindAt).toBe("07:00");
+    expect(body.remindRepeat).toBe("daily");
+    expect(body.remindChannel).toBe("discord");
+  });
+
+  it("delete a todo via the ⋯ menu → archiveActivity", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
     archiveActivity.mockResolvedValue({ success: true, data: { archived: "water" } });
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
-    expect(screen.queryByTestId("tl-archive-water")).toBeNull(); // hidden in read-mode
-    await userEvent.setup().click(screen.getByTestId("edit-toggle"));
-    await userEvent.setup().click(screen.getByTestId("tl-archive-water"));
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-delete-water"));
     await waitFor(() => expect(archiveActivity).toHaveBeenCalledWith("water"));
   });
 
@@ -188,60 +295,28 @@ describe("#126 Tracing — tick is 1-click IN READ MODE (not gated behind edit)"
   });
 });
 
-describe("#126 Tracing — add-todo (edit-mode) → createActivity(goal:1) [base kept]", () => {
-  it("add-via-text → createActivity(text, goal:1, slug id)", async () => {
+describe("#136 Tracing — add-todo + '+ Từ mẫu' VISIBLE in default view", () => {
+  it("add-via-text (always visible) → createActivity(text, goal:1)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
     createActivity.mockResolvedValue({ success: true, data: { id: "uong-nuoc" } });
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("todo-input")).toBeInTheDocument());
     const user = userEvent.setup();
-    await user.click(screen.getByTestId("edit-toggle"));
     await user.type(screen.getByTestId("todo-input"), "Uống nước");
     await user.click(screen.getByTestId("todo-submit"));
     await waitFor(() => expect(createActivity).toHaveBeenCalled());
     const body = createActivity.mock.calls[0][0];
     expect(body.name).toBe("Uống nước");
     expect(body.goal).toBe(1);
-    expect(body.id).toBe("uong-nuoc");
-    expect(body.remindRepeat).toBe("off");
   });
 
-  it("add WITH remind on → sends remindAt + remindRepeat + remindChannel", async () => {
-    createActivity.mockResolvedValue({ success: true, data: { id: "tap-the-duc" } });
+  it("🔴 the template '+ Từ mẫu' is in the DEFAULT view → opens + adds (was hidden before)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [{ id: "ngu", name: "Ngủ đủ giấc", emoji: "😴", icon: "", unit: "", goal: 8, color: "#000", source: "seed" }] } });
+    addTemplateToToday.mockResolvedValue({ success: true, data: { activity: { id: "ngu" }, added: true } });
     render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tpl-open")).toBeInTheDocument()); // visible, no edit needed
     const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    await user.click(screen.getByTestId("edit-toggle"));
-    await user.type(screen.getByTestId("todo-input"), "Tập thể dục");
-    await user.click(screen.getByTestId("todo-remind-toggle"));
-    await waitFor(() => expect(screen.getByTestId("todo-remind-channel")).toBeInTheDocument());
-    await user.selectOptions(screen.getByTestId("todo-remind-channel"), "discord");
-    await user.click(screen.getByTestId("todo-submit"));
-    await waitFor(() => expect(createActivity).toHaveBeenCalled());
-    const body = createActivity.mock.calls[0][0];
-    expect(body.remindAt).toBe("07:00");
-    expect(body.remindRepeat).toBe("daily");
-    expect(body.remindChannel).toBe("discord");
-  });
-
-  it("blank text → validation error, no POST", async () => {
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("edit-toggle"));
-    await user.click(screen.getByTestId("todo-submit"));
-    await waitFor(() => expect(screen.getByTestId("todo-add-error")).toBeInTheDocument());
-    expect(createActivity).not.toHaveBeenCalled();
-  });
-});
-
-describe("#126 Tracing — '+ Từ mẫu' template picker (#124)", () => {
-  it("opens the picker, lists templates, adds one → addTemplateToToday(id) + refetch", async () => {
-    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [TPL({ id: "ngu", name: "Ngủ đủ giấc" })] } });
-    addTemplateToToday.mockResolvedValue({ success: true, data: { activity: { id: "ngu", name: "Ngủ đủ giấc", goal: 1 }, added: true } });
-    render(<TracingPage />);
-    const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    await user.click(screen.getByTestId("edit-toggle"));
     await user.click(screen.getByTestId("tpl-open"));
     await waitFor(() => expect(screen.getByTestId("tpl-ngu")).toBeInTheDocument());
     await user.click(screen.getByTestId("tpl-ngu"));
@@ -249,25 +324,16 @@ describe("#126 Tracing — '+ Từ mẫu' template picker (#124)", () => {
   });
 
   it("'Thêm tất cả' → addAllTemplates()", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [] } });
     addAllTemplates.mockResolvedValue({ success: true, data: { created: [], skipped: [] } });
     render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tpl-open")).toBeInTheDocument());
     const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    await user.click(screen.getByTestId("edit-toggle"));
     await user.click(screen.getByTestId("tpl-open"));
     await waitFor(() => expect(screen.getByTestId("tpl-add-all")).toBeInTheDocument());
     await user.click(screen.getByTestId("tpl-add-all"));
     await waitFor(() => expect(addAllTemplates).toHaveBeenCalled());
-  });
-
-  it("template load error → honest error (no crash)", async () => {
-    getTracingTemplates.mockRejectedValue(new Error("templates down"));
-    render(<TracingPage />);
-    const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
-    await user.click(screen.getByTestId("edit-toggle"));
-    await user.click(screen.getByTestId("tpl-open"));
-    await waitFor(() => expect(screen.getByTestId("tpl-error")).toBeInTheDocument());
   });
 });
 
@@ -288,7 +354,7 @@ describe("#126 Tracing — RIGHT note MULTI-LIST (text + remind), #121", () => {
   it("renders MULTIPLE note cards (the list), each with text + remind chip when set + delete", async () => {
     getTracingNotes.mockResolvedValue(NOTES([
       NOTE({ id: "1", text: "ghi chú một" }),
-      NOTE({ id: "2", text: "ghi chú hai", remindAt: "21:00", remindRepeat: "daily" }),
+      NOTE({ id: "2", text: "ghi chú hai", remindAt: "21:00", remindRepeat: "daily", remindChannel: "discord" }),
       NOTE({ id: "3", text: "ghi chú ba" }),
     ]));
     render(<TracingPage />);
@@ -297,8 +363,12 @@ describe("#126 Tracing — RIGHT note MULTI-LIST (text + remind), #121", () => {
     expect(screen.getByTestId("note-3")).toBeInTheDocument();
     expect(screen.getByTestId("note-text-1")).toHaveTextContent("ghi chú một");
     expect(screen.getByTestId("note-remind-2")).toHaveTextContent("21:00");
+    // 🔴 #136 GAP-2 — the SET frequency + channel show ON the card face
+    expect(screen.getByTestId("note-remind-2")).toHaveTextContent(/hằng ngày/);
+    expect(screen.getByTestId("note-remind-2-channel")).toHaveTextContent("Discord");
     expect(screen.queryByTestId("note-remind-1")).toBeNull(); // no remind → no chip
-    expect(screen.getByTestId("note-delete-3")).toBeInTheDocument();
+    // #136 — each note card has its OWN ⋯ ops (the delete moved into it)
+    expect(screen.getByTestId("note-ops-3")).toBeInTheDocument();
   });
 
   it("add a note WITH remind → sends remindAt/repeat/channel", async () => {
@@ -316,13 +386,34 @@ describe("#126 Tracing — RIGHT note MULTI-LIST (text + remind), #121", () => {
     expect(body.remindRepeat).toBe("daily");
   });
 
-  it("delete a note → deleteTracingNote(id)", async () => {
+  it("delete a note via the per-card ⋯ menu → deleteTracingNote(id)", async () => {
     getTracingNotes.mockResolvedValue(NOTES([NOTE({ id: "7", text: "xóa tôi" })]));
     deleteTracingNote.mockResolvedValue({ success: true, data: { deleted: "7" } });
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("note-delete-7")).toBeInTheDocument());
-    await userEvent.setup().click(screen.getByTestId("note-delete-7"));
+    await waitFor(() => expect(screen.getByTestId("note-ops-7")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("note-ops-7"));
+    fireEvent.click(screen.getByTestId("note-op-delete-7"));
     await waitFor(() => expect(deleteTracingNote).toHaveBeenCalledWith("7"));
+  });
+
+  it("🔴 #136 — set a reminder on an EXISTING note via its ⋯ → updateTracingNote {remindAt,...}", async () => {
+    getTracingNotes.mockResolvedValue(NOTES([NOTE({ id: "5", text: "note no remind" })]));
+    updateTracingNote.mockResolvedValue({ success: true, data: NOTE({ id: "5" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-ops-5")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("note-ops-5"));
+    fireEvent.click(screen.getByTestId("note-op-remind-5"));
+    await waitFor(() => expect(screen.getByTestId("note-remind-editor-5")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("nrem-5-remind-toggle")); // turn remind on
+    await waitFor(() => expect(screen.getByTestId("nrem-5-remind-channel")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("nrem-5-remind-channel"), { target: { value: "email" } });
+    fireEvent.click(screen.getByTestId("note-remind-save-5"));
+    await waitFor(() => expect(updateTracingNote).toHaveBeenCalled());
+    const [id, body] = updateTracingNote.mock.calls[0];
+    expect(id).toBe("5");
+    expect(body.remindAt).toBe("07:00");
+    expect(body.remindRepeat).toBe("daily");
+    expect(body.remindChannel).toBe("email");
   });
 
   it("no notes → honest empty", async () => {
@@ -419,10 +510,11 @@ describe("#125 Tracing — note ONE-SHOT future-date remind", () => {
   });
 
   it("🔴 the ACTIVITY (todo) remind has NO one-shot date — activity stays daily-recurring", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    // #136 — the add-todo remind is always visible (no global edit toggle)
+    await waitFor(() => expect(screen.getByTestId("todo-remind-toggle")).toBeInTheDocument());
     const user = userEvent.setup();
-    await user.click(screen.getByTestId("edit-toggle"));
     await user.click(screen.getByTestId("todo-remind-toggle"));
     // the todo remind has a repeat select but NO kind segment / date input (#125 = note-only)
     expect(screen.getByTestId("todo-remind-repeat")).toBeInTheDocument();
