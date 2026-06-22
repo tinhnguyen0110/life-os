@@ -12,6 +12,7 @@ import { useSafeRouter } from "@/lib/useNav";
 import { getChannelDetail, apiBase, ApiError } from "@/lib/api";
 import type { ChannelDetail, PricedHolding } from "@/lib/types";
 import { KpiCard } from "@/components/shared/KpiCard";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { fmtUSD, fmtSign, fmtPct } from "@/lib/format";
 import { Icon } from "@/lib/icons";
@@ -52,11 +53,20 @@ export default function PortfolioDetailPage({ params }: { params?: { id?: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel]);
 
+  // #138-P1a-rollout — loading + error use the shared <LoadErrorShell> (verbatim copy/testid/
+  // wrapper). The `notfound` branch below is a custom empty-state → left as-is (not the shell).
   if (status === "loading") {
     return (
-      <section className="view" data-screen="S6">
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="pf-loading">Đang tải vị thế…</div>
-      </section>
+      <LoadErrorShell
+        status="loading"
+        sectionClassName="view"
+        dataScreen="S6"
+        loadingTestid="pf-loading"
+        loadingLabel="Đang tải vị thế…"
+        errorLabel={null}
+      >
+        {null}
+      </LoadErrorShell>
     );
   }
 
@@ -75,12 +85,17 @@ export default function PortfolioDetailPage({ params }: { params?: { id?: string
 
   if (status === "error" || !detail) {
     return (
-      <section className="view" data-screen="S6">
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="pf-error">
-          Lỗi tải vị thế: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={load}>Thử lại</button>
-        </div>
-      </section>
+      <LoadErrorShell
+        status="error"
+        sectionClassName="view"
+        dataScreen="S6"
+        errorTestid="pf-error"
+        errorLabel={<>Lỗi tải vị thế: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={load}
+        loadingLabel={null}
+      >
+        {null}
+      </LoadErrorShell>
     );
   }
 

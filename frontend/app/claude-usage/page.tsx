@@ -11,6 +11,7 @@
    STUB fields (resetIn/weekly null) → honest "—", never fabricated.
    ============================================================ */
 import { useClaudeUsage } from "@/lib/useClaudeUsage";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { fmtTokens, fmtUSD, relativeTime } from "@/lib/format";
 import { apiBase } from "@/lib/api";
 import { gauge } from "@/lib/spark";
@@ -49,21 +50,24 @@ const MODEL_COLORS = [
 export default function ClaudeUsagePage() {
   const { data, status, errMsg, reload } = useClaudeUsage();
 
-  if (status === "loading") {
+  // #138-P1a-rollout — the loading/error branch is the shared <LoadErrorShell>; the
+  // exact copy/testids/wrapper are passed verbatim. Original guards were `status==="loading"`
+  // + `status==="error" || !data` — kept here (the `!data` early-return also narrows `data`
+  // for TS, so the body below sees a non-null value).
+  if (status === "loading" || status === "error" || !data) {
     return (
-      <section className="view" data-screen="S9">
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="usage-loading">Đang tải usage…</div>
-      </section>
-    );
-  }
-  if (status === "error" || !data) {
-    return (
-      <section className="view" data-screen="S9">
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="usage-error">
-          Không tải được Claude usage: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      </section>
+      <LoadErrorShell
+        status={status === "loading" ? "loading" : "error"}
+        sectionClassName="view"
+        dataScreen="S9"
+        loadingTestid="usage-loading"
+        loadingLabel="Đang tải usage…"
+        errorTestid="usage-error"
+        errorLabel={<>Không tải được Claude usage: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
     );
   }
 

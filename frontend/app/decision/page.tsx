@@ -19,6 +19,7 @@
    States: loading · error (only when ALL sections fail) · per-section degrade.
    ============================================================ */
 import { useDecision, confidenceBand, layerLabel, deltaText } from "@/lib/useDecision";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { buildScale, linePoints, areaPath, xAt, yAt } from "@/lib/chart-geometry";
 import { fmtUSD, fmtPct, relativeTime } from "@/lib/format";
 import { apiBase } from "@/lib/api";
@@ -66,16 +67,21 @@ export default function DecisionPage() {
   // state. (A 10s blank used to hang the page waiting for the slowest endpoint.)
 
   // hard error only when EVERY section failed (backend down).
+  // #138-P1a-rollout — the error branch is the shared <LoadErrorShell> (error-only here;
+  // loading is per-section). Exact copy/testid/wrapper preserved verbatim.
   if (status === "error") {
     return (
-      <section className="view" data-screen="DEC">
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="decision-error">
-          Không tải được decision cockpit. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>
-            Thử lại
-          </button>
-        </div>
-      </section>
+      <LoadErrorShell
+        status="error"
+        sectionClassName="view"
+        dataScreen="DEC"
+        errorTestid="decision-error"
+        errorLabel={<>Không tải được decision cockpit. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+        loadingLabel={null}
+      >
+        {null}
+      </LoadErrorShell>
     );
   }
 
