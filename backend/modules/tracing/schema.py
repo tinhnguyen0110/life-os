@@ -267,3 +267,66 @@ class TracingOverview(BaseModel):
     activities: list[ActivityView] = Field(default_factory=list)
     heatmap12w: list[int] = Field(..., description="per-day COUNT of activities that met goal, 84")
     score: TracingScore
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX2 T1 (#121): day-notes — text + optional remind. A note WITH a       #
+# remind (remindAt + remindRepeat≠off) emits a linked reminder (source=          #
+# "tracing-note", the #75 wire + #111 channel); clearing/deleting removes it.    #
+# --------------------------------------------------------------------------- #
+class NoteInput(BaseModel):
+    """POST /tracing/notes — create a day-note. ``id`` + ``created`` are server-set."""
+
+    text: str = Field(..., min_length=1, max_length=2000, description="the note text (the LogInput.note cap)")
+    remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
+    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("text must not be blank")
+        return s
+
+    @field_validator("remindAt")
+    @classmethod
+    def _remind_at_hhmm(cls, v: str | None) -> str | None:
+        return _validate_hhmm(v)
+
+
+class NoteUpdate(BaseModel):
+    """PUT /tracing/notes/{id} — partial update; only supplied fields change. To CLEAR the remind,
+    pass remindRepeat='off' (the linked reminder is then deleted, mirroring the activity clear path)."""
+
+    text: str | None = Field(default=None, min_length=1, max_length=2000)
+    remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
+    remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel | None = Field(default=None, description="in_app|email|discord (#111)")
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("text must not be blank")
+        return s
+
+    @field_validator("remindAt")
+    @classmethod
+    def _remind_at_hhmm(cls, v: str | None) -> str | None:
+        return _validate_hhmm(v)
+
+
+class Note(BaseModel):
+    """A day-note (GET /tracing/notes list item + the create/update echo). honest-mirror shape."""
+
+    id: str = Field(..., description="the note id (the autoincrement PK, stringified)")
+    text: str = Field(..., description="the note text")
+    remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
+    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+    created: str = Field(..., description="ISO-8601 (VN) when the note was created")

@@ -31,9 +31,17 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
     keys = row.keys()
     last_notified = row["last_notified"] if "last_notified" in keys else None
     # TRACING-REMINDERS (#75): tolerate a pre-migration row missing source/activity_id. Coerce
-    # source to the known set (an unexpected value defensively reads as "manual").
+    # source to the known set (an unexpected value defensively reads as "manual"). #121 added
+    # 'tracing-note' (the day-note link) to the known set — without it the coercion silently
+    # dropped a note reminder back to 'manual' (so _note_reminders() found 0).
     raw_source = row["source"] if "source" in keys else "manual"
-    source: Literal["manual", "tracing"] = "tracing" if raw_source == "tracing" else "manual"
+    source: Literal["manual", "tracing", "tracing-note"]
+    if raw_source == "tracing":
+        source = "tracing"
+    elif raw_source == "tracing-note":
+        source = "tracing-note"
+    else:
+        source = "manual"  # defensive: an unexpected value reads as manual
     activity_id = row["activity_id"] if "activity_id" in keys else None
     # TRACING-UX T3 (#111): tolerate a pre-migration row missing channel → default in_app; coerce an
     # unexpected value defensively to in_app (the safe no-external-send default).

@@ -53,12 +53,21 @@ CREATE TABLE IF NOT EXISTS tracing_template (
     color   TEXT    NOT NULL DEFAULT '',
     hidden  INTEGER NOT NULL DEFAULT 0      -- #109 tombstone: 1 = this id (a seed) is hidden from the list
 );
+CREATE TABLE IF NOT EXISTS tracing_note (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,  -- #121 day-note; exposed as a string id
+    text           TEXT    NOT NULL,
+    remind_at      TEXT,                               -- HH:MM VN, or NULL (#121, the #75 validator)
+    remind_repeat  TEXT    NOT NULL DEFAULT 'off',     -- daily | weekdays | off
+    remind_channel TEXT    NOT NULL DEFAULT 'in_app',  -- in_app | email | discord (#111)
+    created        TEXT    NOT NULL
+);
 """
 
 _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
              "remind_at, remind_repeat, remind_channel")  # #75 remind_*; #111 remind_channel
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
 _TPL_COLS = "id, name, emoji, icon, unit, goal, color, hidden"  # #109 template override row
+_NOTE_COLS = "id, text, remind_at, remind_repeat, remind_channel, created"  # #121 day-note row
 
 
 def init_tracing_tables() -> sqlite3.Connection:
@@ -270,3 +279,76 @@ def reset_templates() -> int:
         cur = conn.execute("DELETE FROM tracing_template")
         conn.commit()
         return cur.rowcount
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX2 T1 (#121): day-notes (text + optional remind). A note's id is the   #
+# AUTOINCREMENT INTEGER PK, exposed as a string by the reader. The note→reminder  #
+# link reuses the reminders.activity_id column with source="tracing-note" (the    #
+# dispatch's decided link key — no reminders schema migration).                   #
+# --------------------------------------------------------------------------- #
+def list_notes() -> list[sqlite3.Row]:
+    """All day-notes, newest-first. Honest-empty [] when none."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_NOTE_COLS} FROM tracing_note ORDER BY created DESC, id DESC"
+        ).fetchall()
+
+
+def get_note(note_id: int) -> sqlite3.Row | None:
+    """One day-note by id, or None if absent."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_NOTE_COLS} FROM tracing_note WHERE id = ?", (int(note_id),)
+        ).fetchone()
+
+
+def create_note(*, text: str, remind_at: str | None, remind_repeat: str,
+                remind_channel: str, created: str) -> int:
+    """Insert a day-note. Returns the new row id (an int; the reader stringifies it)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO tracing_note (text, remind_at, remind_repeat, remind_channel, created) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (text, remind_at, remind_repeat, remind_channel, created),
+        )
+        conn.commit()
+        lid = cur.lastrowid
+        assert lid is not None
+        return int(lid)
+
+
+def update_note(note_id: int, *, text: str, remind_at: str | None,
+                remind_repeat: str, remind_channel: str) -> sqlite3.Row | None:
+    """Update a day-note (text + remind fields). Returns the updated row, or None if absent.
+    SCOPED to the single id (the #72 lesson — never a blanket UPDATE)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE tracing_note SET text = ?, remind_at = ?, remind_repeat = ?, "
+            "remind_channel = ? WHERE id = ?",
+            (text, remind_at, remind_repeat, remind_channel, int(note_id)),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return conn.execute(
+            f"SELECT {_NOTE_COLS} FROM tracing_note WHERE id = ?", (int(note_id),)
+        ).fetchone()
+
+
+def delete_note(note_id: int) -> bool:
+    """Delete a day-note by id. True if a row was removed. SCOPED to the single id."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM tracing_note WHERE id = ?", (int(note_id),))
+        conn.commit()
+        return cur.rowcount > 0

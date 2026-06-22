@@ -110,7 +110,8 @@ class Reminder(BaseModel):
     # TRACING-REMINDERS (#75): source tag + the linked tracing activity. ``source`` is NOT on
     # ReminderInput (forge-guard — a manual POST can't set source=tracing; only the tracing SERVICE
     # sets it). One-way: the activity drives the reminder, not vice-versa.
-    source: Literal["manual", "tracing"] = Field(default="manual", description="manual | tracing (#75)")
+    source: Literal["manual", "tracing", "tracing-note"] = Field(
+        default="manual", description="manual | tracing (#75) | tracing-note (#121 day-note link)")
     activity_id: str | None = Field(default=None, description="the tracing activity id when source=tracing (#75)")
     # TRACING-UX T3 (#111): the delivery channel this reminder fires on (default in_app).
     channel: Channel = Field(default="in_app", description="in_app | email | discord (#111)")

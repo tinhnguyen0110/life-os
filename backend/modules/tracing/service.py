@@ -30,6 +30,9 @@ from .schema import (
     ActivityUpdate,
     ActivityView,
     LogInput,
+    Note,
+    NoteInput,
+    NoteUpdate,
     Template,
     TemplateInput,
     TodayStat,
@@ -40,6 +43,9 @@ from .schema import (
     vn_now_iso,
     vn_today,
 )
+
+# #121: the link source for a day-note's reminder (distinct from an activity's "tracing").
+_NOTE_SOURCE = "tracing-note"
 
 logger = logging.getLogger("life-os.tracing.service")
 
@@ -412,3 +418,105 @@ def log_session(activity_id: str, inp: LogInput) -> ActivityView:
     act = get_activity(activity_id)
     assert act is not None  # router verified existence before calling
     return _derive_activity_view(act)
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX2 T1 (#121): day-notes — text + optional remind.                     #
+# A note's remind reuses the #75 wire via source="tracing-note" (the note id is   #
+# the linked-entity id in reminders.activity_id). create/update sync; delete unlinks.#
+# --------------------------------------------------------------------------- #
+def _row_to_note(row: sqlite3.Row) -> Note:
+    keys = row.keys()
+    return Note(
+        id=str(row["id"]),  # autoincrement PK → string id
+        text=row["text"],
+        remindAt=row["remind_at"] if "remind_at" in keys else None,
+        remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
+        remindChannel=row["remind_channel"] if "remind_channel" in keys else "in_app",
+        created=row["created"],
+    )
+
+
+def _sync_note_reminder(note: Note) -> None:
+    """ONE-WAY note→reminder (#121, mirrors _sync_reminder): note has remindAt + remindRepeat≠off →
+    UPSERT the linked reminder (source='tracing-note', linked id = the note id); else → DELETE it.
+    Fail-soft: a reminders hiccup logs but never breaks the note write (the note is source-of-truth)."""
+    from modules.reminders import service as rem
+    from modules.reminders.schema import _to_utc_iso
+    try:
+        if note.remindAt and note.remindRepeat != "off":
+            due_local = f"{vn_today()}T{note.remindAt}:00+07:00"
+            due_at = _to_utc_iso(due_local)
+            title = note.text.strip()[:120]  # the reminder title = the note text (capped for the alarm)
+            rem.upsert_for_activity(
+                activity_id=note.id, title=title, due_at=due_at,
+                repeat=_REPEAT_MAP.get(note.remindRepeat, "daily"),
+                channel=note.remindChannel, source=_NOTE_SOURCE,
+            )
+        else:
+            rem.delete_for_activity(note.id, source=_NOTE_SOURCE)
+    except Exception as exc:  # noqa: BLE001 — reminder sync is an add-on; never break the note write
+        logger.error("dev: note-reminder sync failed for note %s: %s", note.id, exc)
+
+
+def list_notes() -> list[Note]:
+    """All day-notes, newest-first. honest-empty [] when none."""
+    return [_row_to_note(r) for r in store.list_notes()]
+
+
+def get_note(note_id: str) -> Note | None:
+    """One day-note by id (str), or None if absent / non-numeric id."""
+    try:
+        nid = int(note_id)
+    except (TypeError, ValueError):
+        return None
+    row = store.get_note(nid)
+    return _row_to_note(row) if row is not None else None
+
+
+def create_note(inp: NoteInput) -> Note:
+    """Create a day-note + sync its linked reminder (if remindAt + remindRepeat≠off)."""
+    nid = store.create_note(
+        text=inp.text, remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,
+        remind_channel=inp.remindChannel, created=vn_now_iso(),
+    )
+    row = store.get_note(nid)
+    assert row is not None
+    note = _row_to_note(row)
+    _sync_note_reminder(note)
+    return note
+
+
+def update_note(note_id: str, upd: NoteUpdate) -> Note | None:
+    """Partial update of a day-note + re-sync the linked reminder. None if id absent.
+    Only supplied fields change; remindRepeat='off' clears the remind (deletes the linked reminder)."""
+    current = get_note(note_id)
+    if current is None:
+        return None
+    text = upd.text if upd.text is not None else current.text
+    remind_at = upd.remindAt if upd.remindAt is not None else current.remindAt
+    remind_repeat = upd.remindRepeat if upd.remindRepeat is not None else current.remindRepeat
+    remind_channel = upd.remindChannel if upd.remindChannel is not None else current.remindChannel
+    row = store.update_note(int(note_id), text=text, remind_at=remind_at,
+                            remind_repeat=remind_repeat, remind_channel=remind_channel)
+    if row is None:
+        return None
+    note = _row_to_note(row)
+    _sync_note_reminder(note)  # re-sync: upserts or (on remindRepeat='off') deletes the linked reminder
+    return note
+
+
+def delete_note(note_id: str) -> bool:
+    """Delete a day-note + its linked reminder (no orphan). True if the note existed. The reminder
+    is removed FIRST (delete_for_note via source='tracing-note'), then the note row."""
+    try:
+        nid = int(note_id)
+    except (TypeError, ValueError):
+        return False
+    # unlink the reminder first (fail-soft — a reminders hiccup must not block the note delete)
+    try:
+        from modules.reminders import service as rem
+        rem.delete_for_activity(str(nid), source=_NOTE_SOURCE)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("dev: note-reminder unlink failed for note %s: %s", nid, exc)
+    return store.delete_note(nid)

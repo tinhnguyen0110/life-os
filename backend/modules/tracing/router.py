@@ -31,7 +31,7 @@ from core.base import BaseModule
 from core.responses import ok
 
 from . import service
-from .schema import ActivityInput, ActivityUpdate, LogInput, TemplateInput
+from .schema import ActivityInput, ActivityUpdate, LogInput, NoteInput, NoteUpdate, TemplateInput
 
 logger = logging.getLogger("life-os.tracing.router")
 
@@ -146,6 +146,44 @@ def reset_templates():
     🔴 SCOPED — deletes ONLY tracing_template, NEVER the user's real activities/logs (the #72 lesson)."""
     count = service.reset_templates()
     return ok(data={"reset": True, "count": count})
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX2 T1 (#121): day-notes — text + optional remind (note→reminder link).#
+# --------------------------------------------------------------------------- #
+@router.get("/notes")
+def list_notes():
+    """All day-notes, newest-first. honest-empty {notes: []} when none (raw-data-first)."""
+    return ok(data={"notes": [n.model_dump() for n in service.list_notes()]})
+
+
+@router.post("/notes", status_code=201)
+def create_note(body: NoteInput):
+    """Create a day-note (text + optional remind). 201 + the Note. A note WITH remindAt +
+    remindRepeat≠off emits a linked reminder (source='tracing-note', channel #111). 422 on blank
+    text / bad HH:MM (schema validators)."""
+    note = service.create_note(body)
+    return ok(data=note.model_dump())
+
+
+@router.put("/notes/{note_id}")
+def update_note(note_id: str, body: NoteUpdate):
+    """Partial update of a day-note + re-sync the linked reminder. 404 if absent. Pass
+    remindRepeat='off' to CLEAR the remind (deletes the linked reminder)."""
+    note = service.update_note(note_id, body)
+    if note is None:
+        return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
+                                    hint="GET /tracing/notes for valid ids")
+    return ok(data=note.model_dump())
+
+
+@router.delete("/notes/{note_id}")
+def delete_note(note_id: str):
+    """Delete a day-note + its linked reminder (no orphan). 404 if the note doesn't exist."""
+    if not service.delete_note(note_id):
+        return agent_error_response("NOT_FOUND", f"note {note_id!r} not found",
+                                    hint="GET /tracing/notes for valid ids")
+    return ok(data={"deleted": note_id})
 
 
 # The registry discovers this MODULE (adding this folder is the only wiring needed). No routines P1.

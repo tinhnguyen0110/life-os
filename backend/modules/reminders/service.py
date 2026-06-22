@@ -102,22 +102,24 @@ def delete(reminder_id: int) -> bool:
 
 # --------------------------------------------------------------------------- #
 # TRACING-REMINDERS (#75) — the tracing→reminder wire (one-way, internal-only).  #
-# The forge-guard: source='tracing' is set ONLY here (the tracing service calls   #
-# these); the public create(ReminderInput) can't set source (not an input field).  #
+# The forge-guard: source='tracing'/'tracing-note' is set ONLY here (the tracing  #
+# service calls these); the public create(ReminderInput) can't set source (not an  #
+# input field). #121 generalized ``source`` so day-notes ('tracing-note') reuse    #
+# the SAME wire + the reminders.activity_id column as the generic linked-entity id. #
 # --------------------------------------------------------------------------- #
 def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: str,
-                        channel: str = "in_app") -> Reminder:
-    """Create-or-update the reminder linked to ``activity_id`` (source='tracing'). find-by-activity:
-    none → create (source=tracing), else → update title/due_at/repeat/channel. Idempotent — a re-sync
-    on the same activity UPDATES, never duplicates. Returns the linked Reminder. (Called by the tracing
-    service when an activity has remind_at + remind_repeat≠off.) ``due_at`` is already a UTC ISO.
-    ``channel`` (#111) = the activity's remindChannel (default in_app)."""
-    existing = store.find_by_activity(activity_id, source="tracing")
+                        channel: str = "in_app", source: str = "tracing") -> Reminder:
+    """Create-or-update the reminder linked to ``activity_id`` (the linked-entity id) for ``source``
+    (default 'tracing'; '#121: tracing-note' for a day-note, where activity_id holds the note id).
+    find-by (activity_id, source): none → create, else → update title/due_at/repeat/channel.
+    Idempotent — a re-sync UPDATES, never duplicates. Returns the linked Reminder. ``due_at`` is
+    already a UTC ISO. ``channel`` (#111) = the linked entity's remindChannel (default in_app)."""
+    existing = store.find_by_activity(activity_id, source=source)
     if existing is None:
         rid = store.create_reminder(
             title=title, note=None, due_at=due_at, repeat=repeat,
             re_notify_every=None, max_times=None, created=now_iso(),
-            source="tracing", activity_id=activity_id, channel=channel,
+            source=source, activity_id=activity_id, channel=channel,
         )
         row = store.get_reminder(rid)
     else:
@@ -127,10 +129,11 @@ def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: st
     return row_to_reminder(row)
 
 
-def delete_for_activity(activity_id: str) -> bool:
-    """Delete the tracing-linked reminder for ``activity_id`` (if any). True if one was removed. Called
-    when the activity clears its remind / is archived. ONE-WAY (only tracing drives this)."""
-    existing = store.find_by_activity(activity_id, source="tracing")
+def delete_for_activity(activity_id: str, source: str = "tracing") -> bool:
+    """Delete the linked reminder for (``activity_id``, ``source``) if any. True if one was removed.
+    Called when the linked entity clears its remind / is archived / deleted. ONE-WAY (only the tracing
+    side drives this). #121: source='tracing-note' deletes a day-note's linked reminder (no orphan)."""
+    existing = store.find_by_activity(activity_id, source=source)
     if existing is None:
         return False
     return store.delete_reminder(int(existing["id"]))
