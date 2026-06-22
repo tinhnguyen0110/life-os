@@ -124,17 +124,67 @@ describe("#136 Tracing — timeline DEFAULT + NO global edit toggle", () => {
     expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument();
   });
 
-  it("the timeline orders TIMED by remindAt, then un-timed under 'CẢ NGÀY'", async () => {
+  it("#139 — timeline orders TIMED by time first, then a legacy timeless row at the END (NO 'CẢ NGÀY' header)", async () => {
     getTracing.mockResolvedValue(OVERVIEW([
-      ACT({ id: "anytime", name: "Bất kỳ", remindAt: null }),
+      ACT({ id: "anytime", name: "Bất kỳ", remindAt: null, time: null }),
       ACT({ id: "late", name: "Tối", remindAt: "21:00", remindRepeat: "daily" }),
       ACT({ id: "early", name: "Sáng", remindAt: "06:00", remindRepeat: "daily" }),
     ]));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tl-early")).toBeInTheDocument());
+    // timed rows ascending, then the timeless one LAST — ordering preserved.
     const order = screen.getAllByTestId(/^tl-(early|late|anytime)$/).map((r) => r.getAttribute("data-testid"));
     expect(order).toEqual(["tl-early", "tl-late", "tl-anytime"]);
-    expect(screen.getByTestId("timeline-anytime-sep")).toBeInTheDocument();
+    // #139 — the "CẢ NGÀY" bucket header is REMOVED (timeless rows just render at the end).
+    expect(screen.queryByTestId("timeline-anytime-sep")).toBeNull();
+    expect(screen.queryByText("CẢ NGÀY")).toBeNull();
+  });
+
+  it("#139 — a legacy null-time row shows a PROMINENT '⏰ Đặt giờ' pill (not a bare '—'), and clicking it opens the time editor", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "legacy", name: "Cũ", remindAt: null, time: null }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-legacy")).toBeInTheDocument());
+    const timeCell = screen.getByTestId("tl-time-legacy");
+    // the cell is the actionable pill, NOT a bare dash
+    expect(timeCell.className).toContain("tl-settime-pill");
+    expect(timeCell.textContent).toContain("Đặt giờ");
+    expect(timeCell.textContent).not.toBe("—");
+    expect(timeCell.textContent).not.toBe("–");
+    // clicking it opens the same per-card time editor
+    fireEvent.click(timeCell);
+    await waitFor(() => expect(screen.getByTestId("tl-time-editor-legacy")).toBeInTheDocument());
+  });
+
+  it("#139 — a TIMED row shows the real time (no '⏰ Đặt giờ' pill)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "timed", name: "Có giờ", remindAt: "06:30", remindRepeat: "daily" }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-timed")).toBeInTheDocument());
+    const timeCell = screen.getByTestId("tl-time-timed");
+    expect(timeCell.textContent).toContain("06:30");
+    expect(timeCell.className).not.toContain("tl-settime-pill");
+    expect(timeCell.textContent).not.toContain("Đặt giờ");
+  });
+
+  it("#139 — the add-form has a TIME input (default 08:00) → createActivity sends a time, so a new activity is never timeless", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "doc-sach", name: "Đọc sách", time: "08:00" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    // the time input exists + defaults to 08:00
+    const timeInput = screen.getByTestId("todo-time") as HTMLInputElement;
+    expect(timeInput).toBeInTheDocument();
+    expect(timeInput.value).toBe("08:00");
+    // type a name + submit → createActivity called WITH a time
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Đọc sách" } });
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.time).toBe("08:00");
+    expect(body.name).toBe("Đọc sách");
   });
 });
 

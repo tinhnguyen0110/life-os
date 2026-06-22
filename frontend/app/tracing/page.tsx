@@ -60,6 +60,10 @@ function errText(err: unknown): string {
 type RemindKind = "recurring" | "once";
 type RemindState = { on: boolean; kind: RemindKind; time: string; repeat: RemindRepeat; date: string; channel: RemindChannel };
 const EMPTY_REMIND: RemindState = { on: false, kind: "recurring", time: "07:00", repeat: "daily", date: "", channel: "in_app" };
+/** #139 — every newly-added activity gets a time (no bare "–"). The add-form's TIME input
+ *  defaults to this; the user can edit it before adding. A fixed, sensible 08:00 (start of
+ *  the working day) — least-friction, not a hard-required 422 (would block quick-add). */
+const ADD_TIME_DEFAULT = "08:00";
 
 /** today (VN) as YYYY-MM-DD — the client-side min for the one-shot date picker (the BE
  *  also 422s a past date; this is just a friendly guard). */
@@ -185,6 +189,10 @@ export default function TracingPage() {
 
   // ---- add-a-todo (edit-mode) ----
   const [todoText, setTodoText] = useState("");
+  // #139 — every NEW activity gets a time (no bare "–"). The add-form has a TIME input
+  // defaulting to ADD_TIME_DEFAULT; sent as ActivityInput.time. User can still edit it
+  // before adding, and a legacy/timeless row keeps the clickable "–" ("Đặt giờ") to set one.
+  const [todoTime, setTodoTime] = useState<string>(ADD_TIME_DEFAULT);
   const [todoRemind, setTodoRemind] = useState<RemindState>({ ...EMPTY_REMIND });
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState("");
@@ -230,6 +238,8 @@ export default function TracingPage() {
     if (!id) { setAddErr("Nội dung không tạo được id — thử chữ có dấu cách / chữ cái."); return; }
     const body: ActivityInput = {
       id, name: text, goal: 1,
+      // #139 — a time is always sent (default 08:00) so every new activity is timed.
+      time: todoTime || null,
       remindAt: todoRemind.on ? todoRemind.time : null,
       remindRepeat: todoRemind.on ? todoRemind.repeat : "off",
       remindChannel: todoRemind.on ? todoRemind.channel : undefined,
@@ -237,7 +247,7 @@ export default function TracingPage() {
     setAddBusy(true);
     try {
       await add(body);
-      setTodoText(""); setTodoRemind({ ...EMPTY_REMIND });
+      setTodoText(""); setTodoTime(ADD_TIME_DEFAULT); setTodoRemind({ ...EMPTY_REMIND });
     } catch (err) { setAddErr(errText(err)); } finally { setAddBusy(false); }
   }
 
@@ -367,13 +377,24 @@ export default function TracingPage() {
 
     return (
       <div className="tlx-row" data-testid={`tl-${a.id}`} data-done={a.today.done}
-        style={{ display: "grid", gridTemplateColumns: "54px 16px 1fr auto", alignItems: "center", gap: 10, padding: "9px 6px", borderBottom: "1px solid var(--bg-2)" }}>
-        {/* giờ — #136 G3: the dedicated time (fallback remindAt). Click to set/edit. */}
-        <button type="button" className="tl-time-btn num faint" data-testid={`tl-time-${a.id}`}
-          onClick={() => { setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }} title="Đặt giờ"
-          style={{ fontSize: 12, textAlign: "right", background: "none", border: 0, cursor: "pointer", color: railTime(a) ? "var(--tx-1)" : "var(--tx-2)", fontFamily: "var(--mono)" }}>
-          {railTime(a) ?? "—"}
-        </button>
+        style={{ display: "grid", gridTemplateColumns: "66px 16px 1fr auto", alignItems: "center", gap: 10, padding: "9px 6px", borderBottom: "1px solid var(--bg-2)" }}>
+        {/* giờ — #136 G3: the dedicated time (fallback remindAt). Click to set/edit.
+            #139 — a null-time (legacy) row shows a PROMINENT "⏰ Đặt giờ" pill (NOT a bare "—")
+            so every row reads as either a real time or an actionable "tap to set". No auto-backfill
+            — we never write a guessed time to the user's data; the pill just opens the time editor. */}
+        {railTime(a) ? (
+          <button type="button" className="tl-time-btn num faint" data-testid={`tl-time-${a.id}`}
+            onClick={() => { setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }} title="Đổi giờ"
+            style={{ fontSize: 12, textAlign: "right", background: "none", border: 0, cursor: "pointer", color: "var(--tx-1)", fontFamily: "var(--mono)" }}>
+            {railTime(a)}
+          </button>
+        ) : (
+          <button type="button" className="tl-settime-pill" data-testid={`tl-time-${a.id}`}
+            onClick={() => { setTimeVal(""); setTimeOpen((o) => !o); }} title="Đặt giờ cho việc này"
+            aria-label="Đặt giờ">
+            ⏰ <span className="tl-settime-pill-label">Đặt giờ</span>
+          </button>
+        )}
         {/* color-dot */}
         <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: a.today.done ? "var(--green)" : (a.color || "var(--tx-2)"), justifySelf: "center", boxShadow: a.today.done ? "0 0 6px -1px var(--green)" : undefined }} />
         {/* việc — TOGGLE tick + icon + name + (G4-A) metric/sub-detail from REAL fields */}
@@ -570,6 +591,9 @@ export default function TracingPage() {
                   <div className="row" style={{ gap: 8 }}>
                     <input className="finput" style={{ flex: 1 }} value={todoText} onChange={(e) => setTodoText(e.target.value)}
                       placeholder="Thêm việc cần làm hôm nay…" data-testid="todo-input" aria-label="Việc cần làm" />
+                    {/* #139 — every activity has a time. Defaults to ADD_TIME_DEFAULT; editable before adding. */}
+                    <input className="finput num" type="time" style={{ width: 110 }} value={todoTime}
+                      onChange={(e) => setTodoTime(e.target.value)} data-testid="todo-time" aria-label="Giờ" title="Giờ của việc" />
                     <button className="btn accent" type="submit" disabled={addBusy} data-testid="todo-submit">{addBusy ? "…" : "Thêm"}</button>
                     {/* #137 — opens the template-SET modal (replaced the rejected 1-word chip row). */}
                     <button className="btn" type="button" onClick={() => setTplModalOpen(true)} data-testid="tpl-open">+ Từ mẫu</button>
@@ -593,15 +617,11 @@ export default function TracingPage() {
                 </div>
               ) : (
                 <>
+                  {/* #139 — every new activity is timed; the old "CẢ NGÀY" bucket/header is
+                      removed. Timed rows first (ascending), then any legacy timeless rows at the
+                      END with no separate header. */}
                   {timed.map((a) => <TimelineRow key={a.id} a={a} />)}
-                  {anytime.length > 0 && (
-                    <>
-                      {timed.length > 0 && (
-                        <div className="hint faint" data-testid="timeline-anytime-sep" style={{ padding: "8px 8px 4px", fontSize: 10.5 }}>CẢ NGÀY</div>
-                      )}
-                      {anytime.map((a) => <TimelineRow key={a.id} a={a} />)}
-                    </>
-                  )}
+                  {anytime.map((a) => <TimelineRow key={a.id} a={a} />)}
                 </>
               )}
             </div>
