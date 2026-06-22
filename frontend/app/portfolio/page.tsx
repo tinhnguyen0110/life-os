@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 import { usePortfolio } from "@/lib/usePortfolio";
 import { useSafeRouter } from "@/lib/useNav";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { Field, TextInput, NumberInput, Select } from "@/components/shared/Field";
 import { donut } from "@/lib/spark";
 import { fmtUSD, fmtSign, fmtPct, relativeTime } from "@/lib/format";
@@ -105,15 +106,17 @@ export default function PortfolioPage() {
 
       {showAdd && <AddHoldingForm onAdd={addHolding} onDone={() => setShowAdd(false)} />}
 
-      {status === "loading" && (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="portfolio-loading">Đang tải danh mục…</div>
-      )}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="portfolio-error">
-          Không tải được danh mục: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="portfolio-loading"
+        loadingLabel="Đang tải danh mục…"
+        errorTestid="portfolio-error"
+        errorLabel={<>Không tải được danh mục: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <div className="grid" style={{ gridTemplateColumns: "300px 1fr", alignItems: "start" }}>

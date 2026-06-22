@@ -8,6 +8,7 @@
    ============================================================ */
 import { useMemo, useState } from "react";
 import { useJournal } from "@/lib/useJournal";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { fmtMonthYear, fmtPct, orDash } from "@/lib/format";
 import { apiBase, ApiError } from "@/lib/api";
@@ -188,13 +189,17 @@ export default function JournalPage() {
         </div>
       )}
 
-      {status === "loading" && <div className="hint" style={{ padding: "24px 4px" }} data-testid="journal-loading">Đang tải nhật ký…</div>}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="journal-error">
-          Không tải được nhật ký: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>Thử lại</button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="journal-loading"
+        loadingLabel="Đang tải nhật ký…"
+        errorTestid="journal-error"
+        errorLabel={<>Không tải được nhật ký: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <>

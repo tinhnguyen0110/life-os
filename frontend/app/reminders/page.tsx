@@ -16,6 +16,7 @@
    ============================================================ */
 import { useMemo, useState } from "react";
 import { useReminders, type ReminderTab } from "@/lib/useReminders";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { fmtDueAt, fmtDateTime, orDash } from "@/lib/format";
 import { apiBase, ApiError } from "@/lib/api";
 import type { Reminder, ReminderInput, ReminderRepeat } from "@/lib/types";
@@ -284,19 +285,20 @@ export default function RemindersPage() {
         </div>
       )}
 
-      {status === "loading" && (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="reminders-loading">
-          Đang tải nhắc nhở…
-        </div>
-      )}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="reminders-error">
-          Không tải được nhắc nhở: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>
-            Thử lại
-          </button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — the inline loading/error hints → the shared <LoadErrorShell>
+          WITHOUT a section wrapper (renders the bare hint div in-place, like the original
+          two `&&` blocks). On "ready" it renders nothing (children=null); the body below
+          stays gated on `status === "ready"`. Copy/testids preserved verbatim. */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="reminders-loading"
+        loadingLabel="Đang tải nhắc nhở…"
+        errorTestid="reminders-error"
+        errorLabel={<>Không tải được nhắc nhở: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <div className="panel" style={{ overflow: "hidden" }} data-testid="reminders-list">

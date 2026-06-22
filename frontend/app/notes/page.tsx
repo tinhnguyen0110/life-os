@@ -10,6 +10,7 @@
    ============================================================ */
 import { useMemo, useState } from "react";
 import { useNotes, type Note, type Attach, type AttachType } from "@/lib/useNotes";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { NoteCard } from "@/components/shared/NoteCard";
 import { apiBase, ApiError } from "@/lib/api";
 import { Icon } from "@/lib/icons";
@@ -248,19 +249,17 @@ export default function NotesPage() {
         </div>
       )}
 
-      {status === "loading" && (
-        <div className="hint" style={{ padding: "24px 4px" }} data-testid="notes-loading">
-          Đang tải ghi chú…
-        </div>
-      )}
-      {status === "error" && (
-        <div className="hint neg" style={{ padding: "24px 4px" }} data-testid="notes-error">
-          Không tải được ghi chú: {errMsg}. Kiểm tra backend ({apiBase}).
-          <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>
-            Thử lại
-          </button>
-        </div>
-      )}
+      {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (no section wrapper). */}
+      <LoadErrorShell
+        status={status}
+        loadingTestid="notes-loading"
+        loadingLabel="Đang tải ghi chú…"
+        errorTestid="notes-error"
+        errorLabel={<>Không tải được ghi chú: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+        reload={reload}
+      >
+        {null}
+      </LoadErrorShell>
 
       {status === "ready" && (
         <>
