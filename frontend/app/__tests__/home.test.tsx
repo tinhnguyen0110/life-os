@@ -43,7 +43,7 @@ const PROJECT_ACT: ProjectStatus = {
   progress: 45, users: 1, last: "2026-06-06T10:00:00Z", lastDays: 0,
   next: "Sprint 5", repo: "/path/to/life-os",
   metrics: { commits: 42, branch: "main", lang: "TypeScript", testPass: null, stars: null },
-  routines: [], lastAuto: null,
+  routines: [], lastAuto: null, source: "registered", hidden: false,
 };
 
 const PROJECTS_OK: ProjectsListData = {

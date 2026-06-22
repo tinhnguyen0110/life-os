@@ -38,11 +38,13 @@ export const NAV: NavGroup[] = [
       // (Sidebar.badgeText). It shows ONLY when a live fetch FAILS, so it must be
       // HONEST: "—" (no data), never a stale hardcoded number. The "71%" ghost (the
       // cap-overflow value) used to leak here on a fetch-fail — neutralized to "—".
+      // #114 — gộp 3→2: /projects + /graveyard merged into ONE "Dự án" entry (the
+      // graveyard is now an in-page sub-tab at /projects?tab=graveyard; /graveyard
+      // redirects there). /dev-activity STAYS separate (distinct git-stats screen,
+      // user-CHỐT nav-IA option A — NOT merged).
+      // label "Danh sách" (NOT "Dự án" — that's the section header; a matching label
+      // would collide in getByText, the nav.test label-uniqueness guard).
       { route: "/projects", label: "Danh sách", icon: "i-proj", screen: "S2", badge: { text: "—", cls: "acc" } },
-      { route: "/graveyard", label: "Nghĩa địa", icon: "i-grave", screen: "S4" },
-      // #63 dev-activity (git contributions) — grouped under "Dự án" per user CHỐT
-      // (nav-IA option A). DISTINCT screen from /projects (status) + /graveyard (dead):
-      // this is git-stats. Same SECTION, separate routes/screens. screen-id DEVACT.
       { route: "/dev-activity", label: "Dev Activity", icon: "i-graph", screen: "DEVACT" },
       // #64-P3 repo-memory (REPOMEM) — per-repo code_insight + durable repo_memory note.
       // The human browse layer over the agent's per-repo knowledge. Grouped with the

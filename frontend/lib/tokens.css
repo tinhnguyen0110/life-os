@@ -1031,6 +1031,20 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .dev-repo-name { font-family:var(--mono); color:var(--tx-0); }
 
 /* ============================================================
+   #114 Projects unified table (sub-tab + source badge + hide + dev-stat).
+   ============================================================ */
+.proj-table { width:100%; border-collapse:collapse; font-size:12px; }
+.proj-table th, .proj-table td { padding:8px 10px; text-align:left; vertical-align:middle; }
+.proj-table thead th { color:var(--tx-1); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--line-2); white-space:nowrap; }
+.proj-table .num-col { text-align:right; }
+.proj-table tbody tr { border-bottom:1px solid var(--line-1); }
+.proj-table tbody tr:hover { background:var(--bg-1); }
+.proj-table .pn { font-weight:600; color:var(--tx-0); }
+.proj-table .pn.clickable { cursor:pointer; }
+.proj-table tr.proj-hidden { opacity:.55; }
+.devstat { font-family:var(--mono); font-size:11px; white-space:nowrap; }
+
+/* ============================================================
    #109 Tracing template picker.
    ============================================================ */
 .tpl-picker { border-bottom:1px solid var(--line-2); padding-bottom:10px; }

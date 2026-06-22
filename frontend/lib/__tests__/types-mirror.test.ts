@@ -56,6 +56,8 @@ describe("types.ts mirrors backend schema.py (frozen shape)", () => {
       metrics: { commits: 0, branch: "", lang: null, testPass: null, stars: null },
       routines: [],
       lastAuto: null,
+      source: "auto",
+      hidden: false,
     };
     expect(minimal.progress).toBeNull();
     expect(minimal.last).toBeNull();

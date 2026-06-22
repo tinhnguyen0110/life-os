@@ -64,6 +64,36 @@ export interface ProjectStatus {
   routines: string[];
   /** ISO-8601 UTC of last automation touch, else null. */
   lastAuto: string | null;
+  /** #113 — how this project entered the registry: "config" (explicit config),
+   *  "registered" (manual register), "auto" (auto-discovered from DEV_TRACING_ROOTS). */
+  source: ProjectSource;
+  /** #113 — hidden from the default list (≠ abandoned; a soft UI-hide). include=hidden
+   *  surfaces it. */
+  hidden: boolean;
+}
+
+/** #113 — project registry source. */
+export type ProjectSource = "config" | "registered" | "auto";
+
+/** #112 — per-project git dev-activity (GET /projects/{id}/dev-activity?days=N).
+ *  honest-mirror: found:false → the repo isn't in the dev_activity scan; render an
+ *  honest "chưa track git" with `reason`, NEVER a fake commits:0-as-real. */
+export interface ProjectDevActivity {
+  projectId: string;
+  /** false → not in the scan (DEV_TRACING_ROOTS) → honest "untracked", not real 0s. */
+  found: boolean;
+  commits: number;
+  /** net LOC (added − deleted) over the window. */
+  locNet: number;
+  /** VN-day of the last commit, null when none/untracked. */
+  lastActiveDay: string | null;
+  days: number;
+  activeDays: number;
+  /** the matched repo(s) for this project. */
+  matches: { repo: string; commits: number; locNet: number; lastActiveDay: string | null; activeDays: number }[];
+  /** when found:false — why (e.g. "repo not in the dev_activity scan…"). */
+  reason: string | null;
+  warning: string | null;
 }
 
 /** Health summary bar (S2) — mirrors router `_summary()`. */

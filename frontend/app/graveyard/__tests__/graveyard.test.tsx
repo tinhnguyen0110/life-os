@@ -9,7 +9,9 @@ vi.mock("@/lib/api", async () => {
   return { ...actual, getGraveyard: () => getGraveyard(), restoreProject: (...a: unknown[]) => restoreProject(...a) };
 });
 
-import GraveyardPage from "../page";
+// #114 — the graveyard UI moved from the page (now a redirect) into <GraveyardView>,
+// rendered in the /projects "Nghĩa địa" sub-tab. The S4 behavior tests follow it here.
+import { GraveyardView as GraveyardPage } from "@/components/GraveyardView";
 
 afterEach(() => {
   getGraveyard.mockReset();

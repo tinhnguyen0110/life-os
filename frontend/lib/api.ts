@@ -9,6 +9,7 @@ import type {
   HealthData,
   ProjectStatus,
   ProjectsListData,
+  ProjectDevActivity,
   FinanceOverview,
   Holding,
   HoldingInput,
@@ -362,14 +363,31 @@ export function getHealth(): Promise<ApiResponse<HealthData>> {
   return apiGet<HealthData>("/health");
 }
 
-/** S2 — all tracked, non-abandoned projects + health summary. */
-export function getProjects(): Promise<ApiResponse<ProjectsListData>> {
-  return apiGet<ProjectsListData>("/projects");
+/** S2 — all tracked, non-abandoned projects + health summary. #113: pass
+ *  includeHidden to also surface soft-hidden projects (for the "đã ẩn" view). */
+export function getProjects(includeHidden = false): Promise<ApiResponse<ProjectsListData>> {
+  return apiGet<ProjectsListData>(`/projects${includeHidden ? "?include=hidden" : ""}`);
 }
 
 /** S3 — one project by id (includes abandoned). 404 → ApiError(404). */
 export function getProject(id: string): Promise<ApiResponse<ProjectStatus>> {
   return apiGet<ProjectStatus>(`/projects/${encodeURIComponent(id)}`);
+}
+
+/** #113 — soft-hide a project from the default list (≠ abandon). Returns the project. */
+export function hideProject(id: string): Promise<ApiResponse<ProjectStatus>> {
+  return apiPost<ProjectStatus>(`/projects/${encodeURIComponent(id)}/hide`);
+}
+
+/** #113 — un-hide a soft-hidden project. Returns the project. */
+export function unhideProject(id: string): Promise<ApiResponse<ProjectStatus>> {
+  return apiPost<ProjectStatus>(`/projects/${encodeURIComponent(id)}/unhide`);
+}
+
+/** #112 — per-project git dev-activity. found:false → not in the scan (honest untracked,
+ *  NOT real 0s) — the caller renders "chưa track git" + the reason. */
+export function getProjectDevActivity(id: string, days = 90): Promise<ApiResponse<ProjectDevActivity>> {
+  return apiGet<ProjectDevActivity>(`/projects/${encodeURIComponent(id)}/dev-activity?days=${days}`);
 }
 
 /** S5 — finance overview (totalValue + allocations + dryPowder + pnlTotal). */

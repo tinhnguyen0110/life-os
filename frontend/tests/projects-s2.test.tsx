@@ -67,6 +67,8 @@ const PROJECT_ACT: ProjectStatus = {
   metrics: METRICS_FULL,
   routines: ["wiki-refresh"],
   lastAuto: "2026-06-05T12:00:00+00:00",
+  source: "registered",
+  hidden: false,
 };
 
 const PROJECT_SLOW: ProjectStatus = {
@@ -83,6 +85,8 @@ const PROJECT_SLOW: ProjectStatus = {
   metrics: METRICS_FULL,
   routines: ["wiki-refresh"],
   lastAuto: null,
+  source: "auto",
+  hidden: false,
 };
 
 const PROJECT_STALL: ProjectStatus = {
@@ -99,6 +103,8 @@ const PROJECT_STALL: ProjectStatus = {
   metrics: METRICS_EMPTY,
   routines: [],
   lastAuto: null,
+  source: "auto",
+  hidden: false,
 };
 
 const PROJECT_DEAD: ProjectStatus = {
@@ -115,6 +121,8 @@ const PROJECT_DEAD: ProjectStatus = {
   metrics: METRICS_EMPTY,
   routines: [],
   lastAuto: null,
+  source: "registered",
+  hidden: true,
 };
 
 // ------------------------------------------------------------------ #

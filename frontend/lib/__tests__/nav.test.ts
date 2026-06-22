@@ -42,7 +42,9 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("DEVACT"); // Dev Activity (#63 git contributions) under "Dự án" (user CHỐT nav-IA option A) — DISTINCT from S14 /activity feed
     expect(screens).toContain("REPOMEM"); // Repo Memory (#64-P3 code_insight + repo_memory) under "Dự án" — DISTINCT browse screen
     expect(screens).toContain("MCPKEYS"); // MCP Keys (#88 per-key tool scoping) under "Hệ thống"
-    expect(unique.size).toBe(30);
+    // #114 — gộp 3→2: S4 (Nghĩa địa) merged into S2's in-page sub-tab → no longer a
+    // standalone nav entry (was 30 → 29). /graveyard route still exists (redirects).
+    expect(unique.size).toBe(29);
   });
 
   it("every nav route has a breadcrumb entry", () => {

@@ -4,9 +4,18 @@
  * Verifies each of the 14 route placeholders renders without crash.
  * Skipped per route if the component doesn't exist yet.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import React from "react";
+
+// #114 — some routes (the /graveyard redirect) use next/navigation hooks; mock them so
+// the bare smoke-render doesn't hit "app router not mounted". useSearchParams returns an
+// empty params object (the projects sub-tab reads ?tab=).
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const ROUTES = [
   { name: "Home",        importPath: "@/app/page" },
