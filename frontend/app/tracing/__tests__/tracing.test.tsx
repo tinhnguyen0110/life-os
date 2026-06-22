@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, waitFor, within, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, within, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+/** set a controlled <input type="date"> value the React way (fireEvent.change drives the
+ *  synthetic onChange so the component state actually updates — a raw .value= does not). */
+function setDate(input: HTMLInputElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+}
 
 /* #126 TRACING-UX2 timeline redesign — the VIEW changed (default = a time-rail read-view +
    an edit-mode toggle + multi-list notes + "+ Từ mẫu" templates), the BASE model is KEPT
@@ -70,7 +76,7 @@ const OVERVIEW = (acts = [ACT()], over = {}) => ({
   },
 });
 const NOTE = (over = {}) => ({
-  id: "1", text: "nhớ gọi điện", remindAt: null, remindRepeat: "off", remindChannel: "in_app",
+  id: "1", text: "nhớ gọi điện", remindAt: null, remindDate: null, remindRepeat: "off", remindChannel: "in_app",
   created: "2026-06-22T10:00:00+07:00", ...over,
 });
 const NOTES = (notes: ReturnType<typeof NOTE>[] = []) => ({ success: true, data: { notes } });
@@ -330,6 +336,98 @@ describe("#126 Tracing — RIGHT note MULTI-LIST (text + remind), #121", () => {
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("notes-load-error")).toBeInTheDocument());
     expect(screen.getByTestId("tracing-timeline")).toBeInTheDocument();
+  });
+});
+
+describe("#125 Tracing — note ONE-SHOT future-date remind", () => {
+  it("one-shot kind: pick a FUTURE date + time → body has remindDate (repeat stays off)", async () => {
+    createTracingNote.mockResolvedValue({ success: true, data: NOTE({ id: "9", remindAt: "09:00", remindDate: "2030-01-01" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("note-input"), "deploy 1/1");
+    await user.click(screen.getByTestId("note-remind-toggle"));
+    // switch to the one-shot kind, then set a future date
+    await user.click(screen.getByTestId("note-kind-once"));
+    await waitFor(() => expect(screen.getByTestId("note-remind-date")).toBeInTheDocument());
+    setDate(screen.getByTestId("note-remind-date") as HTMLInputElement, "2030-01-01");
+    await user.click(screen.getByTestId("note-submit"));
+    await waitFor(() => expect(createTracingNote).toHaveBeenCalled());
+    const body = createTracingNote.mock.calls[0][0];
+    expect(body.remindDate).toBe("2030-01-01");
+    expect(body.remindAt).toBe("07:00");
+    expect(body.remindRepeat).toBe("off"); // one-shot → not a recurring repeat
+  });
+
+  it("recurring kind (default): repeat path unchanged → NO remindDate sent", async () => {
+    createTracingNote.mockResolvedValue({ success: true, data: NOTE() });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("note-input"), "uống thuốc");
+    await user.click(screen.getByTestId("note-remind-toggle"));
+    // default kind = recurring → a repeat select, no date input
+    expect(screen.getByTestId("note-remind-repeat")).toBeInTheDocument();
+    expect(screen.queryByTestId("note-remind-date")).toBeNull();
+    await user.click(screen.getByTestId("note-submit"));
+    await waitFor(() => expect(createTracingNote).toHaveBeenCalled());
+    const body = createTracingNote.mock.calls[0][0];
+    expect(body.remindDate).toBeNull();           // recurring → no one-shot date
+    expect(body.remindRepeat).toBe("daily");
+  });
+
+  it("one-shot with NO date picked → client guard error, no POST", async () => {
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("note-input"), "thiếu ngày");
+    await user.click(screen.getByTestId("note-remind-toggle"));
+    await user.click(screen.getByTestId("note-kind-once"));
+    // clear the auto-filled date so it's blank → the client guard should fire
+    setDate(screen.getByTestId("note-remind-date") as HTMLInputElement, "");
+    await user.click(screen.getByTestId("note-submit"));
+    await waitFor(() => expect(screen.getByTestId("note-add-error")).toHaveTextContent(/ngày/));
+    expect(createTracingNote).not.toHaveBeenCalled();
+  });
+
+  it("a PAST date → the BE 422 hint is surfaced honestly (note_remind_in_past)", async () => {
+    // the client min= guard stops the UI from picking a past date; the BE is the authority
+    // (it 422s note_remind_in_past). This proves the FE SURFACES that 422 message+hint
+    // honestly (errText) instead of failing silently. We trigger a valid one-shot submit
+    // and mock the BE rejecting it as past.
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    createTracingNote.mockRejectedValue(new (ApiError as any)(422, "remind 2020-01-01 09:00 is in the past", { hint: "a one-shot remindDate+remindAt must be in the FUTURE (VN time)" }));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-input")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("note-input"), "quá khứ");
+    await user.click(screen.getByTestId("note-remind-toggle"));
+    await user.click(screen.getByTestId("note-kind-once"));
+    setDate(screen.getByTestId("note-remind-date") as HTMLInputElement, "2030-01-01"); // valid date; BE mock rejects
+    await user.click(screen.getByTestId("note-submit"));
+    await waitFor(() => expect(screen.getByTestId("note-add-error")).toHaveTextContent(/in the past/));
+    expect(screen.getByTestId("note-add-error")).toHaveTextContent(/FUTURE/); // the hint, surfaced
+  });
+
+  it("a one-shot note renders a date chip (date @ time), not a recurring chip", async () => {
+    getTracingNotes.mockResolvedValue(NOTES([NOTE({ id: "5", remindAt: "09:00", remindDate: "2030-01-01", remindRepeat: "off" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-remind-5")).toBeInTheDocument());
+    expect(screen.getByTestId("note-remind-5")).toHaveTextContent("2030-01-01");
+    expect(screen.getByTestId("note-remind-5")).toHaveTextContent("09:00");
+    expect(screen.getByTestId("note-remind-5")).not.toHaveTextContent(/hằng ngày/);
+  });
+
+  it("🔴 the ACTIVITY (todo) remind has NO one-shot date — activity stays daily-recurring", async () => {
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("edit-toggle")).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("edit-toggle"));
+    await user.click(screen.getByTestId("todo-remind-toggle"));
+    // the todo remind has a repeat select but NO kind segment / date input (#125 = note-only)
+    expect(screen.getByTestId("todo-remind-repeat")).toBeInTheDocument();
+    expect(screen.queryByTestId("todo-kind-once")).toBeNull();
+    expect(screen.queryByTestId("todo-remind-date")).toBeNull();
   });
 });
 

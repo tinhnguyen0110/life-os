@@ -52,13 +52,27 @@ function errText(err: unknown): string {
   return (err as Error).message;
 }
 
-/** a reusable inline 🔔-remind control: a toggle + (when on) time + repeat + #111 channel.
- *  Used by the todo-add row and each note card. Controlled. */
-type RemindState = { on: boolean; time: string; repeat: RemindRepeat; channel: RemindChannel };
-const EMPTY_REMIND: RemindState = { on: false, time: "07:00", repeat: "daily", channel: "in_app" };
+/** a reusable inline 🔔-remind control: a toggle + (when on) time + repeat/date + #111
+ *  channel. Used by the todo-add row (recurring-only) and each note card (allowOnce →
+ *  also a #125 ONE-SHOT future-date kind). Controlled.
+ *  - kind="recurring": time + repeat(daily/weekdays) → remindAt + remindRepeat.
+ *  - kind="once" (notes only): a future DATE + time → remindDate + remindAt (BE makes a
+ *    repeat="once" reminder). */
+type RemindKind = "recurring" | "once";
+type RemindState = { on: boolean; kind: RemindKind; time: string; repeat: RemindRepeat; date: string; channel: RemindChannel };
+const EMPTY_REMIND: RemindState = { on: false, kind: "recurring", time: "07:00", repeat: "daily", date: "", channel: "in_app" };
 
-function RemindControls({ value, onChange, channels, idPrefix }: {
+/** today (VN) as YYYY-MM-DD — the client-side min for the one-shot date picker (the BE
+ *  also 422s a past date; this is just a friendly guard). */
+function todayVnDate(): string {
+  // toISOString is UTC; for the date-input min a UTC date is close enough (the BE is the
+  // authority on "past" in VN time — it 422s, we surface the hint).
+  return new Date().toISOString().slice(0, 10);
+}
+
+function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false }: {
   value: RemindState; onChange: (next: RemindState) => void; channels: ReminderChannelOption[]; idPrefix: string;
+  allowOnce?: boolean;
 }) {
   return (
     <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -68,13 +82,28 @@ function RemindControls({ value, onChange, channels, idPrefix }: {
       </button>
       {value.on && (
         <>
+          {/* #125 — note-only: a "Một lần" (one-shot future date) vs "Lặp lại" (recurring) segment */}
+          {allowOnce && (
+            <div className="seg" data-testid={`${idPrefix}-remind-kind`}>
+              <button type="button" className={value.kind === "recurring" ? "on" : ""} data-testid={`${idPrefix}-kind-recurring`}
+                onClick={() => onChange({ ...value, kind: "recurring" })} aria-pressed={value.kind === "recurring"}>Lặp lại</button>
+              <button type="button" className={value.kind === "once" ? "on" : ""} data-testid={`${idPrefix}-kind-once`}
+                onClick={() => onChange({ ...value, kind: "once", date: value.date || todayVnDate() })} aria-pressed={value.kind === "once"}>Một lần</button>
+            </div>
+          )}
+          {/* one-shot: a future DATE; recurring: a repeat select */}
+          {allowOnce && value.kind === "once" ? (
+            <input className="finput num" type="date" style={{ width: 150 }} value={value.date} min={todayVnDate()}
+              onChange={(e) => onChange({ ...value, date: e.target.value })} data-testid={`${idPrefix}-remind-date`} aria-label="Ngày nhắc" />
+          ) : (
+            <select className="finput" style={{ width: 140 }} value={value.repeat}
+              onChange={(e) => onChange({ ...value, repeat: e.target.value as RemindRepeat })} data-testid={`${idPrefix}-remind-repeat`} aria-label="Lặp lại">
+              <option value="daily">Hằng ngày</option>
+              <option value="weekdays">Ngày thường (T2–T6)</option>
+            </select>
+          )}
           <input className="finput num" type="time" style={{ width: 110 }} value={value.time}
             onChange={(e) => onChange({ ...value, time: e.target.value })} data-testid={`${idPrefix}-remind-time`} aria-label="Giờ nhắc" />
-          <select className="finput" style={{ width: 140 }} value={value.repeat}
-            onChange={(e) => onChange({ ...value, repeat: e.target.value as RemindRepeat })} data-testid={`${idPrefix}-remind-repeat`} aria-label="Lặp lại">
-            <option value="daily">Hằng ngày</option>
-            <option value="weekdays">Ngày thường (T2–T6)</option>
-          </select>
           <select className="finput" style={{ width: 130 }} value={value.channel}
             onChange={(e) => onChange({ ...value, channel: e.target.value as RemindChannel })} data-testid={`${idPrefix}-remind-channel`} aria-label="Kênh nhắc nhở">
             {channels.map((c) => (
@@ -89,11 +118,16 @@ function RemindControls({ value, onChange, channels, idPrefix }: {
   );
 }
 
-/** a compact remind chip shown on a timed todo/note. */
-function RemindChip({ at, repeat, testid }: { at: string; repeat: RemindRepeat; testid: string }) {
+/** a compact remind chip shown on a timed todo/note. #125: when `date` is set it's a
+ *  ONE-SHOT (date @ time); otherwise it's the recurring (repeat) chip. */
+function RemindChip({ at, repeat, date, testid }: { at: string; repeat: RemindRepeat; date?: string | null; testid: string }) {
   return (
-    <span className="tagchip acc" data-testid={testid} title="Nhắc nhở">
-      🔔 <span className="num">{at}</span> {repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : ""}
+    <span className="tagchip acc" data-testid={testid} title={date ? "Nhắc một lần" : "Nhắc nhở"}>
+      🔔 {date ? (
+        <><span className="num">{date}</span> lúc <span className="num">{at}</span></>
+      ) : (
+        <><span className="num">{at}</span> {repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : ""}</>
+      )}
     </span>
   );
 }
@@ -232,15 +266,21 @@ export default function TracingPage() {
     setNoteErr("");
     const text = noteText.trim();
     if (!text) { setNoteErr("Nhập nội dung ghi chú."); return; }
+    // #125 — two remind kinds: one-shot (a future DATE + time → remindDate) vs recurring
+    // (time + repeat → remindRepeat). Off → no reminder at all.
+    const isOnce = noteRemind.on && noteRemind.kind === "once";
+    if (isOnce && !noteRemind.date) { setNoteErr("Chọn ngày cho nhắc một lần."); return; }
     const body: TracingNoteInput = {
       text,
       remindAt: noteRemind.on ? noteRemind.time : null,
-      remindRepeat: noteRemind.on ? noteRemind.repeat : "off",
+      // one-shot → remindDate set, remindRepeat "off" (BE makes a repeat="once" reminder).
+      remindDate: isOnce ? noteRemind.date : null,
+      remindRepeat: noteRemind.on && !isOnce ? noteRemind.repeat : "off",
       remindChannel: noteRemind.on ? noteRemind.channel : undefined,
     };
     setNoteBusy(true);
     try {
-      await notesApi.create(body);
+      await notesApi.create(body); // a PAST remindDate → BE 422 (note_remind_in_past) → errText shows the hint
       setNoteText(""); setNoteRemind({ ...EMPTY_REMIND }); // cleared → add-multiple
     } catch (err) { setNoteErr(errText(err)); } finally { setNoteBusy(false); }
   }
@@ -406,7 +446,7 @@ export default function TracingPage() {
             <form onSubmit={onAddNote} style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="note-add-form">
               <textarea className="finput" rows={2} value={noteText} onChange={(e) => setNoteText(e.target.value)}
                 placeholder="Ghi lại điều cần nhớ / một suy nghĩ trong ngày…" data-testid="note-input" aria-label="Nội dung ghi chú" style={{ resize: "vertical" }} />
-              <RemindControls value={noteRemind} onChange={setNoteRemind} channels={channels} idPrefix="note" />
+              <RemindControls value={noteRemind} onChange={setNoteRemind} channels={channels} idPrefix="note" allowOnce />
               <div className="row" style={{ gap: 8 }}>
                 <button className="btn accent" type="submit" disabled={noteBusy} data-testid="note-submit">{noteBusy ? "Đang lưu…" : "Thêm ghi chú"}</button>
               </div>
@@ -430,9 +470,10 @@ export default function TracingPage() {
                     style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 8px", borderBottom: "1px solid var(--bg-2)" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div data-testid={`note-text-${n.id}`} style={{ fontSize: 13, color: "var(--tx-0)", whiteSpace: "pre-wrap" }}>{n.text}</div>
-                      {n.remindAt && n.remindRepeat !== "off" && (
+                      {/* #125 — a one-shot (remindDate set) OR a recurring (repeat≠off) chip */}
+                      {n.remindAt && (n.remindDate || n.remindRepeat !== "off") && (
                         <div style={{ marginTop: 4 }}>
-                          <RemindChip at={n.remindAt} repeat={n.remindRepeat} testid={`note-remind-${n.id}`} />
+                          <RemindChip at={n.remindAt} repeat={n.remindRepeat} date={n.remindDate} testid={`note-remind-${n.id}`} />
                         </div>
                       )}
                     </div>

@@ -1958,7 +1958,10 @@ export interface TracingNote {
   text: string;
   /** HH:MM VN reminder time, or null = no reminder. CAMEL wire (tracing convention). */
   remindAt: string | null;
-  /** "off"/absent ⇒ no reminder. */
+  /** #125 — YYYY-MM-DD future date for a ONE-SHOT remind (a repeat="once" reminder at
+   *  remindDate@remindAt). null = the recurring (#121) remindRepeat path instead. */
+  remindDate: string | null;
+  /** "off"/absent ⇒ no recurring reminder. */
   remindRepeat: RemindRepeat;
   /** #111 — which channel the linked reminder fires on (default in_app). */
   remindChannel: RemindChannel;
@@ -1966,10 +1969,14 @@ export interface TracingNote {
   created: string;
 }
 
-/** POST /tracing/notes body — create a day-note. id/created server-set. blank text → 422. */
+/** POST /tracing/notes body — create a day-note. id/created server-set. blank text → 422.
+ *  #125: pass remindDate (future YYYY-MM-DD) + remindAt for a ONE-SHOT; OR remindAt +
+ *  remindRepeat (daily/weekdays) for a RECURRING reminder. A past remindDate → 422. */
 export interface TracingNoteInput {
   text: string;
   remindAt?: string | null;
+  /** #125 — future YYYY-MM-DD for a one-shot remind (with remindAt). Past → 422. */
+  remindDate?: string | null;
   remindRepeat?: RemindRepeat;
   remindChannel?: RemindChannel;
 }
@@ -1979,6 +1986,8 @@ export interface TracingNoteInput {
 export interface TracingNoteUpdate {
   text?: string;
   remindAt?: string | null;
+  /** #125 — future YYYY-MM-DD for a one-shot remind. */
+  remindDate?: string | null;
   remindRepeat?: RemindRepeat;
   remindChannel?: RemindChannel;
 }
