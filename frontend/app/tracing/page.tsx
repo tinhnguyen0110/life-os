@@ -21,14 +21,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
 import { useTracingNotes } from "@/lib/useTracingNotes";
-import {
-  apiBase, ApiError, getReminderChannels,
-  getTracingTemplates, addTemplateToToday, addAllTemplates,
-} from "@/lib/api";
+import { apiBase, ApiError, getReminderChannels } from "@/lib/api";
 import { slugifyVi } from "@/lib/format";
+import { useClickAway } from "@/lib/useClickAway";
+import { TemplateSetsModal } from "./TemplateSetsModal";
 import type {
   ActivityView, ActivityInput, TracingNote, TracingNoteInput,
-  RemindRepeat, RemindChannel, ReminderChannelOption, TracingTemplate,
+  RemindRepeat, RemindChannel, ReminderChannelOption,
 } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
@@ -192,12 +191,9 @@ export default function TracingPage() {
   const [rowErr, setRowErr] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // ---- "+ Từ mẫu" template picker (#124, edit-mode) ----
-  const [tplOpen, setTplOpen] = useState(false);
-  const [templates, setTemplates] = useState<TracingTemplate[]>([]);
-  const [tplStatus, setTplStatus] = useState<"idle" | "loading" | "error">("idle");
-  const [tplBusy, setTplBusy] = useState<string | null>(null); // template id or "__all__"
-  const [tplErr, setTplErr] = useState("");
+  // ---- #137 template-SET modal (replaces the rejected 1-word chip row) ----
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [toast, setToast] = useState("");
 
   // ---- add-a-note (multi-list) ----
   const [noteText, setNoteText] = useState("");
@@ -212,41 +208,18 @@ export default function TracingPage() {
   const heatMax = useMemo(() => Math.max(sc.total, ...data.heatmap12w), [data.heatmap12w, sc.total]);
   const { timed, anytime } = useMemo(() => timelineOrder(acts), [acts]);
 
-  async function loadTemplates() {
-    setTplStatus("loading"); setTplErr("");
-    try {
-      const res = await getTracingTemplates();
-      setTemplates(res.data.templates ?? []);
-      setTplStatus("idle");
-    } catch (err) {
-      setTplErr(errText(err)); setTplStatus("error");
-    }
+  // #137 — a template-set was imported → refetch the board + toast "đã thêm N việc".
+  function onTemplateImported(created: number, skipped: string[]) {
+    reload();
+    setToast(`Đã thêm ${created} việc${skipped.length ? ` · ${skipped.length} đã có sẵn` : ""}.`);
+    setTplModalOpen(false);
   }
-  function openTemplates() {
-    setTplOpen((o) => {
-      const next = !o;
-      if (next && templates.length === 0 && tplStatus !== "loading") void loadTemplates();
-      return next;
-    });
-  }
-  async function onAddTemplate(t: TracingTemplate) {
-    setTplErr(""); setTplBusy(t.id);
-    try {
-      await addTemplateToToday(t.id); // {activity, added} — idempotent (added=false = already there)
-      reload();
-    } catch (err) {
-      setTplErr(errText(err));
-    } finally { setTplBusy(null); }
-  }
-  async function onAddAllTemplates() {
-    setTplErr(""); setTplBusy("__all__");
-    try {
-      await addAllTemplates(); // {created, skipped}
-      reload();
-    } catch (err) {
-      setTplErr(errText(err));
-    } finally { setTplBusy(null); }
-  }
+  // auto-dismiss the toast.
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   async function onAddTodo(e: React.FormEvent) {
     e.preventDefault();
@@ -366,6 +339,11 @@ export default function TracingPage() {
     const [remOpen, setRemOpen] = useState(false);       // the per-card reminder editor
     const [timeOpen, setTimeOpen] = useState(false);     // #136 G3 — the per-card time editor
     const [timeVal, setTimeVal] = useState(railTime(a) ?? "");
+    // #137-T2 (UX) — close the ⋯ menu + the inline editors when a click lands outside
+    // (not re-click-the-icon). One ref per popover so an outside click closes the open one.
+    const menuRef = useClickAway<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
+    const timeEditorRef = useClickAway<HTMLDivElement>(timeOpen, () => setTimeOpen(false));
+    const remEditorRef = useClickAway<HTMLDivElement>(remOpen, () => setRemOpen(false));
     const [rem, setRem] = useState<RemindState>({
       ...EMPTY_REMIND,
       on: !!a.remindAt && a.remindRepeat !== "off",
@@ -442,8 +420,8 @@ export default function TracingPage() {
           {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
             <RemindChip at={a.remindAt} repeat={a.remindRepeat} channel={a.remindChannel} testid={`tl-remind-${a.id}`} />
           )}
-          {/* #136 — the per-card ⋯ menu (rename / reminder / delete) */}
-          <div className="tl-ops" style={{ position: "relative" }}>
+          {/* #136 — the per-card ⋯ menu (rename / reminder / delete). #137-T2: closes on outside-click. */}
+          <div className="tl-ops" style={{ position: "relative" }} ref={menuRef}>
             <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
               aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`tl-ops-${a.id}`} title="Sửa việc này">⋯</button>
             {menuOpen && (
@@ -461,9 +439,9 @@ export default function TracingPage() {
           </div>
         </div>
 
-        {/* #136 G3 — the per-card TIME editor (a HH:MM, independent of the reminder) */}
+        {/* #136 G3 — the per-card TIME editor (a HH:MM, independent of the reminder). #137-T2: closes on outside-click. */}
         {timeOpen && (
-          <div style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }} data-testid={`tl-time-editor-${a.id}`}>
+          <div ref={timeEditorRef} style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }} data-testid={`tl-time-editor-${a.id}`}>
             <span className="hint faint">Giờ:</span>
             <input className="finput num" type="time" style={{ width: 120 }} value={timeVal}
               onChange={(e) => setTimeVal(e.target.value)} data-testid={`tl-time-input-${a.id}`} aria-label="Giờ của việc" />
@@ -477,9 +455,9 @@ export default function TracingPage() {
           </div>
         )}
 
-        {/* #136 — the per-card reminder editor (time + freq + channel; reuse RemindControls) */}
+        {/* #136 — the per-card reminder editor (time + freq + channel; reuse RemindControls). #137-T2: closes on outside-click. */}
         {remOpen && (
-          <div style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`tl-remind-editor-${a.id}`}>
+          <div ref={remEditorRef} style={{ gridColumn: "1 / -1", padding: "8px 6px 4px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`tl-remind-editor-${a.id}`}>
             <RemindControls value={rem} onChange={setRem} channels={channels} idPrefix={`tlrem-${a.id}`} />
             <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
               <button type="button" className="btn sm ghost" onClick={() => setRemOpen(false)} disabled={busyId === a.id}>Hủy</button>
@@ -498,6 +476,9 @@ export default function TracingPage() {
   function NoteCard({ n }: { n: TracingNote }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [remOpen, setRemOpen] = useState(false);
+    // #137-T2 (UX) — close the note ⋯ menu + the reminder editor on outside-click.
+    const noteMenuRef = useClickAway<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
+    const noteRemEditorRef = useClickAway<HTMLDivElement>(remOpen, () => setRemOpen(false));
     const hasRem = !!n.remindAt && (!!n.remindDate || n.remindRepeat !== "off");
     const [rem, setRem] = useState<RemindState>({
       ...EMPTY_REMIND,
@@ -521,8 +502,8 @@ export default function TracingPage() {
             </div>
           )}
         </div>
-        {/* #136 — per-note ⋯ menu (set reminder / delete) */}
-        <div className="tl-ops" style={{ position: "relative" }}>
+        {/* #136 — per-note ⋯ menu (set reminder / delete). #137-T2: closes on outside-click. */}
+        <div className="tl-ops" style={{ position: "relative" }} ref={noteMenuRef}>
           <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
             aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`note-ops-${n.id}`} title="Sửa ghi chú này">⋯</button>
           {menuOpen && (
@@ -534,9 +515,9 @@ export default function TracingPage() {
             </div>
           )}
         </div>
-        {/* the per-note reminder editor (recurring + one-shot, reuse RemindControls allowOnce) */}
+        {/* the per-note reminder editor (recurring + one-shot, reuse RemindControls allowOnce). #137-T2: closes on outside-click. */}
         {remOpen && (
-          <div style={{ width: "100%", padding: "8px 2px 2px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`note-remind-editor-${n.id}`}>
+          <div ref={noteRemEditorRef} style={{ width: "100%", padding: "8px 2px 2px", display: "flex", flexDirection: "column", gap: 6 }} data-testid={`note-remind-editor-${n.id}`}>
             <RemindControls value={rem} onChange={setRem} channels={channels} idPrefix={`nrem-${n.id}`} allowOnce />
             <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
               <button type="button" className="btn sm ghost" onClick={() => setRemOpen(false)} disabled={noteBusyId === n.id}>Hủy</button>
@@ -590,38 +571,15 @@ export default function TracingPage() {
                     <input className="finput" style={{ flex: 1 }} value={todoText} onChange={(e) => setTodoText(e.target.value)}
                       placeholder="Thêm việc cần làm hôm nay…" data-testid="todo-input" aria-label="Việc cần làm" />
                     <button className="btn accent" type="submit" disabled={addBusy} data-testid="todo-submit">{addBusy ? "…" : "Thêm"}</button>
-                    <button className="btn" type="button" onClick={openTemplates} data-testid="tpl-open" aria-expanded={tplOpen}>+ Từ mẫu</button>
+                    {/* #137 — opens the template-SET modal (replaced the rejected 1-word chip row). */}
+                    <button className="btn" type="button" onClick={() => setTplModalOpen(true)} data-testid="tpl-open">+ Từ mẫu</button>
                   </div>
                   <RemindControls value={todoRemind} onChange={setTodoRemind} channels={channels} idPrefix="todo" />
                   {addErr && <span className="hint neg" data-testid="todo-add-error">{addErr}</span>}
                 </form>
-
-                {/* #124 template picker */}
-                {tplOpen && (
-                  <div className="panel" style={{ padding: "10px 12px", background: "var(--bg-2)" }} data-testid="tpl-picker">
-                    <div className="row" style={{ alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span className="kicker">Mẫu đã lưu</span>
-                      <span className="sp" style={{ flex: 1 }} />
-                      <button className="btn sm accent" type="button" onClick={onAddAllTemplates} disabled={tplBusy === "__all__"} data-testid="tpl-add-all">
-                        {tplBusy === "__all__" ? "…" : "Thêm tất cả"}
-                      </button>
-                    </div>
-                    {tplStatus === "loading" && <span className="hint faint" data-testid="tpl-loading">Đang tải mẫu…</span>}
-                    {tplStatus === "error" && <span className="hint neg" data-testid="tpl-error">Không tải được mẫu: {tplErr}</span>}
-                    {tplStatus === "idle" && templates.length === 0 && <span className="hint faint" data-testid="tpl-empty">Chưa có mẫu nào.</span>}
-                    {tplErr && tplStatus !== "error" && <span className="hint neg" data-testid="tpl-add-error">{tplErr}</span>}
-                    <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-                      {templates.map((t) => (
-                        <button key={t.id} type="button" className="tagchip" onClick={() => onAddTemplate(t)} disabled={tplBusy === t.id}
-                          data-testid={`tpl-${t.id}`} title={`Thêm "${t.name}" vào hôm nay`} style={{ cursor: "pointer" }}>
-                          {t.emoji ? `${t.emoji} ` : ""}{t.name}{tplBusy === t.id ? " …" : ""}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
+            {toast && <div style={{ padding: "4px 16px" }}><span className="hint pos" data-testid="tracing-toast">{toast}</span></div>}
             {rowErr && <div style={{ padding: "4px 16px" }}><span className="hint neg" data-testid="todo-row-error">⚠ {rowErr}</span></div>}
 
             {/* the time-rail */}
@@ -719,6 +677,11 @@ export default function TracingPage() {
             </div>
           </div>
         </details>
+      )}
+
+      {/* #137 — the template-SET modal (list/edit/import/reset). */}
+      {tplModalOpen && (
+        <TemplateSetsModal channels={channels} onClose={() => setTplModalOpen(false)} onImported={onTemplateImported} />
       )}
     </section>
   );

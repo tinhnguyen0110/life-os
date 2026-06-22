@@ -35,6 +35,7 @@ const addTemplateToToday = vi.fn();
 const addAllTemplates = vi.fn();
 const updateActivity = vi.fn();   // #136 — rename + reminder PUT
 const untickActivity = vi.fn();   // #136 — un-tick (clear today's log)
+const getTemplateSets = vi.fn();  // #137 — the template-set modal source
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -53,6 +54,7 @@ vi.mock("@/lib/api", async () => {
     addAllTemplates: (...a: unknown[]) => addAllTemplates(...a),
     updateActivity: (...a: unknown[]) => updateActivity(...a),
     untickActivity: (...a: unknown[]) => untickActivity(...a),
+    getTemplateSets: (...a: unknown[]) => getTemplateSets(...a),
   };
 });
 
@@ -91,6 +93,7 @@ beforeEach(() => {
   getTracingNotes.mockResolvedValue(NOTES([]));
   getTracing.mockResolvedValue(OVERVIEW());
   getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [TPL()] } });
+  getTemplateSets.mockResolvedValue({ success: true, data: { sets: [] } }); // #137 modal source
 });
 afterEach(() => {
   getTracing.mockReset(); logTracingSession.mockReset(); createActivity.mockReset();
@@ -244,6 +247,42 @@ describe("#136 Tracing — per-CARD edit (rename / reminder / delete), no global
     expect(screen.getByTestId("tl-op-delete-water")).toBeInTheDocument();
   });
 
+  it("🔴 #137-T2 UX — the ⋯ menu CLOSES on an outside click (not re-click-the-icon)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    expect(screen.getByTestId("tl-ops-menu-water")).toBeInTheDocument();
+    // a mousedown OUTSIDE the menu (the page body) closes it — no re-click of the ⋯ needed
+    await new Promise((r) => setTimeout(r, 5)); // let the deferred listener attach
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByTestId("tl-ops-menu-water")).toBeNull());
+  });
+
+  it("🔴 #137-T2 UX — the inline TIME editor also closes on an outside click", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-time-water"));
+    expect(screen.getByTestId("tl-time-editor-water")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 5));
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByTestId("tl-time-editor-water")).toBeNull());
+  });
+
+  it("🔴 #137-T2 UX — the inline REMINDER editor closes on an outside click", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-water")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("tl-ops-water"));
+    fireEvent.click(screen.getByTestId("tl-op-remind-water"));
+    expect(screen.getByTestId("tl-remind-editor-water")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 5));
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByTestId("tl-remind-editor-water")).toBeNull());
+  });
+
   it("🔴 INLINE RENAME (the missing Update) → updateActivity(id, {name})", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", name: "Uống nước" })]));
     updateActivity.mockResolvedValue({ success: true, data: {} });
@@ -310,30 +349,17 @@ describe("#136 Tracing — add-todo + '+ Từ mẫu' VISIBLE in default view", (
     expect(body.goal).toBe(1);
   });
 
-  it("🔴 the template '+ Từ mẫu' is in the DEFAULT view → opens + adds (was hidden before)", async () => {
+  it("🔴 #137 — '+ Từ mẫu' is visible in the DEFAULT view → opens the template-SET MODAL (not the old chip row)", async () => {
     getTracing.mockResolvedValue(OVERVIEW([]));
-    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [{ id: "ngu", name: "Ngủ đủ giấc", emoji: "😴", icon: "", unit: "", goal: 8, color: "#000", source: "seed" }] } });
-    addTemplateToToday.mockResolvedValue({ success: true, data: { activity: { id: "ngu" }, added: true } });
+    getTemplateSets.mockResolvedValue({ success: true, data: { sets: [] } });
     render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("tpl-open")).toBeInTheDocument()); // visible, no edit needed
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("tpl-open"));
-    await waitFor(() => expect(screen.getByTestId("tpl-ngu")).toBeInTheDocument());
-    await user.click(screen.getByTestId("tpl-ngu"));
-    await waitFor(() => expect(addTemplateToToday).toHaveBeenCalledWith("ngu"));
-  });
-
-  it("'Thêm tất cả' → addAllTemplates()", async () => {
-    getTracing.mockResolvedValue(OVERVIEW([]));
-    getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [] } });
-    addAllTemplates.mockResolvedValue({ success: true, data: { created: [], skipped: [] } });
-    render(<TracingPage />);
-    await waitFor(() => expect(screen.getByTestId("tpl-open")).toBeInTheDocument());
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("tpl-open"));
-    await waitFor(() => expect(screen.getByTestId("tpl-add-all")).toBeInTheDocument());
-    await user.click(screen.getByTestId("tpl-add-all"));
-    await waitFor(() => expect(addAllTemplates).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("tpl-open")).toBeInTheDocument()); // visible, no edit gate
+    // the OLD 1-word chip row is GONE
+    expect(screen.queryByTestId("tpl-picker")).toBeNull();
+    expect(screen.queryByTestId("tpl-add-all")).toBeNull();
+    // clicking opens the MODAL (the new set surface)
+    await userEvent.setup().click(screen.getByTestId("tpl-open"));
+    await waitFor(() => expect(screen.getByTestId("tpl-modal")).toBeInTheDocument());
   });
 });
 

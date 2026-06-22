@@ -87,6 +87,10 @@ import type {
   ActivityPatch,
   TracingTemplate,
   TracingTemplateList,
+  TemplateSet,
+  TemplateSetList,
+  TemplateSetInput,
+  TemplateImportResult,
   TracingNote,
   TracingNoteInput,
   TracingNoteUpdate,
@@ -969,6 +973,44 @@ export function addTemplateToToday(id: string): Promise<ApiResponse<{ activity: 
  *  Returns {created:[Activity], skipped:[ids]} (already-present ids are skipped, honest). */
 export function addAllTemplates(): Promise<ApiResponse<{ created: Activity[]; skipped: string[] }>> {
   return apiPost<{ created: Activity[]; skipped: string[] }>("/tracing/templates/add-all", {});
+}
+
+/* ---- #137 Template SETS — a "mẫu" = a saved LIST of rich activities (a routine) ----
+   Mirrors the FROZEN #137-T1 BE shape. The chip CRUD above stays (dormant, REST/MCP
+   parity); these SETS are a separate surface. */
+
+/** GET /tracing/template-sets — all saved template sets. */
+export function getTemplateSets(): Promise<ApiResponse<TemplateSetList>> {
+  return apiGet<TemplateSetList>("/tracing/template-sets");
+}
+
+/** POST /tracing/template-sets — create a set. 201 + the set (server-set id). blank name /
+ *  blank member content / bad time → 422. */
+export function createTemplateSet(body: TemplateSetInput): Promise<ApiResponse<TemplateSet>> {
+  return apiPost<TemplateSet>("/tracing/template-sets", body);
+}
+
+/** PUT /tracing/template-sets/{id} — whole-set replace (name + members). 404 unknown. */
+export function updateTemplateSet(id: string, body: TemplateSetInput): Promise<ApiResponse<TemplateSet>> {
+  return apiPut<TemplateSet>(`/tracing/template-sets/${encodeURIComponent(id)}`, body);
+}
+
+/** DELETE /tracing/template-sets/{id} — remove a set. {deleted}. 404 unknown. */
+export function deleteTemplateSet(id: string): Promise<ApiResponse<{ deleted: string }>> {
+  return apiDelete<{ deleted: string }>(`/tracing/template-sets/${encodeURIComponent(id)}`);
+}
+
+/** POST /tracing/template-sets/{id}/import — 1-click import the WHOLE set → today's
+ *  activities (each goal=1, time/reminder preset). {created:[ActivityView], skipped:[content]}.
+ *  404 unknown. After this, REFETCH GET /tracing (the board updates). */
+export function importTemplateSet(id: string): Promise<ApiResponse<TemplateImportResult>> {
+  return apiPost<TemplateImportResult>(`/tracing/template-sets/${encodeURIComponent(id)}/import`, {});
+}
+
+/** POST /tracing/template-sets/reset — discard all + re-seed the default ("Buổi sáng").
+ *  Returns {sets:[the default(s)]}. */
+export function resetTemplateSets(): Promise<ApiResponse<TemplateSetList>> {
+  return apiPost<TemplateSetList>("/tracing/template-sets/reset", {});
 }
 
 /* ---- #121 / #122 Tracing day-notes — text + optional 🔔-remind (note→reminder link) ---- */

@@ -1918,6 +1918,52 @@ export interface TracingTemplateInput {
   color: string;
 }
 
+/* ============================================================================
+   #137 Template SETS — a "mẫu" = a saved LIST of rich activities (a reusable routine),
+   NOT the #109 1-word chips. 1-click import creates today's activities (each goal=1,
+   carrying its time + reminder). Mirrors the FROZEN #137-T1 BE shape (verified live).
+   ============================================================================ */
+/** One member of a template set — a rich activity preset (content + time + reminder). */
+export interface TemplateMember {
+  /** the activity name (1-120, non-blank). */
+  content: string;
+  /** HH:MM VN scheduled time, or null = no time. */
+  time: string | null;
+  /** "off"/"daily"/"weekdays" — the member's reminder cadence (default off). */
+  remindRepeat: RemindRepeat;
+  /** in_app/email/discord — the reminder channel (default in_app). */
+  remindChannel: RemindChannel;
+}
+
+/** A saved template set = a named ordered LIST of member-activities. */
+export interface TemplateSet {
+  /** server-set id (slug). */
+  id: string;
+  /** the set's display name (1-80). */
+  name: string;
+  activities: TemplateMember[];
+}
+
+/** GET /tracing/template-sets → the set list. */
+export interface TemplateSetList {
+  sets: TemplateSet[];
+}
+
+/** POST/PUT body — create/replace a set. id server-set on create; PUT = whole-set replace.
+ *  blank name / blank member content / bad time → 422. */
+export interface TemplateSetInput {
+  name: string;
+  activities: TemplateMember[];
+}
+
+/** POST /tracing/template-sets/{id}/import response — 1-click import the WHOLE set →
+ *  today's activities. created = the new ActivityViews (goal=1, time/reminder preset);
+ *  skipped = member contents that were already present (honest, no dup). */
+export interface TemplateImportResult {
+  created: ActivityView[];
+  skipped: string[];
+}
+
 /** POST /tracing/{id}/log body — one raw session. val<0 → 422. */
 export interface TracingLogInput {
   val: number;
