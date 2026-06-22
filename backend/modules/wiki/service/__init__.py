@@ -30,7 +30,7 @@ identity in the sprint check.
 from __future__ import annotations
 
 # Exceptions + op-kind type.
-from .errors import MergeError, NoteNotFound, OpKind, RefineGateError
+from .errors import FolderError, MergeError, NoteNotFound, OpKind, RefineGateError
 
 # Queue machinery (Op + the single writer). enqueue is the only mutation entry point.
 from ._queue import Op, enqueue
@@ -81,10 +81,11 @@ from .crud import (
     update_note,
 )
 from .import_notes import import_files, import_one  # #93 wiki import (.md/.txt → note)
+from .folders import create_folder, delete_folder, move_folder  # #127 WIKI-WORKDIR folder lifecycle
 
 __all__ = [
     # errors
-    "NoteNotFound", "MergeError", "RefineGateError", "OpKind",
+    "NoteNotFound", "MergeError", "RefineGateError", "FolderError", "OpKind",
     # queue
     "Op", "enqueue",
     # public CRUD
@@ -92,6 +93,8 @@ __all__ = [
     "refine_note", "soft_delete_note", "restore_note",
     # #93 import (.md/.txt → note)
     "import_files", "import_one",
+    # #127 WIKI-WORKDIR folder lifecycle
+    "create_folder", "delete_folder", "move_folder",
     # read
     "resolve_note",
     # link parsing (tests + citations use parse_wikilinks)

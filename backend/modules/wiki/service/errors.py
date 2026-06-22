@@ -20,3 +20,15 @@ class MergeError(Exception):
 
 class RefineGateError(Exception):
     """Raised when REFINE is blocked by the ≥1-link hard gate (D9) → router 422."""
+
+
+class FolderError(Exception):
+    """#127 (WIKI-WORKDIR): a folder-op validation failure carrying an agent-readable code/hint.
+    ``code`` ∈ {"INVALID_INPUT", "CONFLICT"} → the router maps it to agent_error_response (422/409).
+    Carries (code, message, hint) so the boundary doesn't re-derive them."""
+
+    def __init__(self, code: str, message: str, hint: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.hint = hint

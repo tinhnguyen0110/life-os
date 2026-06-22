@@ -51,7 +51,9 @@ from .schema import (
     CitationVerifyInput,
     ConflictResolveInput,
     DeviceRegisterInput,
+    FolderCreateInput,
     FolderMetaInput,
+    FolderMoveInput,
     BulkDeleteInput,
     ImportInput,
     MergeInput,
@@ -238,6 +240,49 @@ def set_folder_meta(folder_path: str, body: FolderMetaInput):
     ``folder_path`` is the virtual path (may contain '/'). Returns the resulting meta (or null)."""
     wiki_store.set_folder_meta(folder_path, body.desc)
     return ok(data={"folderPath": folder_path, "meta": wiki_store.get_folder_meta(folder_path)})
+
+
+def _folder_error(exc: service.FolderError) -> JSONResponse:
+    """#127: map a FolderError → the agent-first flat error (422 INVALID_INPUT / 409 CONFLICT)."""
+    status = 409 if exc.code == "CONFLICT" else 422
+    return JSONResponse(status_code=status,
+                        content=agent_error(exc.code, exc.message, hint=exc.hint))  # type: ignore[arg-type]
+
+
+@router.post("/folders")
+def create_folder(body: FolderCreateInput):
+    """#127 (WIKI-WORKDIR): create a (possibly NESTED, arbitrary-depth) EMPTY folder by anchoring a
+    wiki_folder_meta row at the normalized ``path`` — so a folder with NO notes now EXISTS in /tree
+    (counts:0). Returns ``{path, desc, created}``. 422 if the path normalizes to empty; 409 if the
+    folder already exists (a meta row OR notes carry the prefix). REST-only (folder-ops are not MCP)."""
+    try:
+        return ok(data=service.create_folder(body.path, body.desc))
+    except service.FolderError as exc:
+        return _folder_error(exc)
+
+
+@router.put("/folders/{folder_path:path}/move")
+def move_folder(folder_path: str, body: FolderMoveInput):
+    """#127: rename/move a folder — re-prefix every note under ``folder_path`` → ``to`` + move the
+    folder_meta rows (path + descendants). Returns ``{from, to, movedNotes:[ids], movedMeta:N,
+    warnings:[]}``. 422 if path/to empty or ``to`` is inside ``path``; 409 if ``to`` already exists
+    (no silent merge). Fail-soft per note (a single note's move error → a warning)."""
+    try:
+        return ok(data=service.move_folder(folder_path, body.to))
+    except service.FolderError as exc:
+        return _folder_error(exc)
+
+
+@router.delete("/folders/{folder_path:path}")
+def delete_folder(folder_path: str):
+    """#127: SOFT-delete a folder + its subtree — #94-tombstones every note under ``folder_path``
+    (recoverable, → trash) + removes the folder_meta rows (path + descendants). SCOPED to exactly
+    that subtree (#72 — never a blanket). Returns ``{folder, deletedNotes:[ids], removedMeta:[paths],
+    warnings:[]}``. 422 if the path is empty (can't delete the root)."""
+    try:
+        return ok(data=service.delete_folder(folder_path))
+    except service.FolderError as exc:
+        return _folder_error(exc)
 
 
 @router.post("/notes")

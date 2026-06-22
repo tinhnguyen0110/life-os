@@ -132,6 +132,22 @@ class FolderMetaInput(BaseModel):
     desc: str = Field(default="", max_length=500, description="what this folder holds (blank clears)")
 
 
+class FolderCreateInput(BaseModel):
+    """``POST /wiki/folders`` body (#127 WIKI-WORKDIR) — create a (possibly NESTED) empty folder by
+    anchoring a wiki_folder_meta row at ``path``. ``desc`` optional (the folder is anchored even with
+    a blank desc — the empty-folder model). ``path`` is the virtual path (normalized server-side)."""
+
+    path: str = Field(min_length=1, max_length=500, description="virtual folder path, e.g. 'A/B/C'")
+    desc: str = Field(default="", max_length=500, description="optional description of what it holds")
+
+
+class FolderMoveInput(BaseModel):
+    """``PUT /wiki/folders/{path}/move`` body (#127) — rename/move a folder: re-prefix every note
+    under ``path`` → ``to`` + move the folder_meta rows. ``to`` is the new virtual path."""
+
+    to: str = Field(min_length=1, max_length=500, description="the new virtual folder path")
+
+
 class DeviceRegisterInput(BaseModel):
     """``POST /wiki/sync/devices`` body (M3 A1a) — register/refresh a sync device."""
 

@@ -100,7 +100,10 @@ from .fts import (
 # per-folder description KV (WIKI-RETRIEVAL-1 #20).
 from .folder_meta import (
     all_folder_meta,
+    create_folder_meta,
+    delete_folder_meta_subtree,
     get_folder_meta,
+    move_folder_meta,
     set_folder_meta,
 )
 
@@ -152,8 +155,9 @@ __all__ = [
     "inbound_counts", "mutual_link_pairs",  # WIKI-STALE-DETECTOR #41
     "notes_with_tag",  # PROJECT-MEMORY #42
     "outbound_link_count", "total_link_count",
-    # folder-meta KV (#20)
+    # folder-meta KV (#20) + folder lifecycle anchor (#127)
     "get_folder_meta", "all_folder_meta", "set_folder_meta",
+    "create_folder_meta", "delete_folder_meta_subtree", "move_folder_meta",
 ]
 
 # Register tables at import so a fresh process / first request has them ready

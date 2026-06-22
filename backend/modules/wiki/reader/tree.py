@@ -49,6 +49,22 @@ def folder_tree(folder: str | None = None, depth: int | None = None) -> dict[str
 
     metas = wiki_store.all_folder_meta()  # {folder_path: {desc}} — one query, honest-null else
 
+    # #127 (the empty-folder anchor): a folder EXISTS if it has notes (prefix, walked above) OR a
+    # wiki_folder_meta row. UNION the meta-keys into the tree so a meta-only / EMPTY / nested folder
+    # shows as an honest node (counts:0). Seed every ancestor segment of each meta path (so "A/B/C"
+    # with no notes still nests A→B→C). The note-prefix walk + this pass union in ONE place.
+    for meta_path in metas:
+        if not meta_path:  # "" = root meta, no node to seed
+            continue
+        node = root
+        acc = []
+        for seg in meta_path.split("/"):
+            acc.append(seg)
+            children = node["folders"]
+            if seg not in children:
+                children[seg] = {"name": seg, "path": "/".join(acc), "folders": {}, "notes": []}
+            node = children[seg]
+
     def _finalize(node: dict[str, Any], remaining: int | None) -> dict[str, Any]:
         # #20: meta (honest-null when no row) + counts (notes directly here). depth limits
         # recursion: remaining==0 → don't descend into subfolders (folder names still listed
