@@ -27,9 +27,8 @@ def alerts_config():
     CONFIGURED (a credential is present). Booleans only — never the webhook/app-password value."""
     return ok(data={
         "mailThreshold": service._mail_threshold(),
-        "discordConfigured": bool(service._env_value("discord")),
-        "mailConfigured": bool(service._env_value("LIFEOS_SMTP_USER")
-                               and service._env_value("LIFEOS_SMTP_APP_PASSWORD")),
+        "discordConfigured": service.discord_configured(),  # #111: the shared single-source detection
+        "mailConfigured": service.mail_configured(),
         "routing": {
             "low": "discord",
             "normal": "discord",

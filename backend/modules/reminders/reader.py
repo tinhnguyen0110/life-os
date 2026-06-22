@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Literal
+from typing import Literal, cast
 
-from .schema import Reminder, now_iso
+from .schema import Channel, Reminder, now_iso
+
+_CHANNELS: frozenset[str] = frozenset({"in_app", "email", "discord"})
 
 logger = logging.getLogger("life-os.reminders.reader")
 
@@ -33,6 +35,10 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
     raw_source = row["source"] if "source" in keys else "manual"
     source: Literal["manual", "tracing"] = "tracing" if raw_source == "tracing" else "manual"
     activity_id = row["activity_id"] if "activity_id" in keys else None
+    # TRACING-UX T3 (#111): tolerate a pre-migration row missing channel → default in_app; coerce an
+    # unexpected value defensively to in_app (the safe no-external-send default).
+    raw_channel = row["channel"] if "channel" in keys else "in_app"
+    channel: Channel = cast(Channel, raw_channel) if raw_channel in _CHANNELS else "in_app"
     return Reminder(
         id=int(row["id"]),
         title=row["title"],
@@ -48,6 +54,7 @@ def row_to_reminder(row: sqlite3.Row) -> Reminder:
         overdue=_is_overdue(row["due_at"], row["done_at"]),
         source=source,
         activity_id=activity_id,
+        channel=channel,
     )
 
 

@@ -37,9 +37,24 @@ router = APIRouter(tags=["reminders"])
 @router.post("", status_code=201)
 def create_reminder(body: ReminderInput):
     """Create a reminder. 201 + the created reminder. A blank title or unparseable due_at is a
-    422 (pydantic validation — no row stored)."""
+    422 (pydantic validation — no row stored). A BAD channel value is a 422 (the Literal).
+
+    TRACING-UX T3 (#111) unavailable-channel fallback: if the requested channel is email/discord but
+    that channel is NOT configured (no creds), the reminder is still created but DOWNGRADED to in_app
+    + a ``warning`` says so (honest-mirror — the reminder works, the warning explains the downgrade;
+    NOT a silent swallow, NOT a 422 — the input was valid, the environment just can't deliver it)."""
+    body, warning = service.resolve_channel(body)
     reminder = service.create(body)
-    return ok(data=reminder.model_dump())
+    return ok(data=reminder.model_dump(), warning=warning)
+
+
+@router.get("/channels")
+def list_channels():
+    """TRACING-UX T3 (#111): the available delivery channels for a reminder, each with an
+    ``available`` flag REUSING the alerts engine's configured-detection (one source — can't drift
+    from /alerts/config). in_app always available; email = SMTP creds present; discord = webhook
+    present. An unavailable channel carries a ``reason``. ``{channels:[{id,label,available,reason?}]}``."""
+    return ok(data={"channels": service.list_channels()})
 
 
 @router.get("")

@@ -45,6 +45,9 @@ def vn_day_of(ts: str) -> str:
 # TRACING-REMINDERS (#75): an activity can drive a daily reminder. remind_at = HH:MM VN time-of-day
 # (None = no reminder); remind_repeat = how it recurs (off = no reminder regardless of remind_at).
 RemindRepeat = Literal["daily", "weekdays", "off"]
+# TRACING-UX T3 (#111): the delivery channel the activity's linked reminder fires on (mirrors the
+# reminders Channel; default in_app). Set on the linked reminder when the tracing service syncs it.
+RemindChannel = Literal["in_app", "email", "discord"]
 
 
 def _validate_hhmm(v: str | None) -> str | None:
@@ -74,6 +77,7 @@ class ActivityInput(BaseModel):
     color: str = Field(default="", max_length=32, description="display color (FE)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
 
     @field_validator("id", "name")
     @classmethod
@@ -102,6 +106,7 @@ class ActivityUpdate(BaseModel):
     # pass remind_repeat="off" (or an explicit empty remind_at via the router's clear path).
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
     remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel | None = Field(default=None, description="in_app|email|discord (#111)")
 
     @field_validator("name")
     @classmethod
@@ -211,6 +216,7 @@ class Activity(BaseModel):
     archived: bool = False
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
 
 
 class TodayStat(BaseModel):
@@ -237,6 +243,7 @@ class ActivityView(BaseModel):
     color: str = ""
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
     today: TodayStat
     streak: int = Field(..., ge=0, description="consecutive goal-met VN-days (today-incomplete ≠ break)")
     week: list[float] = Field(..., description="Mon→Sun Σ(val)/day for the current week (7)")

@@ -39,13 +39,21 @@ def rem_db(isolated_paths, monkeypatch):
     # modules.alerts PACKAGE → patch THAT attribute (not modules.alerts.service.notify).
     import modules.alerts as alerts_pkg
     calls: list[tuple] = []
+    # #111: notify now takes an optional channels= (the additive override). The fixture mock must
+    # accept it (the scan passes channels=[channel] for email/discord reminders).
     monkeypatch.setattr(alerts_pkg, "notify",
-                        lambda severity, title, body: (calls.append((severity, title, body))
-                                                       or {"discord": "sent", "mail": "n/a", "severity": severity}))
+                        lambda severity, title, body, channels=None: (
+                            calls.append((severity, title, body, channels))
+                            or {"discord": "sent", "mail": "n/a", "severity": severity}))
     return calls
 
 
 def _mk(title: str, due: datetime, **kw) -> int:
+    # #111: default channel="discord" for these ENGINE tests — they assert the fire reaches the
+    # delivery seam (len(rem_db) captures). in_app (the product default) routes NOWHERE external by
+    # design (no double-fire) — that path is tested in test_reminders_channel.py. Setting discord
+    # here keeps every cadence/cap/roll assertion exercising the fire→deliver path unchanged.
+    kw.setdefault("channel", "discord")
     return service.create(ReminderInput(title=title, due_at=due.isoformat(), **kw)).id
 
 

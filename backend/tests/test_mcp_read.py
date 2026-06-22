@@ -1135,7 +1135,7 @@ def test_catalog_walks_all_mounts(app_db):
     assert by_mount["wiki-read"] == 15  # #34 +suggest_links #41 +stale #53 +reindex #35 +my_feedback (was 11)
     assert by_mount["wiki-write"] == 8  # #94: +wiki_delete_note +wiki_restore_note (was 6)
     assert by_mount["finance"] == 15
-    assert by_mount["reminders"] == 3
+    assert by_mount["reminders"] == 4  # #111: +reminders_channels (was 3)
 
 
 def test_catalog_mounts_in_sync_with_main(app_db):
@@ -1287,7 +1287,7 @@ def test_build_server_registers_all_tools():
     # Building the FastMCP server must not raise and must not drop any registry tool.
     server = rs.build_server()
     assert server is not None
-    assert len(rs.TOOLS) == 47  # TRACING-UX #109: +tracing_templates (was 46; #64 +repo_memory)
+    assert len(rs.TOOLS) == 48  # TRACING-UX #111: +reminders_channels (was 47; #109 +tracing_templates). #112 bumps to 49.
 
 
 # =========================================================================== #

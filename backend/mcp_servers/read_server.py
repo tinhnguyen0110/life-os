@@ -142,6 +142,7 @@ from modules.news.service import list_news as _news_list
 # mutation; create/tick/delete are NOT imported here, they live on the lifeos-reminders write
 # surface). Read-gate-safe.
 from modules.reminders.service import list_reminders as _reminders_list
+from modules.reminders.service import list_channels as _reminders_channels  # #111 delivery channels
 # DAILY-TRACING-P2 (#65): the agent reads "what did I do today / my streaks" — get_overview is a
 # READ fn (no mutation; log_session/CRUD live on the lifeos-tracing write surface). Read-gate-safe.
 from modules.tracing.reader import get_overview as _tracing_overview
@@ -544,12 +545,23 @@ def reminders_list(filter: str = "today") -> dict[str, Any]:
     view, warnings = _reminders_list(filter)
     return {
         "reminders": [{"id": r.id, "title": r.title, "due_at": r.due_at,
-                       "repeat": r.repeat, "done_at": r.done_at} for r in view.reminders],
+                       "repeat": r.repeat, "done_at": r.done_at,
+                       "channel": r.channel} for r in view.reminders],  # #111: which channel it fires on
         "count": view.count,
         "undoneCount": view.undoneCount,
         "filter": view.filter,
         "warnings": list(warnings or []),
     }
+
+
+def reminders_channels() -> dict[str, Any]:
+    """TRACING-UX T3 (#111): the available delivery channels for a reminder — ``{channels:[{id,label,
+    available,reason?}]}``. ``available`` REUSES the alerts engine's configured-detection (in_app
+    always; email = SMTP creds present; discord = webhook present) — one source, can't drift from
+    /alerts/config. An agent picking a channel reads this first (only-available channels deliver; an
+    unavailable-but-set channel falls back to in_app + a warning at create). BYTE-IDENTICAL to REST
+    GET /reminders/channels (#24 — both via reminders.service.list_channels). Read-only."""
+    return {"channels": _reminders_channels()}
 
 
 def tracing_overview() -> dict[str, Any]:
@@ -1478,6 +1490,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "graveyard_overview": graveyard_overview,
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
+    "reminders_channels": reminders_channels,  # TRACING-UX T3 #111: delivery channels (read, parity)
     "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
     "tracing_templates": tracing_templates,  # TRACING-UX T1 #109: prefill templates (read, lean, parity)
     "dev_activity": dev_activity,  # DEV-TRACING-P1 #63: local git dev-activity on lifeos-read (read-only)

@@ -25,6 +25,7 @@ at registration; stringized annotations crash that introspection.
 
 from typing import Any, Callable
 
+from mcp_servers.read_server import reminders_channels as _reminders_channels
 from mcp_servers.read_server import reminders_list as _reminders_list
 from modules.reminders import service as _reminders_service
 from modules.reminders.schema import ReminderInput
@@ -32,18 +33,28 @@ from modules.reminders.schema import ReminderInput
 
 def reminder_create(title: str, due_at: str, note: str | None = None,
                     repeat: str = "once", re_notify_every: int | None = None,
-                    max_times: int | None = None) -> dict[str, Any]:
+                    max_times: int | None = None,
+                    channel: str = "in_app") -> dict[str, Any]:
     """Create a reminder — DIRECT write-through (no proposal gate; reversible single-user CRUD).
     Returns the real Reminder (with its ``id``) so the agent can immediately read it back (MCP≡REST,
     same service.create the REST POST /reminders uses). ``due_at`` is validated + UTC-normalized by
     the frozen #27 ReminderInput validator (a blank title / unparseable due_at raises → the agent
-    sees the validation error, no row stored). ``repeat`` ∈ once|daily|weekly."""
+    sees the validation error, no row stored). ``repeat`` ∈ once|daily|weekly.
+
+    #111 ``channel`` ∈ in_app|email|discord (default in_app; a bad value raises via the Literal). An
+    email/discord channel that is NOT configured FALLS BACK to in_app + a ``warning`` (honest-mirror,
+    same as REST POST /reminders — the reminder is created, the warning explains the downgrade).
+    Read the available channels first via reminders_channels."""
     inp = ReminderInput(
         title=title, due_at=due_at, note=note, repeat=repeat,  # type: ignore[arg-type]
-        re_notify_every=re_notify_every, max_times=max_times,
+        re_notify_every=re_notify_every, max_times=max_times, channel=channel,  # type: ignore[arg-type]
     )
+    inp, warning = _reminders_service.resolve_channel(inp)  # #111 unavailable→in_app+warning
     reminder = _reminders_service.create(inp)
-    return {"created": True, "id": reminder.id, "reminder": reminder.model_dump()}
+    out: dict[str, Any] = {"created": True, "id": reminder.id, "reminder": reminder.model_dump()}
+    if warning:
+        out["warning"] = warning
+    return out
 
 
 def reminder_tick(reminder_id: int) -> dict[str, Any]:
@@ -60,6 +71,7 @@ def reminder_tick(reminder_id: int) -> dict[str, Any]:
 # per-domain anti-dup spine); reminder_create/tick are this server's write tools (direct CRUD).
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "reminders_list": _reminders_list,   # reference-imported → is read_server.reminders_list
+    "reminders_channels": _reminders_channels,  # #111 reference-imported → is read_server.reminders_channels
     "reminder_create": reminder_create,
     "reminder_tick": reminder_tick,
 }

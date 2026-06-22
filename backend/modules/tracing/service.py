@@ -76,6 +76,7 @@ def _row_to_activity(row: sqlite3.Row) -> Activity:
         archived=bool(row["archived"]),
         remindAt=row["remind_at"] if "remind_at" in keys else None,  # camel field ← snake DB col
         remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
+        remindChannel=row["remind_channel"] if "remind_channel" in keys else "in_app",  # #111
     )
 
 
@@ -251,6 +252,7 @@ def _sync_reminder(act: Activity) -> None:
             rem.upsert_for_activity(
                 activity_id=act.id, title=title, due_at=due_at,
                 repeat=_REPEAT_MAP.get(act.remindRepeat, "daily"),
+                channel=act.remindChannel,  # #111: the linked reminder fires on the activity's channel
             )
         else:
             rem.delete_for_activity(act.id)
@@ -265,6 +267,7 @@ def create_activity(inp: ActivityInput) -> Activity:
         id=inp.id, name=inp.name, emoji=inp.emoji, icon=inp.icon, unit=inp.unit,
         goal=inp.goal, color=inp.color, created=vn_now_iso(),
         remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,  # store col snake ← camel field
+        remind_channel=inp.remindChannel,  # #111
     )
     created = store.get_activity(inp.id)
     assert created is not None  # just inserted
@@ -275,7 +278,8 @@ def create_activity(inp: ActivityInput) -> Activity:
 
 # 75-TWEAK: the camel wire field → snake store column (only the remind fields differ; the rest
 # share the same name in both field + column).
-_FIELD_TO_COL = {"remindAt": "remind_at", "remindRepeat": "remind_repeat"}
+_FIELD_TO_COL = {"remindAt": "remind_at", "remindRepeat": "remind_repeat",
+                 "remindChannel": "remind_channel"}  # #111
 
 
 def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:

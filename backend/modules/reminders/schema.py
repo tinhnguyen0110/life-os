@@ -14,6 +14,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 Repeat = Literal["once", "daily", "weekly"]
+# TRACING-UX T3 (#111): the delivery channel a reminder fires on. USER-SETTABLE (unlike `source`).
+#   in_app  (default) = the reminder row exists + shows in /reminders UI; NO external send.
+#   email             = on fire, route through the alerts engine's mail channel (SMTP creds).
+#   discord           = on fire, route through the alerts engine's Discord channel (webhook).
+Channel = Literal["in_app", "email", "discord"]
 
 
 def _parse_iso(value: str) -> datetime:
@@ -54,6 +59,10 @@ class ReminderInput(BaseModel):
     repeat: Repeat = Field(default="once", description="once | daily | weekly")
     re_notify_every: int | None = Field(default=None, ge=1, description="minutes between re-notifies (#29)")
     max_times: int | None = Field(default=None, ge=1, description="max notify count (#29)")
+    # TRACING-UX T3 (#111): user-settable delivery channel; default in_app (today's behavior). A bad
+    # value → 422 (the Literal). An unavailable-but-set channel is handled at the WRITE boundary
+    # (router falls back to in_app + a warning) — not here (the schema only guards the enum).
+    channel: Channel = Field(default="in_app", description="in_app | email | discord (#111)")
 
     @field_validator("title")
     @classmethod
@@ -103,6 +112,8 @@ class Reminder(BaseModel):
     # sets it). One-way: the activity drives the reminder, not vice-versa.
     source: Literal["manual", "tracing"] = Field(default="manual", description="manual | tracing (#75)")
     activity_id: str | None = Field(default=None, description="the tracing activity id when source=tracing (#75)")
+    # TRACING-UX T3 (#111): the delivery channel this reminder fires on (default in_app).
+    channel: Channel = Field(default="in_app", description="in_app | email | discord (#111)")
 
 
 class ReminderList(BaseModel):

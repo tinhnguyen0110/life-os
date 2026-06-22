@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS tracing_activities (
     created   TEXT    NOT NULL,
     archived  INTEGER NOT NULL DEFAULT 0,
     remind_at     TEXT,                          -- TRACING-REMINDERS (#75): HH:MM VN, or NULL
-    remind_repeat TEXT NOT NULL DEFAULT 'off'    -- (#75) daily | weekdays | off
+    remind_repeat TEXT NOT NULL DEFAULT 'off',   -- (#75) daily | weekdays | off
+    remind_channel TEXT NOT NULL DEFAULT 'in_app' -- TRACING-UX T3 (#111): in_app | email | discord
 );
 CREATE TABLE IF NOT EXISTS tracing_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS tracing_template (
 """
 
 _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
-             "remind_at, remind_repeat")  # TRACING-REMINDERS (#75): +remind_at, +remind_repeat
+             "remind_at, remind_repeat, remind_channel")  # #75 remind_*; #111 remind_channel
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
 _TPL_COLS = "id, name, emoji, icon, unit, goal, color, hidden"  # #109 template override row
 
@@ -73,6 +74,8 @@ def init_tracing_tables() -> sqlite3.Connection:
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_at TEXT")
         if "remind_repeat" not in cols:
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_repeat TEXT NOT NULL DEFAULT 'off'")
+        if "remind_channel" not in cols:  # TRACING-UX T3 (#111) — default in_app for pre-#111 rows
+            conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_channel TEXT NOT NULL DEFAULT 'in_app'")
         conn.commit()
     return conn
 
@@ -103,15 +106,17 @@ def list_activities(include_archived: bool = False) -> list[sqlite3.Row]:
 
 def create_activity(*, id: str, name: str, emoji: str, icon: str, unit: str, goal: float,
                     color: str, created: str, remind_at: str | None = None,
-                    remind_repeat: str = "off") -> None:
-    """Insert an activity def. Raises sqlite3.IntegrityError on a duplicate id (caller maps → 409)."""
+                    remind_repeat: str = "off", remind_channel: str = "in_app") -> None:
+    """Insert an activity def. Raises sqlite3.IntegrityError on a duplicate id (caller maps → 409).
+    ``remind_channel`` (#111) = the linked reminder's delivery channel (default in_app)."""
     init_tracing_tables()
     conn = db.get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO tracing_activities(id, name, emoji, icon, unit, goal, color, created, "
-            "archived, remind_at, remind_repeat) VALUES (?,?,?,?,?,?,?,?,0,?,?)",
-            (id, name, emoji, icon, unit, goal, color, created, remind_at, remind_repeat),
+            "archived, remind_at, remind_repeat, remind_channel) VALUES (?,?,?,?,?,?,?,?,0,?,?,?)",
+            (id, name, emoji, icon, unit, goal, color, created, remind_at, remind_repeat,
+             remind_channel),
         )
         conn.commit()
 

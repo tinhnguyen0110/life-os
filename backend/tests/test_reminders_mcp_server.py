@@ -61,9 +61,9 @@ def test_reminders_list_filter_and_lean_shape(rem_db):
     out = rs.reminders_list("today")
     assert set(out) >= {"reminders", "count", "undoneCount", "filter"}
     assert out["filter"] == "today" and out["count"] == 1
-    # lean per-reminder shape (not a full dump) — id/title/due_at/repeat/done_at
+    # lean per-reminder shape (not a full dump) — id/title/due_at/repeat/done_at + channel (#111)
     r0 = out["reminders"][0]
-    assert set(r0) == {"id", "title", "due_at", "repeat", "done_at"}
+    assert set(r0) == {"id", "title", "due_at", "repeat", "done_at", "channel"}
 
 
 # --------------------------------------------------------------------------- #
@@ -103,11 +103,18 @@ def test_reminder_tick_absent_is_found_false(rem_db):
 # --------------------------------------------------------------------------- #
 # build + count                                                                  #
 # --------------------------------------------------------------------------- #
-def test_build_server_registers_three_tools():
+def test_build_server_registers_four_tools():
     srv = rem.build_server()
     assert srv is not None and type(srv).__name__ == "FastMCP"
-    assert len(srv._tool_manager.list_tools()) == 3
-    assert set(rem.TOOLS.keys()) == {"reminders_list", "reminder_create", "reminder_tick"}
+    # #111: +reminders_channels (was 3: reminders_list + reminder_create + reminder_tick)
+    assert len(srv._tool_manager.list_tools()) == 4
+    assert set(rem.TOOLS.keys()) == {"reminders_list", "reminders_channels",
+                                     "reminder_create", "reminder_tick"}
+
+
+def test_reminders_channels_is_identity_across_servers():
+    """#111: lifeos-reminders' reminders_channels IS read_server's own fn (per-domain anti-dup spine)."""
+    assert rem.TOOLS["reminders_channels"] is rs.reminders_channels
 
 
 def test_read_server_has_reminders_list():

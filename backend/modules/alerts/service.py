@@ -57,6 +57,19 @@ def _env_value(key: str) -> str:
     return ""
 
 
+def discord_configured() -> bool:
+    """True if the Discord webhook credential is present (.env ``discord=``). The ONE source for
+    'is discord available' — /alerts/config + #111 GET /reminders/channels both call THIS (no
+    separate .env read → can't drift). No secret leak (a boolean)."""
+    return bool(_env_value("discord"))
+
+
+def mail_configured() -> bool:
+    """True if BOTH SMTP credentials are present (.env LIFEOS_SMTP_USER + ..._APP_PASSWORD). The ONE
+    source for 'is email available' — /alerts/config + #111 reminders channels both call THIS."""
+    return bool(_env_value("LIFEOS_SMTP_USER") and _env_value("LIFEOS_SMTP_APP_PASSWORD"))
+
+
 def _mail_threshold() -> Severity:
     """The configured ``alertMailThreshold`` (default "high"). Read from settings; fail-safe to
     "high" (the most conservative — mail only on the most severe) if settings is unreadable."""
@@ -114,28 +127,52 @@ def _send_mail(subject: str, body: str) -> bool:
         return False
 
 
-def notify(severity: Severity, title: str, body: str) -> dict[str, Any]:
-    """Route an alert by severity (the shared engine — see module docstring). FAIL-SOFT: never
-    raises; reports honestly which channels fired.
+def notify(severity: Severity, title: str, body: str,
+           channels: list[str] | None = None) -> dict[str, Any]:
+    """Route an alert (the shared engine — see module docstring). FAIL-SOFT: never raises; reports
+    honestly which channels fired.
 
-    Returns ``{discord: "sent"|"skipped", mail: "sent"|"skipped"|"n/a", severity}``:
-      - discord: always ATTEMPTED → "sent" on success, "skipped" on no-webhook/error.
-      - mail: "n/a" if severity is BELOW the alertMailThreshold (mail not attempted); else
-        "sent"/"skipped" (attempted; "skipped" on no-creds/error).
+    Two routing modes:
+      - ``channels`` OMITTED (None — the DEFAULT, BYTE-IDENTICAL to the pre-#111 behavior): route by
+        SEVERITY — discord always attempted; mail attempted only at/above ``alertMailThreshold``.
+        Every existing caller (the #33 reminders-scan ``notify("normal",…)``) is UNCHANGED.
+      - ``channels`` GIVEN (#111 additive override, e.g. ``["discord"]`` / ``["email"]``): route to
+        EXACTLY those channels, INDEPENDENT of severity (severity is still tagged in the message +
+        return). 'discord' → Discord; 'email' → mail. 'in_app' is a NO-OP here (the reminder row IS
+        the in-app surface — see #111; in_app must never reach an external channel). Each channel
+        fail-soft + configured-checked (no creds → "skipped").
+
+    Returns ``{discord: "sent"|"skipped"|"n/a", mail: "sent"|"skipped"|"n/a", severity}``:
+      - "sent"/"skipped" = the channel was ATTEMPTED (skipped on no-creds/error);
+      - "n/a" = the channel was NOT attempted (below threshold in severity-mode, or not in
+        ``channels`` in override-mode) — honest, not a failure.
     """
     sev: Severity = severity if severity in SEVERITY_RANK else "normal"  # defensive default
+
+    if channels is not None:
+        # #111 override-mode: route to EXACTLY the requested channels, severity-independent.
+        wanted = {c.strip().lower() for c in channels}
+        discord_result = (
+            ("sent" if _post_discord(f"[{sev}] {title}\n{body}") else "skipped")
+            if "discord" in wanted else "n/a")
+        mail_result = (
+            ("sent" if _send_mail(f"[life-os {sev}] {title}", body) else "skipped")
+            if "email" in wanted else "n/a")
+        return {"discord": discord_result, "mail": mail_result, "severity": sev}
+
+    # default severity-mode (UNCHANGED — byte-identical to pre-#111).
     discord_ok = _post_discord(f"[{sev}] {title}\n{body}")
 
     # mail only at/above the threshold.
     threshold = _mail_threshold()
-    mail_result: str
+    mail_result_sev: str
     if SEVERITY_RANK[sev] >= SEVERITY_RANK[threshold]:
-        mail_result = "sent" if _send_mail(f"[life-os {sev}] {title}", body) else "skipped"
+        mail_result_sev = "sent" if _send_mail(f"[life-os {sev}] {title}", body) else "skipped"
     else:
-        mail_result = "n/a"  # below threshold — mail not attempted (not a failure)
+        mail_result_sev = "n/a"  # below threshold — mail not attempted (not a failure)
 
     return {
         "discord": "sent" if discord_ok else "skipped",
-        "mail": mail_result,
+        "mail": mail_result_sev,
         "severity": sev,
     }

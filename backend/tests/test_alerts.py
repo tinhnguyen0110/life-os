@@ -184,3 +184,59 @@ def test_config_endpoint_no_secrets(monkeypatch):
     assert d["mailThreshold"] in ("low", "normal", "high")
     # NEVER leak the actual webhook/password value
     assert "secret-hook" not in str(d) and "creds" not in str(d)
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX T3 (#111) — the additive channels= override (does NOT alter the     #
+# existing severity routing when omitted; routes to EXACTLY the given channels    #
+# when given, severity-independent).                                              #
+# --------------------------------------------------------------------------- #
+def test_111_channels_omitted_is_byte_identical_severity_route(caps):
+    """🔴 NO REGRESSION: with channels= OMITTED, notify routes by SEVERITY exactly as before — the
+    #33 reminders-scan's notify('normal',...) is UNCHANGED. normal → discord only; high → +mail."""
+    assert alerts.notify("normal", "t", "b") == {"discord": "sent", "mail": "n/a", "severity": "normal"}
+    assert len(caps["mail"]) == 0  # severity-mode: normal does NOT mail
+    assert alerts.notify("high", "t", "b") == {"discord": "sent", "mail": "sent", "severity": "high"}
+
+
+def test_111_channels_discord_only_routes_discord_regardless_of_severity(caps):
+    """channels=['discord'] → discord fires, mail is 'n/a' (NOT attempted) — even at 'normal' (which
+    in severity-mode also = discord-only, so test it doesn't accidentally mail) AND the override is
+    severity-INDEPENDENT (a 'low' with channels=['discord'] still fires discord)."""
+    r = alerts.notify("low", "Reminder", "due now", channels=["discord"])
+    assert r == {"discord": "sent", "mail": "n/a", "severity": "low"}
+    assert len(caps["discord"]) == 1 and len(caps["mail"]) == 0
+
+
+def test_111_channels_email_only_routes_mail_regardless_of_severity(caps):
+    """channels=['email'] → MAIL fires even at 'normal'/'low' severity (which in severity-mode would
+    NOT mail). Proves the override ignores the severity threshold — routes to EXACTLY email."""
+    r = alerts.notify("normal", "Reminder", "due now", channels=["email"])
+    assert r == {"discord": "n/a", "mail": "sent", "severity": "normal"}
+    assert len(caps["mail"]) == 1 and len(caps["discord"]) == 0  # discord NOT attempted
+
+
+def test_111_channels_override_fail_soft_on_no_creds(caps, monkeypatch):
+    """A given channel with no creds → 'skipped' (fail-soft, no crash), the other channel n/a."""
+    monkeypatch.setattr(alerts, "_send_mail", lambda subject, body: False)  # simulate no creds/bounce
+    r = alerts.notify("high", "t", "b", channels=["email"])
+    assert r == {"discord": "n/a", "mail": "skipped", "severity": "high"}
+
+
+def test_111_channels_empty_list_routes_nothing(caps):
+    """channels=[] (explicit empty) → neither channel attempted (both n/a) — distinct from None
+    (severity-mode). An explicit 'no channels' is honest no-op."""
+    r = alerts.notify("high", "t", "b", channels=[])
+    assert r == {"discord": "n/a", "mail": "n/a", "severity": "high"}
+    assert len(caps["discord"]) == 0 and len(caps["mail"]) == 0
+
+
+def test_111_configured_helpers_reflect_env(monkeypatch):
+    """discord_configured/mail_configured (the shared single-source detection #111 reuses) reflect
+    the .env: present creds → True; absent → False."""
+    monkeypatch.setattr(alerts, "_env_value",
+                        lambda k: {"discord": "hook", "LIFEOS_SMTP_USER": "u",
+                                   "LIFEOS_SMTP_APP_PASSWORD": "p"}.get(k, ""))
+    assert alerts.discord_configured() is True and alerts.mail_configured() is True
+    monkeypatch.setattr(alerts, "_env_value", lambda k: "")  # nothing configured
+    assert alerts.discord_configured() is False and alerts.mail_configured() is False

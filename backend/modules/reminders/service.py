@@ -29,12 +29,53 @@ _DEFAULT_MAX_TIMES = 3
 NOTIFY_ROUTINE_ID = "reminders-notify"
 
 
+# --------------------------------------------------------------------------- #
+# TRACING-UX T3 (#111) — delivery channels (REUSE the alerts engine's detection) #
+# --------------------------------------------------------------------------- #
+def _channel_available(channel: str) -> bool:
+    """Is a channel deliverable? in_app always; email/discord via the alerts engine's configured-
+    detection (the ONE source — no separate .env read here)."""
+    from modules.alerts import service as alerts
+    if channel == "discord":
+        return alerts.discord_configured()
+    if channel == "email":
+        return alerts.mail_configured()
+    return True  # in_app always available
+
+
+def list_channels() -> list[dict]:
+    """The delivery-channel list for the FE/agent: ``[{id,label,available,reason?}]``. ``available``
+    REUSES the alerts engine's configured-detection (single source, can't drift from /alerts/config).
+    An unavailable channel carries a ``reason`` so the picker can explain why it's disabled."""
+    out: list[dict] = [{"id": "in_app", "label": "In-app", "available": True}]
+    for cid, label, cred in (("email", "Email", "SMTP credentials"),
+                             ("discord", "Discord", "Discord webhook")):
+        avail = _channel_available(cid)
+        entry: dict = {"id": cid, "label": label, "available": avail}
+        if not avail:
+            entry["reason"] = f"{label} not configured ({cred} absent in .env)"
+        out.append(entry)
+    return out
+
+
+def resolve_channel(inp: ReminderInput) -> tuple[ReminderInput, str | None]:
+    """#111 unavailable-channel fallback: if ``inp.channel`` is email/discord but NOT configured →
+    return a copy DOWNGRADED to in_app + a warning string (honest-mirror — the reminder still works,
+    the warning explains the downgrade). Available channel (or in_app) → unchanged + None."""
+    if inp.channel != "in_app" and not _channel_available(inp.channel):
+        warning = (f"{inp.channel} not configured → reminder created as in_app "
+                   f"(it shows in /reminders but won't send via {inp.channel})")
+        return inp.model_copy(update={"channel": "in_app"}), warning
+    return inp, None
+
+
 def create(inp: ReminderInput) -> Reminder:
     """Create a reminder from a validated input (due_at already validated parseable by the schema
     → the router never reaches here with a bad due_at). Returns the stored Reminder."""
     rid = store.create_reminder(
         title=inp.title, note=inp.note, due_at=inp.due_at, repeat=inp.repeat,
         re_notify_every=inp.re_notify_every, max_times=inp.max_times, created=now_iso(),
+        channel=inp.channel,  # #111: user-settable delivery channel (default in_app)
     )
     row = store.get_reminder(rid)
     assert row is not None  # just inserted
@@ -64,21 +105,24 @@ def delete(reminder_id: int) -> bool:
 # The forge-guard: source='tracing' is set ONLY here (the tracing service calls   #
 # these); the public create(ReminderInput) can't set source (not an input field).  #
 # --------------------------------------------------------------------------- #
-def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: str) -> Reminder:
+def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: str,
+                        channel: str = "in_app") -> Reminder:
     """Create-or-update the reminder linked to ``activity_id`` (source='tracing'). find-by-activity:
-    none → create (source=tracing), else → update title/due_at/repeat. Idempotent — a re-sync on the
-    same activity UPDATES, never duplicates. Returns the linked Reminder. (Called by the tracing
-    service when an activity has remind_at + remind_repeat≠off.) ``due_at`` is already a UTC ISO."""
+    none → create (source=tracing), else → update title/due_at/repeat/channel. Idempotent — a re-sync
+    on the same activity UPDATES, never duplicates. Returns the linked Reminder. (Called by the tracing
+    service when an activity has remind_at + remind_repeat≠off.) ``due_at`` is already a UTC ISO.
+    ``channel`` (#111) = the activity's remindChannel (default in_app)."""
     existing = store.find_by_activity(activity_id, source="tracing")
     if existing is None:
         rid = store.create_reminder(
             title=title, note=None, due_at=due_at, repeat=repeat,
             re_notify_every=None, max_times=None, created=now_iso(),
-            source="tracing", activity_id=activity_id,
+            source="tracing", activity_id=activity_id, channel=channel,
         )
         row = store.get_reminder(rid)
     else:
-        row = store.update_reminder(int(existing["id"]), title=title, due_at=due_at, repeat=repeat)
+        row = store.update_reminder(int(existing["id"]), title=title, due_at=due_at,
+                                    repeat=repeat, channel=channel)
     assert row is not None
     return row_to_reminder(row)
 
@@ -207,16 +251,22 @@ def notify_scan(now: datetime | None = None) -> dict:
                 # pre-cap Discord path above is UNTOUCHED (byte-identical to #29).
                 _maybe_escalate_overdue(row, now_iso_str)
                 continue
-            # ALERT-ROUTING (#33) — DELIVERY-CHANNEL rewire ONLY: route the fire through the shared
-            # alerts engine instead of the local Discord poster. The ENGINE (cadence/cap/roll/tick/
-            # overdue + _should_fire) is UNTOUCHED — only WHERE the notification goes changes. All
-            # fires from this scan are PRE-cap regular reminder fires → severity "normal" (Discord
-            # only, byte-identical to #29's prior Discord-only behavior). _should_fire returns False
-            # at cap, so there is NO past-cap fire path here to escalate to "high"/mail — escalating
-            # an overdue-past-cap reminder to mail would require an ENGINE change (out of #33's F2
-            # delivery-only scope) → flagged to architect/team-lead as a decide-and-log.
-            from modules.alerts import notify as _alert_notify
-            _alert_notify("normal", f"⏰ Reminder: {row['title']}", f"due {row['due_at']}")  # fail-soft inside
+            # ALERT-ROUTING (#33) + TRACING-UX T3 (#111) — route the fire by the reminder's CHANNEL:
+            #   in_app (default) → NO external send. The reminder ROW already exists + shows in the
+            #     /reminders UI (the in-app surface) — calling alerts here would be a DOUBLE-fire.
+            #     in_app fires still advance the counter/roll below (the engine is unchanged) — they
+            #     just don't ring an external channel. (Byte-identical to "the reminder is overdue in
+            #     the UI", which is #29's in-app behavior.)
+            #   email / discord → route through the shared alerts engine's CHANNEL override (the #111
+            #     additive `channels=` param) — EXACTLY that channel, severity-independent, fail-soft
+            #     + configured-checked (no creds → honest skip, never a crash). The ENGINE
+            #     (cadence/cap/roll/_should_fire) is UNCHANGED — only WHERE a fire goes.
+            channel = row["channel"] if "channel" in row.keys() else "in_app"  # pre-migration tolerant
+            if channel in ("email", "discord"):
+                from modules.alerts import notify as _alert_notify
+                _alert_notify("normal", f"⏰ Reminder: {row['title']}", f"due {row['due_at']}",
+                              channels=[channel])  # fail-soft inside; routes to EXACTLY this channel
+            # in_app → no alerts call (the row/UI is the surface; no double-fire)
             fired += 1
             if row["repeat"] in ("daily", "weekly"):
                 # SEMANTIC 1: roll forward + reset count/last_notified (next period fires fresh).
