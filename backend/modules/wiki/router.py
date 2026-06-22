@@ -347,8 +347,9 @@ def get_context(note_id: int, depth: int = 2):
 @router.get("/notes/{note_id}/suggested-links")
 def get_suggested_links(note_id: int, limit: int = 5):
     """WIKI-SUGGEST-LINK (#34): top 3-5 NEW link candidates for a note —
-    ``[{id, title, relevance}]`` (FTS over the note's text, self + already-linked EXCLUDED,
-    more-relevant first). The same suggestions the write-through response carries, fetchable
+    ``[{id, title, score, relevance}]`` (FTS over the note's text, self + already-linked EXCLUDED,
+    more-relevant first). #107: ``relevance`` = the #99 1-exp 0..1 (agent-readable), ``score`` = raw
+    bm25. The same suggestions the write-through response carries, fetchable
     standalone (e.g. an agent that wrote via the MCP proposal-apply path, not REST). 404 if the
     note is absent. Same ``reader.suggest_links`` the MCP ``wiki_suggest_links`` calls → MCP≡REST
     byte-identical (#24). Suggest-only — never applies a link."""

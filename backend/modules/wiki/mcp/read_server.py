@@ -148,8 +148,9 @@ def wiki_context(note_id: int, depth: int = 2) -> dict[str, Any]:
 
 def wiki_suggest_links(note_id: int, limit: int = 5) -> dict[str, Any]:
     """WIKI-SUGGEST-LINK (#34): top 3-5 NEW link candidates for a note → {suggestedLinks:
-    [{id, title, relevance}]}. FTS over the note's text, EXCLUDING the note itself + notes already
-    linked from it (resolved outbound), more-relevant first (relevance = FTS5 rank). Helps the agent
+    [{id, title, score, relevance}]}. FTS over the note's text, EXCLUDING the note itself + notes
+    already linked from it (resolved outbound), more-relevant first. #107: ``relevance`` = the #99
+    1-exp 0..1 (agent-readable, higher=stronger — same as wiki_search), ``score`` = raw bm25. Helps the agent
     link a freshly-written note + keep the graph connected. DETERMINISTIC (no AI), SUGGEST-ONLY
     (never applies a link). Missing note / no matches → {suggestedLinks: []}. Same reader.suggest_links
     the REST GET /wiki/notes/{id}/suggested-links calls → MCP≡REST byte-identical (#24)."""

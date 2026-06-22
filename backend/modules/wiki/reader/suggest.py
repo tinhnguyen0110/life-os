@@ -7,10 +7,13 @@ indexed title+body) and returns the top NEW link candidates, so the agent (or UI
 link). Querying by TITLE (not full content) is a deliberate #34 call — see the fn body for why (real-vault
 common-word noise); falls back to content only for a title-less note.
 
-Return shape (frozen #34): ``[{id: int, title: str, relevance: float}]`` — top 3-5, more-relevant first
-(``relevance`` = the FTS5 rank, raw, more-negative = more relevant — the #22/search precedent). EXCLUDES
-the note ITSELF and notes ALREADY LINKED from it (resolved outbound edges) — only NEW candidates. No match
-→ ``[]`` (honest-empty, never raises — the FTS store sanitizes bad queries to []).
+Return shape (frozen #34, #107-updated): ``[{id: int, title: str, score: float, relevance: float}]`` —
+top 3-5, more-relevant first. ``relevance`` is the #99/#107 agent-readable 0..1 magnitude (= ``1 -
+exp(score)``, higher = stronger match — the SAME 1-exp value wiki_search returns, reused not recomputed);
+``score`` is the raw bm25 rank (≤0, more-negative=better) kept for transparency, mirroring search's shape.
+(#107 fixed a path #99 missed: this used to surface the RAW negative ``score`` AS ``relevance``, which an
+agent can't read.) EXCLUDES the note ITSELF and notes ALREADY LINKED from it (resolved outbound edges) —
+only NEW candidates. No match → ``[]`` (honest-empty, never raises — the FTS store sanitizes bad queries).
 
 Living in ``reader`` (not the write path or MCP/REST layer) makes it the ONE source of truth — the
 write-through response, the optional MCP tool, and the REST endpoint all call this, so they can't drift
@@ -26,8 +29,9 @@ from .backlinks import backlinks
 
 def suggest_links(note_id: int, limit: int = 5) -> list[dict[str, Any]]:
     """Top NEW link candidates for ``note_id`` (see module docstring). FTS the note's title+content,
-    EXCLUDE self + already-linked (resolved outbound), map to {id,title,relevance}, top ``limit``
-    (default 5; 3-5 band). Missing note or no matches → ``[]`` (never raises)."""
+    EXCLUDE self + already-linked (resolved outbound), map to {id,title,score,relevance}, top ``limit``
+    (default 5; 3-5 band). ``relevance`` = the #99/#107 1-exp 0..1 (agent-readable), ``score`` = raw
+    bm25. Missing note or no matches → ``[]`` (never raises)."""
     from .backlinks import search as _fts
     from ..service import get_note as _get_note
 
@@ -58,7 +62,12 @@ def suggest_links(note_id: int, limit: int = 5) -> list[dict[str, Any]]:
     for hit in raw:
         if hit["id"] in exclude:
             continue
-        out.append({"id": hit["id"], "title": hit["title"], "relevance": hit["score"]})
+        # #107: surface the #99 1-exp ``relevance`` (0..1, agent-readable) that backlinks.search
+        # already computed — NOT the raw negative bm25 ``score``. Carry ``score`` too so suggest's
+        # shape mirrors search's {id,title,score,relevance} (parity + transparency). Do NOT recompute
+        # the transform — reuse the value in the hit.
+        out.append({"id": hit["id"], "title": hit["title"],
+                    "score": hit["score"], "relevance": hit["relevance"]})
         if len(out) >= int(limit):
             break
     return out

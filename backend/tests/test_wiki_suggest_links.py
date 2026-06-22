@@ -6,10 +6,11 @@ On a wiki note write-through, the response carries ``suggestedLinks`` — top 3-
 from it. Honest-empty [] on no match.
 
 Coverage (the dispatch's PASS bar):
-- a note whose content matches an existing note → suggestedLinks includes it (id/title/relevance), top 3-5;
+- a note whose content matches an existing note → suggestedLinks includes it (id/title/score/relevance), top 3-5;
 - THE DISTINGUISHING case: a note that LINKS [[X]] AND FTS-matches X → X is EXCLUDED (already-linked);
 - content matching nothing → suggestedLinks: [] (honest-empty);
-- relevance = the FTS5 rank (deterministic, more-relevant first);
+- #107: relevance = the #99 1-exp 0..1 (agent-readable, higher=more-relevant, descending best-first) —
+  NOT the raw negative bm25; ``score`` carries the raw rank for parity with wiki_search;
 - WIRED e2e (built-but-not-wired): the write-through RESPONSE (POST /wiki/notes) carries real
   suggestedLinks — not just the reader unit;
 - the standalone tool/endpoint is REST≡MCP byte-identical (covered by the #24 parity gate; a focused
@@ -45,7 +46,7 @@ def api(wiki_db):
 # --------------------------------------------------------------------------- #
 def test_suggest_includes_a_matching_note(wiki_db):
     """A note whose text shares terms with an existing note → that note is suggested, with
-    {id, title, relevance}."""
+    {id, title, score, relevance} (#107: +score, relevance is the 0..1 1-exp)."""
     target = wsvc.create_note(NoteCreateInput(title="Compound Interest", content="money grows over time")).id
     # a new note about the same topic, NOT linked to target
     nid = wsvc.create_note(NoteCreateInput(title="Compound Interest revisited", content="how money grows")).id
@@ -53,9 +54,11 @@ def test_suggest_includes_a_matching_note(wiki_db):
     ids = {s["id"] for s in sug}
     assert target in ids, "an FTS-matching, unlinked note must be suggested"
     hit = next(s for s in sug if s["id"] == target)
-    assert set(hit) == {"id", "title", "relevance"}
+    assert set(hit) == {"id", "title", "score", "relevance"}
     assert hit["title"] == "Compound Interest"
-    assert isinstance(hit["relevance"], float)
+    # #107: relevance is the agent-readable 0..1 1-exp (NOT the raw negative bm25 score)
+    assert isinstance(hit["relevance"], float) and 0.0 <= hit["relevance"] < 1.0
+    assert isinstance(hit["score"], float) and hit["score"] <= 0.0  # raw bm25 kept for transparency
 
 
 def test_suggest_EXCLUDES_already_linked_note(wiki_db):
@@ -88,17 +91,24 @@ def test_suggest_missing_note_is_empty(wiki_db):
     assert reader.suggest_links(999999) == []
 
 
-def test_suggest_relevance_is_fts_rank_sorted(wiki_db):
-    """relevance = the FTS5 rank, more-relevant first (deterministic). The list is sorted by
-    relevance descending (more-negative rank = more relevant → ascending raw score)."""
+def test_suggest_relevance_is_1exp_0to1_descending(wiki_db):
+    """#107: relevance is the #99 1-exp 0..1 (agent-readable), more-relevant first → the list is
+    sorted by relevance DESCENDING (higher = more relevant). All relevance ∈ [0,1), none negative;
+    order best-first preserved (1-exp is monotonic in the raw score, so descending relevance ==
+    the same best-first order the raw bm25 produced)."""
     wsvc.create_note(NoteCreateInput(title="Markov Chain", content="state transition probability"))
     wsvc.create_note(NoteCreateInput(title="Markov Decision Process", content="markov state reward"))
     nid = wsvc.create_note(NoteCreateInput(title="Markov models", content="markov state transition probability reward")).id
     sug = reader.suggest_links(nid)
     assert sug, "expected matches"
     rels = [s["relevance"] for s in sug]
-    # FTS5 rank: more-negative = more relevant → the list is ordered most-relevant first (ascending raw)
-    assert rels == sorted(rels), "suggestions must be ordered by FTS relevance (most relevant first)"
+    # #107: every relevance is 0..1 (NOT negative) — the agent-readable contract
+    assert all(0.0 <= r < 1.0 for r in rels), f"relevance must be in [0,1), got {rels}"
+    # ordered most-relevant first → descending relevance (1-exp monotonic → same best-first order)
+    assert rels == sorted(rels, reverse=True), "suggestions must be best-first (relevance descending)"
+    # and raw score stays available + monotone-consistent (more-negative = better = first)
+    scores = [s["score"] for s in sug]
+    assert scores == sorted(scores), "raw bm25 score still ascending (most-negative first) — order intact"
 
 
 def test_suggest_caps_at_limit(wiki_db):
@@ -125,7 +135,8 @@ def test_create_response_carries_suggested_links(api):
     titles = {s["title"] for s in data["suggestedLinks"]}
     assert "Deliberate Practice" in titles
     for s in data["suggestedLinks"]:
-        assert set(s) == {"id", "title", "relevance"}
+        assert set(s) == {"id", "title", "score", "relevance"}  # #107: +score, relevance 0..1
+        assert 0.0 <= s["relevance"] < 1.0
 
 
 def test_create_response_suggested_links_empty_when_no_match(api):
