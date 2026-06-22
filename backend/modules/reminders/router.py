@@ -59,8 +59,13 @@ def list_channels():
 
 @router.get("")
 def list_reminders(filter: str | None = None):
-    """List reminders by ``filter`` (today|week|undone|all; unknown → lenient all). Returns
-    {reminders, count, undoneCount, filter}. Empty → [] count 0 (raw-data-first)."""
+    """List reminders by ``filter`` (today|week|undone|done|all; 'completed' aliases 'done').
+    Returns {reminders, count, undoneCount, doneCount, filter}. Empty → [] count 0 (raw-data-first).
+    #119: an UNSUPPORTED filter → 422 agent-error (NOT a silent fallthrough to 'all')."""
+    if not service.is_valid_filter(filter):
+        return agent_error_response(
+            "INVALID_INPUT", f"unsupported filter {filter!r}",
+            hint=service.filter_hint())
     view, warnings = service.list_reminders(filter)
     return ok(data=view.model_dump(), warning="; ".join(warnings) if warnings else None)
 

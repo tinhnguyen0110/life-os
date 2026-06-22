@@ -210,7 +210,12 @@ def list_reminders(filter_key: str | None) -> list[sqlite3.Row]:
         params = (wk.isoformat(),)
     elif key == "undone":
         where = "WHERE done_at IS NULL"
-    # all / unknown → no WHERE (lenient: an unrecognised filter returns everything)
+    elif key in ("done", "completed"):
+        # #119: completed reminders (the accomplishment view) — done_at SET. Index-backed
+        # (idx_reminders_done). `completed` is an alias for `done`.
+        where = "WHERE done_at IS NOT NULL"
+    # all / unknown → no WHERE (lenient at the STORE; the agent-facing surfaces (router/MCP)
+    # reject an unsupported filter with a 422/agent-error BEFORE calling here — #119).
 
     conn = db.get_conn()
     with _lock:
@@ -220,10 +225,14 @@ def list_reminders(filter_key: str | None) -> list[sqlite3.Row]:
 
 
 def canonical_filter(filter_key: str | None) -> str:
-    """The filter as applied (an unknown/empty key → 'all', mirroring list_reminders' leniency).
-    The reader echoes this so a caller sees which filter actually ran."""
+    """The filter as applied. ``completed`` canonicalizes to ``done`` (alias). An unknown/empty key
+    → 'all' (store-leniency; the agent-facing surfaces reject unknown with a 422/agent-error before
+    reaching here, so 'all' is only seen for the legitimate empty→all default — #119). The reader
+    echoes this so a caller sees which filter actually ran."""
     key = (filter_key or "all").strip().lower()
-    return key if key in ("today", "week", "undone", "all") else "all"
+    if key == "completed":
+        return "done"  # alias → canonical
+    return key if key in ("today", "week", "undone", "done", "all") else "all"
 
 
 # --------------------------------------------------------------------------- #

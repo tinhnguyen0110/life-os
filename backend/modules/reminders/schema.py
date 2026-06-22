@@ -121,8 +121,9 @@ class ReminderList(BaseModel):
 
     reminders: list[Reminder] = Field(default_factory=list)
     count: int = Field(..., ge=0, description="number of reminders in this filtered list")
-    undoneCount: int = Field(..., ge=0, description="number of undone reminders in this filtered list")
-    filter: str = Field(..., description="the filter applied (today|week|undone|all)")
+    undoneCount: int = Field(..., ge=0, description="number of undone (done_at NULL) reminders in this filtered list")
+    doneCount: int = Field(0, ge=0, description="number of done (done_at set) reminders in this filtered list (#119, honest-mirror sibling of undoneCount)")
+    filter: str = Field(..., description="the filter applied (today|week|undone|done|all)")
 
 
 def now_iso() -> str:

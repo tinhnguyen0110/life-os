@@ -144,6 +144,8 @@ from modules.news.service import list_news as _news_list
 # surface). Read-gate-safe.
 from modules.reminders.service import list_reminders as _reminders_list
 from modules.reminders.service import list_channels as _reminders_channels  # #111 delivery channels
+from modules.reminders.service import is_valid_filter as _reminders_is_valid_filter  # #119 filter validation
+from modules.reminders.service import filter_hint as _reminders_filter_hint  # #119 agent-readable valid set
 # DAILY-TRACING-P2 (#65): the agent reads "what did I do today / my streaks" — get_overview is a
 # READ fn (no mutation; log_session/CRUD live on the lifeos-tracing write surface). Read-gate-safe.
 from modules.tracing.reader import get_overview as _tracing_overview
@@ -550,11 +552,15 @@ def claude_usage(window: str = "5h", verbose: bool = False) -> dict[str, Any]:
 
 
 def reminders_list(filter: str = "today") -> dict[str, Any]:
-    """What's on the user's plate: reminders by ``filter`` (today|week|undone|all; unknown →
-    lenient all). REMINDERS-2 (#28): so ANY agent on lifeos-read sees the agenda without a 2nd
+    """What's on the user's plate: reminders by ``filter`` (today|week|undone|done|all; 'completed'
+    aliases 'done'). REMINDERS-2 (#28): so ANY agent on lifeos-read sees the agenda without a 2nd
     connection. Agent-first lean shape — the filtered list + counts (not a dump): each reminder is
-    {id, title, due_at(UTC), repeat, done_at}; plus count + undoneCount + the filter applied. The
-    SAME fn is exposed on the lifeos-reminders server (is-identity). Read-only (no mutation)."""
+    {id, title, due_at(UTC), repeat, done_at, channel}; plus count + undoneCount + doneCount + the
+    filter applied. #119: an UNSUPPORTED filter → agent_error("INVALID_INPUT") (NOT a silent
+    fallthrough to 'all'). The SAME fn is on the lifeos-reminders server (is-identity). Read-only."""
+    if not _reminders_is_valid_filter(filter):
+        return agent_error("INVALID_INPUT", f"unsupported filter {filter!r}",
+                           hint=_reminders_filter_hint(), retryable=False)
     view, warnings = _reminders_list(filter)
     return {
         "reminders": [{"id": r.id, "title": r.title, "due_at": r.due_at,
@@ -562,6 +568,7 @@ def reminders_list(filter: str = "today") -> dict[str, Any]:
                        "channel": r.channel} for r in view.reminders],  # #111: which channel it fires on
         "count": view.count,
         "undoneCount": view.undoneCount,
+        "doneCount": view.doneCount,  # #119: honest-mirror sibling of undoneCount
         "filter": view.filter,
         "warnings": list(warnings or []),
     }

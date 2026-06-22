@@ -172,9 +172,109 @@ def test_all_returns_everything_unknown_filter_lenient(rem_db):
     service.tick(b.id)
     allv, _ = service.list_reminders("all")
     assert allv.count == 2 and allv.filter == "all"
-    # unknown filter → lenient all (not an error, not empty)
+    # #119: the SERVICE layer stays lenient (an unknown key → all) for the internal callers that
+    # pass a known-good filter (e.g. brief → 'undone'). The agent-facing surfaces (router GET /
+    # MCP reminders_list) are STRICT — they reject an unsupported filter with a 422/agent-error
+    # via service.is_valid_filter BEFORE calling here (see test_119_* below). Two-layer contract.
     unk, _ = service.list_reminders("zzz-not-a-filter")
     assert unk.count == 2 and unk.filter == "all"
+    assert allv.doneCount == 1 and allv.undoneCount == 1  # #119: honest-mirror both counts
+
+
+# --------------------------------------------------------------------------- #
+# #119 — the GAP-A bug fix: done/completed filter + doneCount + 422 on unknown   #
+# --------------------------------------------------------------------------- #
+def test_119_done_filter_returns_only_completed(rem_db):
+    """filter=done → ONLY reminders with done_at SET (the accomplishment view that was unqueryable)."""
+    now = _now()
+    a = service.create(ReminderInput(title="undone-a", due_at=now.isoformat()))
+    b = service.create(ReminderInput(title="done-b", due_at=now.isoformat()))
+    c = service.create(ReminderInput(title="done-c", due_at=now.isoformat()))
+    service.tick(b.id)
+    service.tick(c.id)
+    done, _ = service.list_reminders("done")
+    ids = {r.id for r in done.reminders}
+    assert ids == {b.id, c.id}, "filter=done must return ONLY completed reminders"
+    assert a.id not in ids  # the undone one is excluded
+    assert done.count == 2 and done.doneCount == 2 and done.undoneCount == 0
+    assert done.filter == "done"
+
+
+def test_119_completed_is_alias_for_done(rem_db):
+    """filter=completed canonicalizes to 'done' (same WHERE done_at IS NOT NULL)."""
+    now = _now()
+    b = service.create(ReminderInput(title="done", due_at=now.isoformat()))
+    service.tick(b.id)
+    view, _ = service.list_reminders("completed")
+    assert view.count == 1 and view.filter == "done"  # alias → canonical 'done'
+    assert {r.id for r in view.reminders} == {b.id}
+
+
+def test_119_done_filter_empty_is_honest_zero(rem_db):
+    """No completed reminders → filter=done returns [] + count 0 + doneCount 0 (honest-empty)."""
+    service.create(ReminderInput(title="only-undone", due_at=_now().isoformat()))
+    done, _ = service.list_reminders("done")
+    assert done.reminders == [] and done.count == 0 and done.doneCount == 0
+
+
+def test_119_doneCount_in_all_filter(rem_db):
+    """The 'all' view carries BOTH undoneCount and doneCount (honest-mirror)."""
+    now = _now()
+    service.create(ReminderInput(title="u", due_at=now.isoformat()))
+    b = service.create(ReminderInput(title="d", due_at=now.isoformat()))
+    service.tick(b.id)
+    allv, _ = service.list_reminders("all")
+    assert allv.count == 2 and allv.undoneCount == 1 and allv.doneCount == 1
+
+
+def test_119_is_valid_filter():
+    """is_valid_filter: supported filters + empty/None (→ all default) are valid; junk is NOT."""
+    for ok_key in ("today", "week", "undone", "done", "completed", "all", None, "", "  ", "DONE"):
+        assert service.is_valid_filter(ok_key) is True, f"{ok_key!r} should be valid"
+    for bad in ("zzz", "pending", "overdue", "yesterday"):
+        assert service.is_valid_filter(bad) is False, f"{bad!r} should be rejected"
+
+
+# --- REST: filter=done works; unsupported → 422 agent-error (NOT silent all) -- #
+def test_119_rest_done_filter(app_client):
+    app_client.post("/reminders", json={"title": "undone", "due_at": _now().isoformat()})
+    r = app_client.post("/reminders", json={"title": "done", "due_at": _now().isoformat()})
+    app_client.put(f"/reminders/{r.json()['data']['id']}/tick")
+    body = app_client.get("/reminders?filter=done").json()["data"]
+    assert body["count"] == 1 and body["doneCount"] == 1 and body["filter"] == "done"
+    assert [rr["title"] for rr in body["reminders"]] == ["done"]
+
+
+def test_119_rest_unsupported_filter_is_422(app_client):
+    """🔴 the GAP-A bug: an unsupported filter must 422 agent-error, NOT silently return 'all'."""
+    r = app_client.get("/reminders?filter=zzz-not-a-filter")
+    assert r.status_code == 422, f"unsupported filter must be 422, got {r.status_code}"
+    err = r.json()["error"]
+    assert err["code"] == "INVALID_INPUT" and err["retryable"] is False
+    assert "filter" in err["hint"].lower() and "done" in err["hint"].lower()  # names the valid set
+
+
+def test_119_rest_empty_filter_is_all_not_422(app_client):
+    """An EMPTY/omitted filter is the legitimate 'all' default → 200, NOT 422."""
+    assert app_client.get("/reminders").status_code == 200
+    assert app_client.get("/reminders").json()["data"]["filter"] == "all"
+
+
+# --- MCP ≡ REST parity for the done filter + the 422/agent-error -------------- #
+def test_119_mcp_done_filter_matches_rest(app_client):
+    from mcp_servers import read_server as rs
+    r = app_client.post("/reminders", json={"title": "done", "due_at": _now().isoformat()})
+    app_client.put(f"/reminders/{r.json()['data']['id']}/tick")
+    mcp = rs.reminders_list("done")
+    assert mcp["count"] == 1 and mcp["doneCount"] == 1 and mcp["filter"] == "done"
+
+
+def test_119_mcp_unsupported_filter_is_agent_error(app_client):
+    """MCP mirrors REST: an unsupported filter → agent_error(INVALID_INPUT), not silent 'all'."""
+    from mcp_servers import read_server as rs
+    out = rs.reminders_list("zzz-not-a-filter")
+    assert out.get("error", {}).get("code") == "INVALID_INPUT"
+    assert out["error"]["retryable"] is False and "done" in out["error"]["hint"].lower()
 
 
 def test_empty_list_is_honest_empty(rem_db):

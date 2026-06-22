@@ -136,17 +136,44 @@ def delete_for_activity(activity_id: str) -> bool:
     return store.delete_reminder(int(existing["id"]))
 
 
+# #119: the supported filters (the agent-facing surfaces reject anything else with a 422/agent-
+# error instead of silently falling through to 'all'). 'completed' is an alias for 'done'. An empty/
+# None filter is the legitimate default (→ 'all'), NOT an unsupported value.
+VALID_FILTERS: frozenset[str] = frozenset({"today", "week", "undone", "done", "completed", "all"})
+
+
+def is_valid_filter(filter_key: str | None) -> bool:
+    """#119: True if ``filter_key`` is a supported filter (or empty/None → the 'all' default).
+    The router + MCP wrapper call this to reject an unsupported filter with a 422/agent-error
+    (honest-mirror — no silent fallthrough to 'all', the GAP-A bug)."""
+    if filter_key is None or not filter_key.strip():
+        return True  # empty → legitimate 'all' default
+    return filter_key.strip().lower() in VALID_FILTERS
+
+
+def filter_hint() -> str:
+    """The agent-readable list of valid filters (for the 422/agent-error hint)."""
+    return "valid filters: today | week | undone | done (alias: completed) | all"
+
+
 def list_reminders(filter_key: str | None) -> tuple[ReminderList, list[str]]:
     """The filtered list + counts. Returns (ReminderList, warnings). Fail-open: a malformed row
-    is skipped + warned, never crashes. ``undoneCount`` = how many in this list have done_at NULL
-    (for 'all'/'undone' that's the undone subset; for 'today'/'week' all are undone by construction)."""
+    is skipped + warned, never crashes. ``undoneCount`` = how many in this list have done_at NULL;
+    ``doneCount`` = how many have done_at SET (#119, honest-mirror sibling). For 'today'/'week'/
+    'undone' all are undone by construction; for 'done' all are done; 'all' carries both.
+
+    NOTE: validation of ``filter_key`` is the AGENT-FACING surfaces' job (router/MCP call
+    is_valid_filter first → 422/agent-error on unsupported). This fn stays store-lenient for the
+    internal callers that pass a known-good filter (e.g. brief → 'undone')."""
     rows = store.list_reminders(filter_key)
     reminders, warnings = map_rows(rows)
     undone = sum(1 for r in reminders if r.done_at is None)
+    done = sum(1 for r in reminders if r.done_at is not None)
     view = ReminderList(
         reminders=reminders,
         count=len(reminders),
         undoneCount=undone,
+        doneCount=done,
         filter=store.canonical_filter(filter_key),
     )
     return view, warnings
