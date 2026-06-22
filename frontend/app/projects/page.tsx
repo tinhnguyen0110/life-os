@@ -1,10 +1,12 @@
 "use client";
 /* ============================================================
-   S2 — Projects (unified, #114). gộp 3→2: ONE "Dự án" screen with a [Đang chạy |
-   Nghĩa địa] sub-tab. Đang chạy = the S2 list (health-filterable table); Nghĩa địa =
-   <GraveyardView> in-page (the old S4). /graveyard redirects here; ?tab=graveyard
-   deep-links. RENDER-ONLY: health/progress/summary/source/hidden/dev-stat all from the
-   backend — never recomputed.
+   S2 — Projects (unified, #114 · #120). gộp: ONE "Dự án" screen with a [Đang chạy |
+   Nghĩa địa | Dev Activity] sub-tab. Đang chạy = the S2 list (health-filterable table);
+   Nghĩa địa = <GraveyardView> in-page (the old S4); Dev Activity = <DevActivityView>
+   in-page (the old DEVACT git-contribution screen, #120 user-CHỐT fold-in). /graveyard
+   redirects to ?tab=graveyard, /dev-activity redirects to ?tab=dev; both deep-link.
+   RENDER-ONLY: health/progress/summary/source/hidden/dev-stat all from the backend —
+   never recomputed.
 
    #114 per-row: source badge (auto/config/registered) · hide/unhide (soft, ≠ abandon,
    in-page) · dev-stat strip (GET /projects/{id}/dev-activity, found:false → honest
@@ -19,12 +21,13 @@ import { HealthChip } from "@/components/shared/HealthChip";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { GraveyardView } from "@/components/GraveyardView";
+import { DevActivityView } from "@/components/DevActivityView";
 import { ProjectDevStat } from "@/components/ProjectDevStat";
 import { relativeTime, orDash } from "@/lib/format";
 import { Icon } from "@/lib/icons";
 
 type Filter = "all" | "act" | "slow" | "stall";
-type SubTab = "running" | "graveyard";
+type SubTab = "running" | "graveyard" | "dev";
 
 const HEALTH_TABS: { key: Filter; label: string }[] = [
   { key: "all", label: "Tất cả" },
@@ -45,7 +48,8 @@ const EMPTY_SUMMARY: ProjectsSummary = { act: 0, slow: 0, stall: 0, dead: 0, tot
 function ProjectsInner() {
   const router = useSafeRouter();
   const params = useSearchParams();
-  const subTab: SubTab = params?.get("tab") === "graveyard" ? "graveyard" : "running";
+  const tabParam = params?.get("tab");
+  const subTab: SubTab = tabParam === "graveyard" ? "graveyard" : tabParam === "dev" ? "dev" : "running";
 
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
   const [summary, setSummary] = useState<ProjectsSummary>(EMPTY_SUMMARY);
@@ -85,7 +89,7 @@ function ProjectsInner() {
   );
 
   function setTab(t: SubTab) {
-    router.push(t === "graveyard" ? "/projects?tab=graveyard" : "/projects");
+    router.push(t === "graveyard" ? "/projects?tab=graveyard" : t === "dev" ? "/projects?tab=dev" : "/projects");
   }
 
   async function onHide(p: ProjectStatus) {
@@ -111,7 +115,7 @@ function ProjectsInner() {
         </button>
       </div>
 
-      {/* #114 sub-tab: Đang chạy | Nghĩa địa */}
+      {/* #114 · #120 sub-tab: Đang chạy | Nghĩa địa | Dev Activity */}
       <div className="seg" data-testid="project-subtab" role="tablist" style={{ marginBottom: 12 }}>
         <button type="button" role="tab" aria-selected={subTab === "running"} className={subTab === "running" ? "on" : ""} onClick={() => setTab("running")} data-testid="subtab-running">
           Đang chạy
@@ -119,10 +123,15 @@ function ProjectsInner() {
         <button type="button" role="tab" aria-selected={subTab === "graveyard"} className={subTab === "graveyard" ? "on" : ""} onClick={() => setTab("graveyard")} data-testid="subtab-graveyard">
           Nghĩa địa{summary.dead > 0 ? ` (${summary.dead})` : ""}
         </button>
+        <button type="button" role="tab" aria-selected={subTab === "dev"} className={subTab === "dev" ? "on" : ""} onClick={() => setTab("dev")} data-testid="subtab-dev">
+          Dev Activity
+        </button>
       </div>
 
       {subTab === "graveyard" ? (
         <GraveyardView showExportHeader />
+      ) : subTab === "dev" ? (
+        <DevActivityView />
       ) : (
         <>
           {warning && (

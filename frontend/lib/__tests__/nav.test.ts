@@ -39,12 +39,16 @@ describe("nav config (D3 — 14 foundation screens + Wiki + Career, 8 groups, no
     expect(screens).toContain("DEC"); // Decision Cockpit (FINANCE-UI)
     expect(screens).toContain("REM"); // Reminders (#31 GAP-4) under "Hằng ngày"
     expect(screens).toContain("TRACE"); // Daily Tracing (#65-P3 G-HABIT) under "Hằng ngày"
-    expect(screens).toContain("DEVACT"); // Dev Activity (#63 git contributions) under "Dự án" (user CHỐT nav-IA option A) — DISTINCT from S14 /activity feed
+    // #120 — DEVACT (Dev Activity) is now an in-page sub-tab of /projects (?tab=dev),
+    // NOT a standalone nav item → it's no longer in the NAV screens set. /dev-activity
+    // route still exists (redirects to the sub-tab).
+    expect(screens).not.toContain("DEVACT");
     expect(screens).toContain("REPOMEM"); // Repo Memory (#64-P3 code_insight + repo_memory) under "Dự án" — DISTINCT browse screen
     expect(screens).toContain("MCPKEYS"); // MCP Keys (#88 per-key tool scoping) under "Hệ thống"
     // #114 — gộp 3→2: S4 (Nghĩa địa) merged into S2's in-page sub-tab → no longer a
-    // standalone nav entry (was 30 → 29). /graveyard route still exists (redirects).
-    expect(unique.size).toBe(29);
+    // standalone nav entry (was 30 → 29). #120 — DEVACT merged too (29 → 28). Both
+    // /graveyard and /dev-activity routes still exist (redirect to the sub-tabs).
+    expect(unique.size).toBe(28);
   });
 
   it("every nav route has a breadcrumb entry", () => {

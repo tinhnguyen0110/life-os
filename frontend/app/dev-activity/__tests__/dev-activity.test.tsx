@@ -18,7 +18,9 @@ vi.mock("@/lib/api", async () => {
   };
 });
 
-import DevActivityPage from "../page";
+// #120 — the DEVACT UI moved from the page (now a redirect) into <DevActivityView>,
+// rendered in the /projects "Dev Activity" sub-tab. The DEVACT behavior tests follow it.
+import { DevActivityView as DevActivityPage } from "@/components/DevActivityView";
 
 afterEach(() => {
   getDevActivity.mockReset();
