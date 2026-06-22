@@ -84,4 +84,25 @@ describe("LoadErrorShell — the shared loading/error gate", () => {
     const err = screen.getByTestId("x-error");
     expect(err.textContent).toContain("Không tải được: Network error. Kiểm tra backend (http://be).");
   });
+
+  it("padding defaults to '24px 4px' (existing call-sites unchanged)", () => {
+    render(
+      <LoadErrorShell status="loading" loadingLabel="Đang tải…" errorLabel="x"
+        loadingTestid="x-loading" errorTestid="x-error">{body}</LoadErrorShell>
+    );
+    expect((screen.getByTestId("x-loading") as HTMLElement).style.padding).toBe("24px 4px");
+  });
+
+  it("a custom padding prop overrides the default on both loading + error nodes", () => {
+    const { rerender } = render(
+      <LoadErrorShell status="loading" loadingLabel="Đang tải…" errorLabel="oops"
+        loadingTestid="x-loading" errorTestid="x-error" padding="18px 16px">{body}</LoadErrorShell>
+    );
+    expect((screen.getByTestId("x-loading") as HTMLElement).style.padding).toBe("18px 16px");
+    rerender(
+      <LoadErrorShell status="error" loadingLabel="Đang tải…" errorLabel="oops"
+        loadingTestid="x-loading" errorTestid="x-error" padding="18px 16px">{body}</LoadErrorShell>
+    );
+    expect((screen.getByTestId("x-error") as HTMLElement).style.padding).toBe("18px 16px");
+  });
 });

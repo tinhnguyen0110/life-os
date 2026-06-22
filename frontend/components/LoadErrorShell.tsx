@@ -29,6 +29,7 @@ export function LoadErrorShell({
   errorTestid,
   sectionClassName,
   dataScreen,
+  padding = "24px 4px",
   children,
 }: {
   /** the hook's status; only "loading"/"error" gate, anything else → children. */
@@ -50,12 +51,15 @@ export function LoadErrorShell({
   sectionClassName?: string;
   /** the `data-screen` attribute on the wrapping section (e.g. "S5"). */
   dataScreen?: string;
+  /** the hint padding (default "24px 4px" — the common value; some screens use
+   *  "18px 16px"). Pass the screen's EXACT value to keep the render byte-identical. */
+  padding?: string;
   /** the real screen body, rendered when not loading/error. */
   children: ReactNode;
 }) {
   if (status === "loading") {
     const node = (
-      <div className="hint" style={{ padding: "24px 4px" }} data-testid={loadingTestid}>
+      <div className="hint" style={{ padding }} data-testid={loadingTestid}>
         {loadingLabel}
       </div>
     );
@@ -66,7 +70,7 @@ export function LoadErrorShell({
 
   if (status === "error") {
     const node = (
-      <div className="hint neg" style={{ padding: "24px 4px" }} data-testid={errorTestid}>
+      <div className="hint neg" style={{ padding }} data-testid={errorTestid}>
         {errorLabel}
         {reload && (
           <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>

@@ -17,6 +17,7 @@ import { useSearchParams } from "next/navigation";
 import { useSafeRouter } from "@/lib/useNav";
 import { getProjects, hideProject, unhideProject, ApiError, apiBase } from "@/lib/api";
 import type { ProjectStatus, ProjectsSummary, ProjectSource } from "@/lib/types";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { HealthChip } from "@/components/shared/HealthChip";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { KpiCard } from "@/components/shared/KpiCard";
@@ -181,8 +182,18 @@ function ProjectsInner() {
           <div className="panel" style={{ overflow: "hidden" }}>
             <div className="phead"><span className="kicker">Dự án</span><span className="hint" style={{ marginLeft: "auto" }}>{rows.length} dự án</span></div>
 
-            {status === "loading" && <div className="hint" style={{ padding: "18px 16px" }} data-testid="projects-loading">Đang tải dự án…</div>}
-            {status === "error" && <div className="hint neg" style={{ padding: "18px 16px" }} data-testid="projects-error">Không tải được dự án: {errMsg}. Kiểm tra backend ({apiBase}) rồi thử lại.</div>}
+            {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (bare hint, 18px 16px
+                padding, NO reload button — the original error copy ends "…rồi thử lại." as text). */}
+            <LoadErrorShell
+              status={status}
+              padding="18px 16px"
+              loadingTestid="projects-loading"
+              loadingLabel="Đang tải dự án…"
+              errorTestid="projects-error"
+              errorLabel={<>Không tải được dự án: {errMsg}. Kiểm tra backend ({apiBase}) rồi thử lại.</>}
+            >
+              {null}
+            </LoadErrorShell>
 
             {status === "ready" && (
               rows.length === 0 ? (

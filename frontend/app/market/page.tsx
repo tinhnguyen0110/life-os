@@ -8,6 +8,7 @@
    ============================================================ */
 import { useEffect, useState } from "react";
 import { useMarket } from "@/lib/useMarket";
+import { LoadErrorShell } from "@/components/LoadErrorShell";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { MarketChart } from "@/components/MarketChart";
@@ -215,19 +216,18 @@ export default function MarketPage() {
             <span className="dot g" style={{ marginLeft: "auto" }} />
             <span className="hint">market-poll mỗi 5 phút</span>
           </div>
-          {status === "loading" && (
-            <div className="hint" style={{ padding: "18px 16px" }} data-testid="market-loading">
-              Đang tải thị trường…
-            </div>
-          )}
-          {status === "error" && (
-            <div className="hint neg" style={{ padding: "18px 16px" }} data-testid="market-error">
-              Không tải được thị trường: {errMsg}. Kiểm tra backend ({apiBase}).
-              <button className="btn" type="button" style={{ marginLeft: 10 }} onClick={reload}>
-                Thử lại
-              </button>
-            </div>
-          )}
+          {/* #138-P1a-rollout — inline loading/error → shared <LoadErrorShell> (bare hint, 18px 16px). */}
+          <LoadErrorShell
+            status={status}
+            padding="18px 16px"
+            loadingTestid="market-loading"
+            loadingLabel="Đang tải thị trường…"
+            errorTestid="market-error"
+            errorLabel={<>Không tải được thị trường: {errMsg}. Kiểm tra backend ({apiBase}).</>}
+            reload={reload}
+          >
+            {null}
+          </LoadErrorShell>
           {status === "ready" && (
             <DataTable
               columns={quoteColumns}
