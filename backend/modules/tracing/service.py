@@ -298,6 +298,12 @@ def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:
     #75: re-syncs the linked reminder (upsert on remind change, delete on clear/off)."""
     # map the camel wire field names to the snake store columns (#75-TWEAK).
     fields = {_FIELD_TO_COL.get(k, k): v for k, v in upd.model_dump(exclude_none=True).items()}
+    # #136-BE-3: an EXPLICIT time=null CLEARS sched_time. exclude_none drops {time:null} (can't tell
+    # "omitted = unchanged" from "set null = clear"), so special-case `time` ONLY via model_fields_set
+    # (pydantic v2 = the fields the request actually supplied). Scoped to `time` — remindAt/repeat/
+    # channel keep their "None = unchanged" semantics (remindAt clears via remindRepeat='off', not null).
+    if "time" in upd.model_fields_set and upd.time is None:
+        fields["sched_time"] = None
     if not store.update_activity(activity_id, fields):
         return None
     row = store.get_activity(activity_id)

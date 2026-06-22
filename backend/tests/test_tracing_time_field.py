@@ -122,3 +122,49 @@ def test_rest_bad_time_is_422(api):
 def test_rest_no_time_is_null(api):
     r = api.post("/tracing/activities", json={"id": "n", "name": "N", "goal": 1})
     assert r.status_code == 201 and r.json()["data"]["time"] is None  # honest null, not ""
+
+
+# --- #136-BE-3: explicit {time: null} CLEARS (exclude_none drop fix) --------- #
+def test_clear_time_via_explicit_null(db):
+    """🔴 set a time, then PUT {time: null} → CLEARS sched_time back to None. The bug: exclude_none
+    dropped {time:null} so the clear never wrote. Fixed via model_fields_set special-case."""
+    svc.create_activity(ActivityInput(id="c", name="C", goal=1.0, time="07:15"))
+    assert svc.get_activity("c").time == "07:15"
+    svc.update_activity("c", ActivityUpdate(time=None))  # explicit clear
+    assert svc.get_activity("c").time is None, "explicit time=null must CLEAR sched_time"
+
+
+def test_omitted_time_leaves_unchanged(db):
+    """OMITTING time (not in the update at all) leaves it unchanged — the omit-vs-set-null distinction."""
+    svc.create_activity(ActivityInput(id="k", name="K", goal=1.0, time="09:00"))
+    svc.update_activity("k", ActivityUpdate(name="K renamed"))  # time NOT supplied
+    act = svc.get_activity("k")
+    assert act.time == "09:00" and act.name == "K renamed"  # time survived the unrelated edit
+
+
+def test_reset_time_after_clear(db):
+    """Control: after a clear, time can be SET again (no sticky-null)."""
+    svc.create_activity(ActivityInput(id="r", name="R", goal=1.0, time="07:15"))
+    svc.update_activity("r", ActivityUpdate(time=None))
+    svc.update_activity("r", ActivityUpdate(time="08:00"))
+    assert svc.get_activity("r").time == "08:00"
+
+
+def test_remindAt_null_still_unchanged_not_cleared(db):
+    """🔴 the regression control: remindAt keeps its 'None = unchanged' semantics (NOT cleared by
+    null — it clears via remindRepeat='off'). The #136-BE-3 fix is scoped to `time` ONLY."""
+    svc.create_activity(ActivityInput(id="z", name="Z", goal=1.0, remindAt="07:00", remindRepeat="daily"))
+    # PUT remindAt=None (the partial-update convention: None = leave unchanged, NOT clear)
+    svc.update_activity("z", ActivityUpdate(name="Z2"))  # remindAt omitted/None
+    act = svc.get_activity("z")
+    assert act.remindAt == "07:00" and act.remindRepeat == "daily", "remindAt unchanged (not cleared)"
+
+
+def test_rest_clear_time_round_trip(api):
+    api.post("/tracing/activities", json={"id": "c", "name": "C", "goal": 1, "time": "07:15"})
+    r = api.put("/tracing/activities/c", json={"time": None})  # FE "Xóa giờ"
+    assert r.status_code == 200 and r.json()["data"]["time"] is None
+    # GET confirms persisted
+    ov = api.get("/tracing").json()["data"]
+    a = next(x for x in ov["activities"] if x["id"] == "c")
+    assert a["time"] is None
