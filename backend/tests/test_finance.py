@@ -546,6 +546,29 @@ def test_overview_with_okx_uses_basis_as_cost(isolated_paths, monkeypatch):
     """When OKX is live, overview crypto.cost = snapshotted basis, NOT manual holdings cost."""
     okx_val = 10500.0
     monkeypatch.setattr(service, "_okx_crypto_value", lambda: (okx_val, None))
+    # #116: this test mocks _okx_crypto_value (the channel value) but get_overview ALSO calls
+    # _okx_crypto_holdings (per-coin balances) → which hit the LIVE OKX network → handshake
+    # timeout flake (intermittent in full/reverse runs). Mock it too so the test NEVER touches
+    # live OKX → deterministic any order. The mock returns ONE value-only entry (avgCost=None,
+    # the whole channel value) — exactly the shape real OKX produced here (value-only → it is
+    # what drives basisUnknown=True via _basis_unknown's value-weighted-majority). This PINS the
+    # behavior the test was relying on the live network for, instead of flaking on it.
+    def _fake_okx_holdings():
+        # track the current mocked channel value so the value-only entry stays consistent
+        # across both get_overview calls (the 2nd call raises _okx_crypto_value to 11000).
+        val, _ = service._okx_crypto_value()
+        h = service.Holding(channel="crypto", symbol="BTC", qty=0.2,
+                            avgCost=None, source="okx", asOf=service._now_iso())
+        return [{"holding": h.model_dump(), "price": None, "source": "okx",
+                 "value": val, "pnl": None, "changePct": None, "okxSpotUplRatio": None}]
+    monkeypatch.setattr(service, "_okx_crypto_holdings", _fake_okx_holdings)
+    # #116 regression guard: the LIVE OKX boundary is exchange_service.get_overview (what the
+    # real _okx_crypto_holdings/_okx_crypto_value call → the network handshake). With both
+    # mocked, it must NEVER be reached. Fail LOUD if any code path slips back to live OKX (the
+    # flake re-introducing itself), instead of silently flaking on a timeout again.
+    def _no_live_okx():
+        raise AssertionError("live OKX (exchange_service.get_overview) hit — the #116 flake is back")
+    monkeypatch.setattr(service.exchange_service, "get_overview", _no_live_okx)
     overview, _ = service.get_overview()
     crypto = next(a for a in overview.allocations if a.channel == "crypto")
     # First call → basis snapshotted = 10500. cost/current are the real $ figures (kept);
