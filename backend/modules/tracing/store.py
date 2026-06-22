@@ -166,6 +166,21 @@ def archive_activity(activity_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def unarchive_activity(activity_id: str) -> bool:
+    """#130: re-surface a soft-deleted activity (set archived=0). Returns False if no such row.
+    The inverse of archive_activity — SCOPED to the single id (the #72 lesson). Used by the
+    template-add path: re-adding a template whose id was archived un-archives it (the logs/history
+    are preserved — same row, just back on the board)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE tracing_activities SET archived = 0 WHERE id = ?", (activity_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 # --------------------------------------------------------------------------- #
 # Logs (raw sessions — the derive source)                                       #
 # --------------------------------------------------------------------------- #

@@ -96,6 +96,62 @@ def test_add_already_present_skips_no_dup(db):
     assert len(rows) == 1, "no duplicate activity created"
 
 
+# --- #130: ARCHIVED matched id → un-archive + re-surface (added:true) -------- #
+def test_add_archived_template_unarchives_and_resurfaces(db):
+    """🔴 #130 (the FE-found gap): add a template, archive it, then '+ Từ mẫu → X' again →
+    UN-ARCHIVES + re-surfaces it (added=True, back on the board). The old behavior returned
+    added=False + left it archived → the click silently did nothing."""
+    svc.upsert_template("guitar", TemplateInput(name="Tập guitar", goal=20.0))
+    a, added1 = svc.add_template_to_today("guitar")
+    assert added1 is True
+    assert svc.archive_activity("guitar") is True  # archive it (off the board)
+    # the activity is now archived → NOT in the default board
+    assert "guitar" not in {x.id for x in svc.overview().activities}
+    # re-add the template → un-archive + added:True (the #130 fix)
+    re, added2 = svc.add_template_to_today("guitar")
+    assert added2 is True, "re-adding an archived id must un-archive (added=True), not silently skip"
+    assert re is not None and re.id == "guitar" and re.archived is False
+    # back on the board, and STILL only one row (no dup — same row un-archived)
+    assert "guitar" in {x.id for x in svc.overview().activities}
+    from modules.tracing import store
+    rows = [r for r in store.list_activities(include_archived=True) if r["id"] == "guitar"]
+    assert len(rows) == 1, "un-archive reuses the SAME row, no duplicate"
+
+
+def test_add_live_id_still_skips_unchanged(db):
+    """#130 keeps the LIVE-id behavior unchanged: a non-archived already-present id → added=False."""
+    svc.upsert_template("guitar", TemplateInput(name="Tập guitar", goal=20.0))
+    svc.add_template_to_today("guitar")
+    _re, added = svc.add_template_to_today("guitar")  # still LIVE → skip
+    assert added is False
+
+
+def test_archived_unarchive_preserves_logs(db):
+    """The un-archive reuses the same row → the activity's logged history is preserved (not a fresh
+    row). Log a session, archive, re-add → the prior log is still there."""
+    from modules.tracing.schema import LogInput
+    svc.upsert_template("water", TemplateInput(name="Uống nước", goal=8.0))
+    svc.add_template_to_today("water")
+    svc.log_session("water", LogInput(val=1.0))
+    svc.archive_activity("water")
+    re, added = svc.add_template_to_today("water")
+    assert added is True and re is not None
+    # via the overview the activity is back; its today reflects the preserved log (same row)
+    ov_act = next((x for x in svc.overview().activities if x.id == "water"), None)
+    assert ov_act is not None and ov_act.today.val == 1.0, "the log survived archive→un-archive"
+
+
+def test_add_all_unarchives_archived_member(db):
+    """#130: add-all re-surfaces an archived member (counted as created, not skipped)."""
+    seeds = svc.list_templates()
+    first_id = seeds[0].id
+    svc.add_template_to_today(first_id)
+    svc.archive_activity(first_id)  # archive one member
+    created, skipped = svc.add_all_templates()
+    assert first_id in {a.id for a in created}, "add-all must un-archive + re-create the archived member"
+    assert first_id not in skipped
+
+
 # --- add-all → all non-hidden, skip present, honest-empty -------------------- #
 def test_add_all_seeds_create_today_activities(db):
     """With no user overrides, add-all adds all the SEED templates (the user's default list)."""

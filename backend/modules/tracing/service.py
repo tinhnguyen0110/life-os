@@ -428,33 +428,43 @@ def _template_to_activity_input(t: Template) -> ActivityInput:
 
 
 def add_template_to_today(template_id: str) -> tuple[Activity | None, bool]:
-    """#124: 1-click "add from my template" → create today's activity from the saved template.
-    Returns (activity, added): added=True when newly created; added=False when an activity with that
-    id already exists (incl. archived) → returns the EXISTING one, NO duplicate (the decided
-    already-added behavior — idempotent, honest). (None, False) when the template id is unknown
-    (router → 404). SCOPED: reads tracing_template + writes tracing_activities only (never the
-    rejected auto-seed)."""
+    """#124/#130: 1-click "add from my template" → put today's activity on the board from the saved
+    template. Returns (activity, added):
+      - new id → create → (activity, added=True).
+      - an ARCHIVED matched id (#130) → UN-ARCHIVE + re-surface → (activity, added=True). Clicking
+        "add" means "I want this today"; a silently-archived id used to do nothing (the FE-found gap).
+        The row's logs/history are preserved (same row, archived=0).
+      - a LIVE (non-archived) id → already on the board → (existing, added=False), NO dup (idempotent).
+    (None, False) when the template id is unknown (router → 404). SCOPED: reads tracing_template +
+    writes only that id's tracing_activities row (never the rejected auto-seed)."""
     t = get_template(template_id)
     if t is None:
         return None, False
     existing = get_activity(t.id)  # incl. archived (the PK would collide on re-create)
     if existing is not None:
-        return existing, False  # already added → return existing, no dup
+        if existing.archived:
+            # #130: re-adding an archived id → un-archive it back onto the board (added=True).
+            store.unarchive_activity(t.id)
+            refreshed = get_activity(t.id)
+            return (refreshed if refreshed is not None else existing), True
+        return existing, False  # already LIVE on the board → return existing, no dup
     return create_activity(_template_to_activity_input(t)), True
 
 
 def add_all_templates() -> tuple[list[Activity], list[str]]:
-    """#124: add ALL non-hidden templates → today's activities in one call. Returns
-    (created, skipped_ids): each template not already present → created; an already-present id →
-    skipped (honest, no dup). honest-empty ([],[]) when there are no templates. list_templates()
-    already excludes tombstoned/hidden, so this respects the #109 override/hidden model."""
+    """#124/#130: add ALL non-hidden templates → today's board in one call. Returns
+    (created, skipped_ids): a new OR archived id → created (#130: an archived member is un-archived
+    + re-surfaced, counted as created — DELEGATES to add_template_to_today so the archived semantics
+    are identical); a LIVE already-present id → skipped (honest, no dup). honest-empty ([],[]) when
+    there are no templates. list_templates() already excludes tombstoned/hidden (#109 model)."""
     created: list[Activity] = []
     skipped: list[str] = []
     for t in list_templates():
-        if get_activity(t.id) is not None:
+        activity, added = add_template_to_today(t.id)
+        if added and activity is not None:
+            created.append(activity)
+        else:
             skipped.append(t.id)
-            continue
-        created.append(create_activity(_template_to_activity_input(t)))
     return created, skipped
 
 
