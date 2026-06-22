@@ -10,10 +10,11 @@
    ============================================================ */
 import { useState, useEffect, useCallback } from "react";
 import { useFinance, driftLabel } from "@/lib/useFinance";
+import { useFinanceHistory } from "@/lib/useFinanceHistory";
 import { useSafeRouter } from "@/lib/useNav";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { LoadErrorShell } from "@/components/LoadErrorShell";
-import { EquityCurve } from "@/components/EquityCurve";
+import { EquityCurveView } from "@/components/EquityCurve";
 import { fmtUSD, fmtSign, fmtPct, relativeTime, deltaGlyph } from "@/lib/format";
 import { apiBase, getCryptoBasis, setCryptoBasis } from "@/lib/api";
 import { spark } from "@/lib/spark";
@@ -211,7 +212,32 @@ function CryptoBasisRow({ onSaved }: { onSaved?: () => void }) {
 
 export default function FinancePage() {
   const { data, status, errMsg, warning, reload } = useFinance();
+  // #143-F1 — lift the equity-curve hook so the KPI tiles + the curve paint TOGETHER on
+  // the FIRST load (no stagger where the curve is drawn but the KPIs are still skeleton).
+  // The curve's data is ~always instant (stored rows) while the finance path is slower
+  // cold; gating the body on BOTH-initially-ready removes the perceived split-paint.
+  const history = useFinanceHistory();
   const router = useSafeRouter();
+
+  // First-paint latch: once BOTH finance + history have been ready ONCE, the body stays
+  // mounted. The range toggle inside the curve re-fetches history (status→loading) but
+  // must NOT re-gate the whole page — so we latch on the INITIAL readiness only.
+  const [historyFirstReady, setHistoryFirstReady] = useState(false);
+  useEffect(() => {
+    // history "ready" (data) OR "error" both count as "done waiting" for the first paint —
+    // a history error must not pin the whole finance page on loading forever; the curve
+    // renders its OWN error state inside the panel.
+    if (history.status === "ready" || history.status === "error") setHistoryFirstReady(true);
+  }, [history.status]);
+
+  // Combined gate for the shared shell: keep showing the finance loading hint until the
+  // finance fetch is ready AND the curve's first fetch has settled → they appear as one.
+  // Finance error still shows the page error; history error after first paint is the
+  // curve's own concern (handled in <EquityCurveView>), NOT the page.
+  const gateStatus =
+    status === "error" ? "error"
+    : status === "loading" || !historyFirstReady ? "loading"
+    : status; // "ready"
 
   const allocations = data.allocations ?? [];
 
@@ -226,7 +252,7 @@ export default function FinancePage() {
   // copy + testids + section wrapper are passed verbatim so the output is byte-identical.
   return (
     <LoadErrorShell
-      status={status}
+      status={gateStatus}
       sectionClassName="view"
       dataScreen="S5"
       loadingTestid="finance-loading"
@@ -275,8 +301,11 @@ export default function FinancePage() {
         />
       </div>
 
-      {/* FE-3: portfolio value over time (equity curve from GET /finance/history). */}
-      <EquityCurve />
+      {/* FE-3: portfolio value over time (equity curve from GET /finance/history).
+          #143-F1: the page owns the history hook (lifted above) so the curve paints
+          together with the KPIs on first load; the range toggle inside still re-fetches
+          locally without re-gating the page. */}
+      <EquityCurveView history={history} />
 
       {/* Allocation / P&L per channel — backend drift (render-only), click→S6 */}
       <div className="panel" data-testid="finance-allocation">

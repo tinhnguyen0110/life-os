@@ -13,7 +13,7 @@
    broken/NaN chart; a single point → a flat honest line + dot; API error → retry.
    ============================================================ */
 import { useMemo, useRef, useState } from "react";
-import { useFinanceHistory, RANGE_DAYS, type RangeDays } from "@/lib/useFinanceHistory";
+import { useFinanceHistory, RANGE_DAYS, type RangeDays, type UseFinanceHistory } from "@/lib/useFinanceHistory";
 import { buildScale, linePoints, areaPath, xAt, yAt, indexAtX } from "@/lib/chart-geometry";
 import { fmtUSD, deltaGlyph } from "@/lib/format";
 
@@ -27,9 +27,23 @@ function dayLabel(day: string): string {
   return `${m[3]}/${m[2]}`;
 }
 
+/**
+ * Self-fetching EquityCurve (default) — owns its own useFinanceHistory.
+ * #143-F1: the finance PAGE coordinates the FIRST paint (KPIs + curve appear together
+ * under one loading gate) by lifting the history hook and rendering <EquityCurveView>
+ * with it. This wrapper keeps the standalone/self-fetch usage (+ the existing test)
+ * working unchanged — the range toggle re-fetch stays SELF-contained (it must NOT
+ * re-gate the whole page, only this panel).
+ */
 export function EquityCurve() {
-  const { points, status, errMsg, warning, values, days, setDays, reload, snapshotToday, snapshotting } =
-    useFinanceHistory();
+  return <EquityCurveView history={useFinanceHistory()} />;
+}
+
+/** Presentational equity curve — takes the history hook result as a prop so the caller
+ *  controls the fetch (the finance page passes its lifted hook → one fetch, coordinated
+ *  first paint). The range toggle still calls `history.setDays` → re-fetch stays local. */
+export function EquityCurveView({ history }: { history: UseFinanceHistory }) {
+  const { points, status, errMsg, warning, values, days, setDays, reload, snapshotToday, snapshotting } = history;
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
