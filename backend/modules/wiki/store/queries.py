@@ -193,11 +193,16 @@ def notes_with_tag(tag: str) -> list[sqlite3.Row]:
 
 
 def fleeting_notes() -> list[sqlite3.Row]:
-    """Notes with status='fleeting', oldest→newest (the inbox)."""
+    """LIVE notes with status='fleeting', oldest→newest (the triage inbox). B-T2: + ``deleted_at IS
+    NULL`` (the live-filter the query was MISSING — the sibling live queries all_notes/count_notes/
+    count_by_status all have it). Without it the inbox counted SOFT-DELETED fleeting notes (63 vs
+    byStatus.fleeting 34) — irreconcilable to a user/agent. #94: soft-deleted notes hide from the
+    inbox, same as the tree/search."""
     conn = db.get_conn()
     with _lock:
         return conn.execute(
-            "SELECT * FROM wiki_notes WHERE status = 'fleeting' ORDER BY created ASC, id ASC"
+            "SELECT * FROM wiki_notes WHERE status = 'fleeting' AND deleted_at IS NULL "
+            "ORDER BY created ASC, id ASC"
         ).fetchall()
 
 
