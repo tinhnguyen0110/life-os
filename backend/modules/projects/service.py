@@ -32,7 +32,13 @@ from store import md_store
 
 from . import reader
 from .reader import slug
-from .schema import ProjectAbandonInput, ProjectDevStat, ProjectRegisterInput, ProjectStatus
+from .schema import (
+    ProjectAbandonInput,
+    ProjectDevStat,
+    ProjectRegisterInput,
+    ProjectSource,
+    ProjectStatus,
+)
 
 logger = logging.getLogger("life-os.projects.service")
 
@@ -107,15 +113,58 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # Tracked-project discovery (config built-ins + registered status.md dirs)      #
 # --------------------------------------------------------------------------- #
-def _tracked_repos() -> dict[str, str]:
-    """id -> repo-path for ALL tracked projects: config built-ins + registered.
+def _auto_repos() -> dict[str, str]:
+    """PROJECTS-UNIFY T2 (#113): auto-discovered repos under DEV_TRACING_ROOTS.
 
-    Built-ins come from ``settings.project_repos``. Registered projects are
-    ``projects/<id>/status.md`` dirs whose front-matter carries a ``repo:``
-    pointer (written by register_project). Registered entries override built-ins
-    on id collision (the human file is the more recent source of truth).
+    id=slug(basename) -> abs repo path, for every .git repo dev_activity scans.
+    REUSES dev_activity's own scan helpers (lazy-imported to avoid a
+    projects↔dev_activity import cycle — the #112 precedent) so the auto ids are
+    EXACTLY the repos dev_activity tracks → they slug-join #112 correctly and
+    collide-correctly with registered/config ids.
+
+    DEV_TRACING_ROOTS unset → {} (backward-compat: the list is config+registered,
+    the pre-#113 behavior, unchanged). Fail-soft: a discovery error → debug-log +
+    skip that root, never crashes project discovery.
     """
-    repos: dict[str, str] = dict(settings.project_repos or {})
+    out: dict[str, str] = {}
+    try:
+        from modules.dev_activity import service as dev_service
+        for root in dev_service.scan_roots():
+            for repo_path in dev_service._find_repos(root):  # noqa: SLF001 — DRY: the one scan impl
+                pid = slug(Path(repo_path).name)
+                if not pid:
+                    continue
+                # first-wins within auto (deterministic by sorted roots/repos);
+                # cross-source precedence is handled by the overlay order in _tracked_repos.
+                out.setdefault(pid, repo_path)
+    except Exception as exc:  # discovery must never crash the project list
+        logger.debug("auto-discover (DEV_TRACING_ROOTS) skipped: %s", exc)
+    return out
+
+
+def _tracked_repos() -> dict[str, tuple[str, "ProjectSource"]]:
+    """id -> (repo-path, source) for ALL tracked projects, 3-source merged.
+
+    Sources, lowest→highest precedence (a later overlay wins an id collision):
+      1. auto       — .git repos under DEV_TRACING_ROOTS (#113, fallback discovery)
+      2. config     — ``settings.project_repos`` built-ins
+      3. registered — ``projects/<id>/status.md`` dirs with a ``repo:`` pointer (manual)
+
+    So registered status.md > config > auto: the human file / config is the more
+    reliable truth; an auto entry only fills an id no human/config source claims.
+    An auto entry shadowed by config/registered is dropped silently (debug, NOT a
+    warning — NG5; this is a normal handled case, like the stale-path→config
+    fallback below). DEV_TRACING_ROOTS unset → auto is {} → behavior == pre-#113.
+    """
+    # 1. auto (lowest) — seed, then config + registered overlay on top.
+    repos: dict[str, tuple[str, "ProjectSource"]] = {
+        pid: (path, "auto") for pid, path in _auto_repos().items()
+    }
+    # 2. config built-ins (override auto on collision).
+    for pid, path in (settings.project_repos or {}).items():
+        if pid in repos and repos[pid][1] == "auto":
+            logger.debug("project %r: config built-in shadows the auto-discovered repo", pid)
+        repos[pid] = (path, "config")
     projects_dir = settings.projects_dir
     if projects_dir.is_dir():
         for child in sorted(projects_dir.iterdir()):
@@ -165,20 +214,38 @@ def _tracked_repos() -> dict[str, str]:
                     # warning-worthy event. At WARNING it fired 5× on every projects_list/
                     # brief/life_brief call, polluting MCP stderr (which precedes the JSON
                     # the agent reads). The fallback still works; it's just silent now.
+                    # Keep the EXISTING source (config/auto) since we keep that path —
+                    # we did NOT switch to the registered pointer (it's gone).
                     logger.debug(
                         "project %r status.md repo path %r missing — falling back to config path %r",
-                        pid, repo, repos[pid],
+                        pid, repo, repos[pid][0],
                     )
                 else:
-                    repos[pid] = repo
+                    # A real registered status.md with a live repo: pointer — registered wins.
+                    repos[pid] = (repo, "registered")
             elif pid not in repos:
                 # status.md with no repo pointer → notes-only project (no repo).
-                repos[pid] = str(child)
+                # It's a registered project (it has a status.md), just repo-less.
+                repos[pid] = (str(child), "registered")
     return repos
+
+
+def _tracked_repo_paths() -> dict[str, str]:
+    """id -> repo-path only (drops the source tag), for callers that don't need source
+    (#112 dev_stat_for_project, abandon/restore/hide lookups). One source-of-truth via
+    _tracked_repos() so the 3-source merge + precedence stays in ONE place."""
+    return {pid: path for pid, (path, _src) in _tracked_repos().items()}
 
 
 def _is_abandoned(meta: dict) -> bool:
     return bool(meta.get("abandoned") is True)
+
+
+def _is_hidden(meta: dict) -> bool:
+    """#113: the 'not-interested' flag. INDEPENDENT of abandoned (a dead project w/ a
+    lesson) and of health=='dead' (git-derived) — abandon-orthogonal-to-health. A hidden
+    project is excluded from list_projects but is NOT in the graveyard (that's abandoned)."""
+    return bool(meta.get("hidden") is True)
 
 
 # --------------------------------------------------------------------------- #
@@ -257,15 +324,19 @@ def _invalidate(project_id: str | None = None) -> None:
         _STATUS_CACHE.pop(project_id, None)
 
 
-def read_one(project_id: str, repo_path: str) -> ProjectStatus:
+def read_one(project_id: str, repo_path: str, source: ProjectSource = "config") -> ProjectStatus:
     """Build a ProjectStatus for one tracked project (meta + read-only git).
 
     The reader derives id from the repo folder name; we override it with the
     canonical tracked id (config key / status.md dir name) so list/get are
     addressable by a stable id even if the folder name differs from the slug.
 
-    Cached by a cheap git-ref + status.md signature: an unchanged repo returns the
-    prior ProjectStatus without spawning any git subprocess (the app's hottest cost).
+    #113: stamps ``source`` (config|registered|auto — passed by the caller from the
+    3-source _tracked_repos merge) and ``hidden`` (from status.md meta) onto the status.
+
+    Cached by a cheap git-ref + status.md signature (which INCLUDES status.md mtime →
+    a hide/unhide write invalidates it): an unchanged repo returns the prior
+    ProjectStatus without spawning any git subprocess (the app's hottest cost).
     """
     key = _cache_key(project_id, repo_path)
     if key is not None:
@@ -275,29 +346,35 @@ def read_one(project_id: str, repo_path: str) -> ProjectStatus:
 
     meta = _load_meta(project_id)
     status = reader.read_project(repo_path, meta=meta)
+    updates: dict[str, Any] = {"source": source, "hidden": _is_hidden(meta)}
     if status.id != project_id:
-        status = status.model_copy(update={"id": project_id})
+        updates["id"] = project_id
+    status = status.model_copy(update=updates)
 
     if key is not None:
         _STATUS_CACHE[project_id] = (key, status)
     return status
 
 
-def list_projects() -> tuple[list[ProjectStatus], list[str]]:
-    """All tracked, NON-abandoned projects as ProjectStatus + collected warnings.
+def list_projects(include_hidden: bool = False) -> tuple[list[ProjectStatus], list[str]]:
+    """Tracked projects as ProjectStatus + collected warnings.
 
-    Never raises: a single bad project yields a dead status + a warning string;
-    abandoned projects are excluded (they live in the graveyard, S4). Returns
-    ([], []) when nothing is tracked.
+    Excludes BOTH abandoned (graveyard, S4) AND hidden (#113 not-interested) — two
+    INDEPENDENT flags. ``include_hidden=True`` keeps hidden projects in the result (the
+    view to un-hide from); abandoned stays excluded regardless (the graveyard is its
+    own surface). Never raises: a single bad project yields a dead status + a warning
+    string. Returns ([], []) when nothing is tracked.
     """
     statuses: list[ProjectStatus] = []
     warnings: list[str] = []
-    for project_id, repo_path in sorted(_tracked_repos().items()):
+    for project_id, (repo_path, source) in sorted(_tracked_repos().items()):
         meta = _load_meta(project_id)
         if _is_abandoned(meta):
             continue  # excluded from the default list (graveyard only)
+        if _is_hidden(meta) and not include_hidden:
+            continue  # #113: not-interested — excluded unless explicitly requested
         try:
-            status = read_one(project_id, repo_path)
+            status = read_one(project_id, repo_path, source)
         except Exception as exc:  # last-resort: reader is fail-open, but never crash list
             logger.error("unexpected error reading project %r: %s", project_id, exc)
             warnings.append(f"{project_id}: unexpected read error ({exc})")
@@ -323,10 +400,11 @@ def get_project(project_id: str) -> ProjectStatus | None:
     """
     repos = _tracked_repos()
     key = slug(project_id) if project_id else ""
-    repo_path = repos.get(key)
-    if repo_path is None:
+    entry = repos.get(key)
+    if entry is None:
         return None
-    return read_one(key, repo_path)
+    repo_path, source = entry
+    return read_one(key, repo_path, source)
 
 
 def get_context(project_id: str, notes_limit: int = 10) -> dict[str, Any] | None:
@@ -451,12 +529,12 @@ def list_abandoned() -> tuple[list[tuple[ProjectStatus, dict]], list[str]]:
     """
     out: list[tuple[ProjectStatus, dict]] = []
     warnings: list[str] = []
-    for project_id, repo_path in sorted(_tracked_repos().items()):
+    for project_id, (repo_path, source) in sorted(_tracked_repos().items()):
         meta = _load_meta(project_id)
         if not _is_abandoned(meta):
             continue
         try:
-            status = read_one(project_id, repo_path)
+            status = read_one(project_id, repo_path, source)
         except Exception as exc:  # fail-open per project
             logger.error("graveyard: reading abandoned project %r failed: %s", project_id, exc)
             warnings.append(f"{project_id}: abandoned project unreadable ({exc})")
@@ -502,7 +580,7 @@ def register_project(body: ProjectRegisterInput) -> ProjectStatus:
     md_store.write_file(
         _status_md_rel(project_id), _dump_front_matter(meta), f"register project {project_id}"
     )
-    return read_one(project_id, str(repo_path))
+    return read_one(project_id, str(repo_path), "registered")
 
 
 def abandon_project(project_id: str, body: ProjectAbandonInput) -> ProjectStatus | None:
@@ -512,9 +590,10 @@ def abandon_project(project_id: str, body: ProjectAbandonInput) -> ProjectStatus
     abandonedProgress. get_project still returns it; list_projects excludes it.
     """
     repos = _tracked_repos()
-    repo_path = repos.get(project_id)
-    if repo_path is None:
+    entry = repos.get(project_id)
+    if entry is None:
         return None
+    repo_path, source = entry
 
     content = md_store.read(_status_md_rel(project_id))
     meta, mbody = _split_doc(content)
@@ -537,7 +616,7 @@ def abandon_project(project_id: str, body: ProjectAbandonInput) -> ProjectStatus
     md_store.write_file(
         _status_md_rel(project_id), _dump_front_matter(meta, mbody), f"abandon project {project_id}"
     )
-    return read_one(project_id, repo_path)
+    return read_one(project_id, repo_path, source)
 
 
 def restore_project(project_id: str) -> ProjectStatus | None:
@@ -550,9 +629,10 @@ def restore_project(project_id: str) -> ProjectStatus | None:
     only when something was actually cleared.
     """
     repos = _tracked_repos()
-    repo_path = repos.get(project_id)
-    if repo_path is None:
+    entry = repos.get(project_id)
+    if entry is None:
         return None
+    repo_path, source = entry
 
     content = md_store.read(_status_md_rel(project_id))
     meta, mbody = _split_doc(content)
@@ -562,14 +642,14 @@ def restore_project(project_id: str) -> ProjectStatus | None:
     abandon_keys = ("abandoned", "abandonedReason", "abandonedAt", "abandonedProgress", "abandonedUsers")
     if not _is_abandoned(meta):
         # Not abandoned → no-op (idempotent restore). Return current status.
-        return read_one(project_id, repo_path)
+        return read_one(project_id, repo_path, source)
     for k in abandon_keys:
         meta.pop(k, None)
     meta.setdefault("repo", repo_path)
     md_store.write_file(
         _status_md_rel(project_id), _dump_front_matter(meta, mbody), f"restore project {project_id}"
     )
-    return read_one(project_id, repo_path)
+    return read_one(project_id, repo_path, source)
 
 
 def refresh_project(project_id: str) -> ProjectStatus | None:
@@ -578,9 +658,10 @@ def refresh_project(project_id: str) -> ProjectStatus | None:
     Same code path the wiki-refresh routine (T3) calls. One md_store commit.
     """
     repos = _tracked_repos()
-    repo_path = repos.get(project_id)
-    if repo_path is None:
+    entry = repos.get(project_id)
+    if entry is None:
         return None
+    repo_path, source = entry
 
     content = md_store.read(_status_md_rel(project_id))
     meta, mbody = _split_doc(content)
@@ -590,4 +671,67 @@ def refresh_project(project_id: str) -> ProjectStatus | None:
         _status_md_rel(project_id), _dump_front_matter(meta, mbody), f"refresh project {project_id}"
     )
     _invalidate(project_id)  # explicit refresh = force fresh git read, never serve cache
-    return read_one(project_id, repo_path)
+    return read_one(project_id, repo_path, source)
+
+
+def hide_project(project_id: str) -> ProjectStatus | None:
+    """#113: mark a project NOT-INTERESTED → excluded from list_projects (still in
+    ?include=hidden). None if id untracked (router → 404). Idempotent: hiding an
+    already-hidden project is a 200 no-op (no write).
+
+    INDEPENDENT of abandoned (a hidden project is NOT in the graveyard). Scoped-write:
+    writes ONLY this id's status.md — for an auto-repo with NO status.md it creates a
+    MINIMAL one ({hidden:true, repo:<path>}); for an existing status.md it sets the flag,
+    preserving all other front-matter + the body. NO status.md is created for any OTHER
+    repo (no spam — per scoped-write discipline)."""
+    repos = _tracked_repos()
+    entry = repos.get(slug(project_id) if project_id else "")
+    if entry is None:
+        return None
+    key = slug(project_id)
+    repo_path, source = entry
+
+    content = md_store.read(_status_md_rel(key))  # None for an auto-repo with no status.md
+    meta, mbody = _split_doc(content)
+    if _is_hidden(meta):
+        return read_one(key, repo_path, source)  # idempotent no-op (no write)
+    meta["hidden"] = True
+    # Persist the repo pointer so an auto-repo stays resolvable after we write its status.md
+    # (it now has one → it's a 'registered' dir on disk, but source stays whatever it was
+    # discovered as until the next _tracked_repos read; the repo: pointer keeps it findable).
+    meta.setdefault("repo", repo_path)
+    md_store.write_file(
+        _status_md_rel(key), _dump_front_matter(meta, mbody), f"hide project {key}"
+    )
+    _invalidate(key)
+    # re-read source from the merge (creating status.md may reclassify an auto-repo as
+    # registered) so the returned status reports the now-true source.
+    new_entry = _tracked_repos().get(key)
+    new_source = new_entry[1] if new_entry else source
+    return read_one(key, repo_path, new_source)
+
+
+def unhide_project(project_id: str) -> ProjectStatus | None:
+    """#113: clear the not-interested flag → the project rejoins list_projects. None if id
+    untracked (router → 404). Idempotent: unhiding a NOT-hidden project is a 200 no-op (no
+    write). Scoped-write: clears ONLY this id's status.md `hidden` key, preserving everything
+    else (we do NOT delete the status.md even if it becomes minimal — a written file is a
+    human record)."""
+    repos = _tracked_repos()
+    entry = repos.get(slug(project_id) if project_id else "")
+    if entry is None:
+        return None
+    key = slug(project_id)
+    repo_path, source = entry
+
+    content = md_store.read(_status_md_rel(key))
+    meta, mbody = _split_doc(content)
+    if not _is_hidden(meta):
+        return read_one(key, repo_path, source)  # idempotent no-op (no write)
+    meta.pop("hidden", None)
+    meta.setdefault("repo", repo_path)
+    md_store.write_file(
+        _status_md_rel(key), _dump_front_matter(meta, mbody), f"unhide project {key}"
+    )
+    _invalidate(key)
+    return read_one(key, repo_path, source)

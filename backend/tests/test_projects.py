@@ -619,7 +619,13 @@ def api_client(tmp_path_factory):
     without teardown leaks global state across the session).
     """
     import importlib
+    import os
     tmp = tmp_path_factory.mktemp("projapi")
+
+    # #113: this module-scoped fixture does NOT use conftest.isolated_paths, so it must
+    # mirror the DEV_TRACING_ROOTS neutralization itself — else a runner with the env set
+    # auto-discovers real repos into this fixture's /projects, breaking its id assertions.
+    _orig_roots = os.environ.pop("DEV_TRACING_ROOTS", None)
 
     from core import config
     # Save originals so teardown restores global settings state exactly.
@@ -651,6 +657,8 @@ def api_client(tmp_path_factory):
     config.settings.db_path = _orig_db_path
     config.settings.scheduler_enabled = _orig_scheduler
     config.settings.project_repos = _orig_repos
+    if _orig_roots is not None:  # restore DEV_TRACING_ROOTS exactly (#113)
+        os.environ["DEV_TRACING_ROOTS"] = _orig_roots
     db_mod.close_db()
 
 

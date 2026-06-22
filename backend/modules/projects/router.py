@@ -49,9 +49,12 @@ def _attach_routines(status):
 
 
 @router.get("")
-def list_projects():
-    """All tracked, non-abandoned projects + a health summary. EXCLUDES abandoned."""
-    statuses, warnings = service.list_projects()
+def list_projects(include: str | None = None):
+    """All tracked projects + a health summary. EXCLUDES abandoned (graveyard) AND hidden
+    (#113 not-interested) by default. ``?include=hidden`` ALSO returns hidden projects (the
+    view to un-hide from); abandoned stays in the graveyard regardless."""
+    include_hidden = include == "hidden"
+    statuses, warnings = service.list_projects(include_hidden=include_hidden)
     statuses = [_attach_routines(s) for s in statuses]
     data = {
         "projects": [s.model_dump() for s in statuses],
@@ -149,6 +152,32 @@ def restore_project(project_id: str):
     if status is None:
         return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
                                     hint="GET /projects for valid ids")
+    return ok(data=_attach_routines(status).model_dump())
+
+
+@router.post("/{project_id}/hide")
+def hide_project(project_id: str):
+    """#113: mark a project NOT-INTERESTED → excluded from default /projects (still in
+    ?include=hidden). 404 if unknown. Idempotent: hiding an already-hidden project is a 200
+    no-op. INDEPENDENT of abandon (a hidden project is NOT in the graveyard). Writes only
+    this id's status.md (creates a minimal one for an auto-repo with none).
+    """
+    status = service.hide_project(project_id)
+    if status is None:
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects for valid ids")
+    return ok(data=_attach_routines(status).model_dump())
+
+
+@router.post("/{project_id}/unhide")
+def unhide_project(project_id: str):
+    """#113: clear the not-interested flag → the project rejoins default /projects.
+    404 if unknown. Idempotent: unhiding a not-hidden project is a 200 no-op.
+    """
+    status = service.unhide_project(project_id)
+    if status is None:
+        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
+                                    hint="GET /projects (?include=hidden) for valid ids")
     return ok(data=_attach_routines(status).model_dump())
 
 

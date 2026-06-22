@@ -18,6 +18,13 @@ from pydantic import BaseModel, Field
 # The four health buckets, derived from days-since-last-commit (see reader).
 Health = Literal["act", "slow", "stall", "dead"]
 
+# PROJECTS-UNIFY T2 (#113): where a project's repo entry came from.
+#   config     = a settings.project_repos built-in
+#   registered = a projects/<id>/status.md with a repo: pointer (manual register)
+#   auto       = auto-discovered under DEV_TRACING_ROOTS (a .git repo, no manual register)
+# Precedence on id collision: registered > config > auto (human/config truth wins).
+ProjectSource = Literal["config", "registered", "auto"]
+
 
 class ProjectMetrics(BaseModel):
     """Per-project metrics sub-shape. git-derived where possible; stars/testPass
@@ -55,6 +62,16 @@ class ProjectStatus(BaseModel):
     metrics: ProjectMetrics = Field(default_factory=ProjectMetrics)  # type: ignore[arg-type]
     routines: list[str] = Field(default_factory=list, description="routine ids touching this project")
     lastAuto: str | None = Field(None, description="ISO-8601 UTC of last automation touch, else None")
+    source: ProjectSource = Field(
+        "config",
+        description="repo origin: config|registered|auto (#113). read_one always sets it explicitly; "
+        "the 'config' default only applies to direct construction.",
+    )
+    hidden: bool = Field(
+        False,
+        description="not-interested flag (#113), set via /hide. INDEPENDENT of abandoned (a dead "
+        "project w/ a lesson) and of health=='dead' (git-derived). list_projects excludes hidden.",
+    )
 
 
 class RepoDevStat(BaseModel):

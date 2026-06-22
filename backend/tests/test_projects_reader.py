@@ -503,8 +503,9 @@ def test_stale_status_md_repo_path_falls_back_to_config(monkeypatch, active_repo
         "stale path",
     )
     tracked = service._tracked_repos()
-    # fell back to the config path, NOT the stale status.md path
-    assert tracked["active"] == str(active_repo), f"should fall back to config, got {tracked['active']}"
+    # fell back to the config path, NOT the stale status.md path.
+    # #113: _tracked_repos values are now (path, source) tuples — read [0] for the path.
+    assert tracked["active"][0] == str(active_repo), f"should fall back to config, got {tracked['active']}"
     # and the project reads with REAL health (act), not dead
     st = service.get_project("active")
     assert st is not None and st.health == "act"
@@ -535,7 +536,7 @@ def test_stale_path_fallback_logs_at_debug_not_warning(monkeypatch, active_repo,
     assert any("falling back to config path" in r.message and r.levelno == logging.DEBUG
                for r in caplog.records), "fallback should log at DEBUG level"
     # The fallback still RESOLVES the project via the config path (behavior unchanged).
-    assert tracked["active"] == str(active_repo)
+    assert tracked["active"][0] == str(active_repo)  # #113: (path, source) tuple
 
 
 def test_stale_status_md_path_kept_when_not_in_config(monkeypatch, isolated_paths):
@@ -549,7 +550,7 @@ def test_stale_status_md_path_kept_when_not_in_config(monkeypatch, isolated_path
         "orphan stale",
     )
     tracked = service._tracked_repos()
-    assert tracked["orphan"] == "/tmp/gone-orphan-path"  # no fallback available
+    assert tracked["orphan"][0] == "/tmp/gone-orphan-path"  # #113: (path, source); no fallback available
 
 
 def test_hidden_dirs_are_not_projects(monkeypatch, isolated_paths):

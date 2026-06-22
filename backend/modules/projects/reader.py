@@ -224,6 +224,12 @@ def _dead_status(
         metrics=ProjectMetrics(commits=0, branch="", lang=None, testPass=None, stars=None),
         routines=[],
         lastAuto=_meta_last_auto(meta),
+        # #113: source/hidden have runtime defaults, but no pydantic mypy plugin → mypy reads
+        # them as REQUIRED [call-arg] (the RepoDevStat gotcha). read_one() overrides source from
+        # the _tracked_repos merge + hidden from meta on every list/get path; this literal only
+        # affects a direct reader call → the schema default is the correct value here.
+        source="config",
+        hidden=False,
     )
 
 
@@ -306,4 +312,8 @@ def read_project(repo_path: str, *, meta: dict | None = None) -> ProjectStatus:
         metrics=metrics,
         routines=[],
         lastAuto=_meta_last_auto(meta),
+        # #113: schema-default literals (no pydantic mypy plugin → read as required). read_one()
+        # overrides source from the _tracked_repos merge + hidden from meta on list/get paths.
+        source="config",
+        hidden=False,
     )

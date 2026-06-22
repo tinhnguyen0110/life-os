@@ -42,6 +42,12 @@ def isolated_paths(tmp_path: Path, monkeypatch):
     # ProjectStatus can't be served for a same-id project in a fresh tmp repo.
     from modules.projects import service as _proj_service
     _proj_service._STATUS_CACHE.clear()
+    # #113: projects now AUTO-DISCOVER repos under DEV_TRACING_ROOTS. Neutralize it by
+    # default so the project list is deterministic (config+registered only) regardless of
+    # the RUNNER's env — without this, a dev/container shell with DEV_TRACING_ROOTS set
+    # would leak real auto-repos into every isolated projects test. A test that WANTS
+    # auto-discovery (test_projects_unify) re-sets it via monkeypatch.setenv (layers on top).
+    monkeypatch.delenv("DEV_TRACING_ROOTS", raising=False)
     # market CoinGecko TTL cache is process-global — clear so a prior test's feed
     # can't leak into a test that monkeypatches httpx.get differently.
     from modules.market import reader as _mkt_reader
