@@ -914,6 +914,9 @@ export interface WikiNoteCreateInput {
   author?: string;
   /** command_bar | quick_add | mcp_agent | daily_note (free-form; default quick_add). */
   captureSource?: string;
+  /** #127-W3A — the virtual folder this note is created in ("" = root). The BE
+   *  NoteCreateInput accepts it (verified live). Lets "＋ Note mới" land in a folder. */
+  folder?: string;
 }
 
 /** PUT /wiki/notes/{id} (+ POST .../refine) body — mirrors `NoteUpdateInput`.

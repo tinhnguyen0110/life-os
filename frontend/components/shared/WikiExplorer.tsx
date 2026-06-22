@@ -22,11 +22,15 @@ import { useWikiTree } from "@/lib/useWiki";
 import { Icon } from "@/lib/icons";
 import {
   ApiError, createWikiFolder, deleteWikiFolder, moveWikiFolder, importWiki,
+  createWikiNote, updateWikiNote,
 } from "@/lib/api";
 import type { WikiTreeNode, WikiTreeNote, WikiImportResult } from "@/lib/types";
 
 const EMPTY_NODE: WikiTreeNode = { name: "", path: "", folders: [], notes: [] };
 const ALLOWED_EXT = [".md", ".txt"]; // mirror the BE _ALLOWED_EXT (client-side guard too)
+
+/** the per-folder ⋯ ops (#127-W3 + #127-W3A import-here / note-here). */
+type FolderOpKind = "new-sub" | "rename" | "delete" | "import-here" | "new-note";
 
 /** All folder paths in the (backend-nested) tree — for the move-to-folder picker. */
 function allFolderPaths(node: WikiTreeNode, out: string[] = []): string[] {
@@ -69,7 +73,7 @@ function FolderNode({
   openFolders: Set<string>; toggle: (path: string) => void;
   activeId: number | null;
   onOpen: (id: number) => void; onMove: (note: WikiTreeNote) => void;
-  onFolderOp: (op: "new-sub" | "rename" | "delete", node: WikiTreeNode) => void;
+  onFolderOp: (op: FolderOpKind, node: WikiTreeNode) => void;
 }) {
   const isOpen = openFolders.has(node.path);
   const childFolders = [...node.folders].sort((a, b) => a.name.localeCompare(b.name));
@@ -95,6 +99,14 @@ function FolderNode({
             aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`wex-ops-toggle-${node.path}`} title="Thao tác thư mục">⋯</button>
           {menuOpen && (
             <div className="wex-ops-menu" role="menu" data-testid={`wex-ops-menu-${node.path}`}>
+              {/* #127-W3A — add a file/note SCOPED to this folder */}
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-note", node); }} data-testid={`wex-op-newnote-${node.path}`}>
+                ＋ Note mới
+              </button>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("import-here", node); }} data-testid={`wex-op-importhere-${node.path}`}>
+                📥 Import vào đây
+              </button>
+              <div className="wex-ops-sep" aria-hidden="true" />
               <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-sub", node); }} data-testid={`wex-op-newsub-${node.path}`}>
                 ＋ Thư mục con mới
               </button>
@@ -157,13 +169,15 @@ export function WikiExplorer() {
   const [moveErr, setMoveErr] = useState("");
   const [moveBusy, setMoveBusy] = useState(false);
 
-  // #127-W3 — folder-op state (a single op modal driven by `folderOp`).
-  type FolderOp = { kind: "new-root" | "new-sub" | "rename" | "delete"; node: WikiTreeNode | null };
+  // #127-W3 — folder-op state (a single op modal driven by `folderOp`). #127-W3A adds
+  // "new-note" (create a note IN a folder).
+  type FolderOp = { kind: "new-root" | "new-sub" | "rename" | "delete" | "new-note"; node: WikiTreeNode | null };
   const [folderOp, setFolderOp] = useState<FolderOp | null>(null);
-  const [opVal, setOpVal] = useState("");           // the new-folder name / new path
+  const [opVal, setOpVal] = useState("");           // the new-folder name / new path / new-note title
   const [opBusy, setOpBusy] = useState(false);
   const [opErr, setOpErr] = useState("");
-  const [showImport, setShowImport] = useState(false);
+  // #127-W3A — the import modal carries a TARGET folder ("" = root). null = closed.
+  const [importTarget, setImportTarget] = useState<string | null>(null);
 
   async function doMove(folder: string) {
     if (!moving) return;
@@ -178,10 +192,15 @@ export function WikiExplorer() {
     }
   }
 
-  function startFolderOp(op: "new-sub" | "rename" | "delete", node: WikiTreeNode) {
-    setFolderOp({ kind: op, node });
+  function startFolderOp(op: FolderOpKind, node: WikiTreeNode) {
     setOpErr("");
-    // prefill: rename → the current path; new-sub → empty (just the child name).
+    if (op === "import-here") {
+      // #127-W3A — open the import modal pre-targeted to THIS folder.
+      setImportTarget(node.path);
+      return;
+    }
+    setFolderOp({ kind: op, node });
+    // prefill: rename → the current path; new-sub/new-note → empty.
     setOpVal(op === "rename" ? node.path : "");
   }
   function startNewRoot() {
@@ -209,6 +228,16 @@ export function WikiExplorer() {
         if (!to) { setOpErr("Nhập đường dẫn mới."); setOpBusy(false); return; }
         if (to === folderOp.node.path) { setFolderOp(null); setOpBusy(false); return; }
         await moveWikiFolder(folderOp.node.path, to);
+      } else if (folderOp.kind === "new-note" && folderOp.node) {
+        // #127-W3A — create a NEW note IN this folder (the BE NoteCreateInput takes folder).
+        const title = opVal.trim();
+        if (!title) { setOpErr("Nhập tiêu đề note."); setOpBusy(false); return; }
+        const res = await createWikiNote({ title, content: "", folder: folderOp.node.path });
+        reload();
+        setFolderOp(null); setOpVal("");
+        if (res?.data?.id != null) router.push(`/wiki/${res.data.id}`); // open the new note
+        setOpBusy(false);
+        return;
       }
       reload(); // 🔴 observe the change via the refreshed tree (the W1 gotcha)
       setFolderOp(null); setOpVal("");
@@ -228,7 +257,7 @@ export function WikiExplorer() {
         <span className="sp" style={{ flex: 1 }} />
         {/* #127-W3 toolbar: new root folder + import */}
         <button type="button" className="wex-tool" onClick={startNewRoot} title="Thư mục mới (gốc)" data-testid="wex-new-folder">＋</button>
-        <button type="button" className="wex-tool" onClick={() => setShowImport(true)} title="Nhập .md/.txt" data-testid="wex-import-open"><Icon name="i-doc" /></button>
+        <button type="button" className="wex-tool" onClick={() => setImportTarget("")} title="Nhập .md/.txt" data-testid="wex-import-open"><Icon name="i-doc" /></button>
         <button type="button" className="wex-refresh" onClick={reload} title="Tải lại cây" data-testid="wex-refresh"><Icon name="i-refresh" /></button>
       </div>
 
@@ -289,12 +318,18 @@ export function WikiExplorer() {
                   {folderOp.kind === "new-root" && "Thư mục mới (gốc)"}
                   {folderOp.kind === "new-sub" && `Thư mục con của “${folderOp.node?.path}”`}
                   {folderOp.kind === "rename" && `Đổi tên / chuyển “${folderOp.node?.path}”`}
+                  {folderOp.kind === "new-note" && `Note mới trong “${folderOp.node?.path}”`}
                 </div>
                 <input
                   className="wex-move-input"
                   value={opVal}
                   onChange={(e) => setOpVal(e.target.value)}
-                  placeholder={folderOp.kind === "new-sub" ? "tên thư mục con (vd: zettel)" : folderOp.kind === "rename" ? "đường dẫn mới (vd: pkm/zettel)" : "tên thư mục (vd: pkm)"}
+                  placeholder={
+                    folderOp.kind === "new-sub" ? "tên thư mục con (vd: zettel)"
+                    : folderOp.kind === "rename" ? "đường dẫn mới (vd: pkm/zettel)"
+                    : folderOp.kind === "new-note" ? "tiêu đề note (vd: Ý tưởng mới)"
+                    : "tên thư mục (vd: pkm)"
+                  }
                   data-testid="wex-op-input"
                   autoFocus
                   onKeyDown={(e) => { if (e.key === "Enter") runFolderOp(); }}
@@ -312,10 +347,13 @@ export function WikiExplorer() {
         </div>
       )}
 
-      {/* #127-W3 — the import modal (file picker + paste, .md/.txt only) */}
-      {showImport && (
+      {/* #127-W3 + W3A — the import modal (file picker + paste, .md/.txt only; #127-W3A:
+          a folder-target picker, default = importTarget). */}
+      {importTarget !== null && (
         <ImportModal
-          onClose={() => setShowImport(false)}
+          target={importTarget}
+          folders={folderPaths}
+          onClose={() => setImportTarget(null)}
           onDone={() => { reload(); }}
         />
       )}
@@ -355,11 +393,20 @@ function MoveForm({
 }
 
 /** #127-W3 — import .md/.txt: a file picker (multi) AND a paste box (filename + content).
- *  Rejects non-.md/.txt client-side; ALSO surfaces the BE per-file agent-error honestly. */
-function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+ *  Rejects non-.md/.txt client-side; ALSO surfaces the BE per-file agent-error honestly.
+ *  #127-W3A — a folder-TARGET picker (default = `target`); imported notes land in that
+ *  folder via the 2-step (import → root, then PUT {folder} per created note — the BE
+ *  import path has no folder param). */
+function ImportModal({
+  target, folders, onClose, onDone,
+}: {
+  target: string; folders: string[];
+  onClose: () => void; onDone: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<WikiImportResult[] | null>(null);
   const [err, setErr] = useState("");
+  const [targetFolder, setTargetFolder] = useState(target); // "" = root
   // paste mode
   const [pasteName, setPasteName] = useState("");
   const [pasteBody, setPasteBody] = useState("");
@@ -376,6 +423,13 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
     try {
       const res = await importWiki({ files });
       setResults(res.data.imported);
+      // #127-W3A — the 2-step: import lands at ROOT, then move each created note into the
+      // target folder (the BE import path has no folder param). Root target → no move.
+      const folder = targetFolder.trim();
+      if (folder) {
+        const created = res.data.imported.filter((r) => r.ok && r.noteId != null);
+        await Promise.all(created.map((r) => updateWikiNote(r.noteId as number, { folder })));
+      }
       if (res.data.createdCount > 0) onDone(); // refresh the tree if anything landed
     } catch (e) {
       setErr(errText(e));
@@ -408,6 +462,15 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
     <div className="wex-move" data-testid="wex-import-modal">
       <div className="wex-move-box" style={{ minWidth: 320 }}>
         <div className="kicker" style={{ marginBottom: 8 }}>Nhập ghi chú (.md / .txt)</div>
+
+        {/* #127-W3A — the folder-TARGET picker (default = the pre-target; "" = root) */}
+        <div style={{ marginBottom: 10 }}>
+          <label className="hint faint" style={{ display: "block", marginBottom: 3 }}>Nhập vào thư mục</label>
+          <select className="wex-move-input" value={targetFolder} onChange={(e) => setTargetFolder(e.target.value)} data-testid="wex-import-folder">
+            <option value="">📁 (gốc / root)</option>
+            {folders.map((f) => <option key={f} value={f}>{f.split("/").join(" / ")}</option>)}
+          </select>
+        </div>
 
         {/* file picker */}
         <div style={{ marginBottom: 10 }}>

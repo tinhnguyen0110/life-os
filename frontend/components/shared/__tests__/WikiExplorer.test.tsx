@@ -7,6 +7,7 @@ const createWikiFolder = vi.fn();
 const deleteWikiFolder = vi.fn();
 const moveWikiFolder = vi.fn();
 const importWiki = vi.fn();
+const createWikiNote = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -18,6 +19,8 @@ vi.mock("@/lib/api", async () => {
     deleteWikiFolder: (...a: unknown[]) => deleteWikiFolder(...a),
     moveWikiFolder: (...a: unknown[]) => moveWikiFolder(...a),
     importWiki: (...a: unknown[]) => importWiki(...a),
+    // #127-W3A — note-in-folder
+    createWikiNote: (...a: unknown[]) => createWikiNote(...a),
   };
 });
 const mockPush = vi.fn();
@@ -309,5 +312,96 @@ describe("#127-W3 WikiExplorer — folder + file ops menu", () => {
     // and the NEW ops toolbar
     expect(screen.getByTestId("wex-new-folder")).toBeInTheDocument();
     expect(screen.getByTestId("wex-import-open")).toBeInTheDocument();
+  });
+});
+
+describe("#127-W3A WikiExplorer — import INTO a folder + new note IN a folder", () => {
+  beforeEach(() => {
+    mockPush.mockReset(); mockPath = "/wiki";
+    createWikiFolder.mockReset(); deleteWikiFolder.mockReset(); moveWikiFolder.mockReset();
+    importWiki.mockReset(); createWikiNote.mockReset(); updateWikiNote.mockReset(); getWikiTree.mockReset();
+  });
+
+  it("🔴 import a .md INTO a folder (modal picker) → import→root then PUT {folder} (the 2-step)", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    importWiki.mockResolvedValue(ok({ imported: [{ filename: "note.md", ok: true, noteId: 50, title: "note", error: null }], createdCount: 1 }));
+    updateWikiNote.mockResolvedValue(ok({}));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-import-open")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-import-open"));
+    // pick the target folder (the picker has root + the existing folders)
+    fireEvent.change(screen.getByTestId("wex-import-folder"), { target: { value: "pkm" } });
+    fireEvent.change(screen.getByTestId("wex-import-paste-name"), { target: { value: "note.md" } });
+    fireEvent.change(screen.getByTestId("wex-import-paste-body"), { target: { value: "# hi" } });
+    fireEvent.click(screen.getByTestId("wex-import-paste-submit"));
+    // step 1: import lands at root
+    await waitFor(() => expect(importWiki).toHaveBeenCalledWith({ files: [{ filename: "note.md", content: "# hi" }] }));
+    // step 2: the created note is MOVED into the target folder (the 2-step)
+    await waitFor(() => expect(updateWikiNote).toHaveBeenCalledWith(50, { folder: "pkm" }));
+  });
+
+  it("import to ROOT (default target) → NO move (the note stays at root)", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    importWiki.mockResolvedValue(ok({ imported: [{ filename: "r.md", ok: true, noteId: 60, title: "r", error: null }], createdCount: 1 }));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-import-open")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-import-open")); // toolbar import → target = root ("")
+    fireEvent.change(screen.getByTestId("wex-import-paste-name"), { target: { value: "r.md" } });
+    fireEvent.change(screen.getByTestId("wex-import-paste-body"), { target: { value: "x" } });
+    fireEvent.click(screen.getByTestId("wex-import-paste-submit"));
+    await waitFor(() => expect(importWiki).toHaveBeenCalled());
+    // root target → no PUT move
+    expect(updateWikiNote).not.toHaveBeenCalled();
+  });
+
+  it("🔴 '📥 Import vào đây' on a folder → opens the import modal PRE-TARGETED to that folder", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-tree")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-ops-toggle-pkm"));
+    fireEvent.click(screen.getByTestId("wex-op-importhere-pkm"));
+    // the import modal opens, the folder picker pre-selected to "pkm"
+    expect(screen.getByTestId("wex-import-modal")).toBeInTheDocument();
+    expect((screen.getByTestId("wex-import-folder") as HTMLSelectElement).value).toBe("pkm");
+  });
+
+  it("🔴 '＋ Note mới' on a folder → in-page title input → createWikiNote({title, folder})", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    createWikiNote.mockResolvedValue(ok({ id: 70, title: "Ý tưởng" }));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-tree")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-ops-toggle-pkm"));
+    fireEvent.click(screen.getByTestId("wex-op-newnote-pkm"));
+    // an in-page title input (NOT window.prompt)
+    fireEvent.change(screen.getByTestId("wex-op-input"), { target: { value: "Ý tưởng" } });
+    fireEvent.click(screen.getByTestId("wex-op-submit"));
+    await waitFor(() => expect(createWikiNote).toHaveBeenCalledWith({ title: "Ý tưởng", content: "", folder: "pkm" }));
+    // opens the new note
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/wiki/70"));
+  });
+
+  it("'＋ Note mới' with a blank title → validation error, no create", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-tree")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-ops-toggle-pkm"));
+    fireEvent.click(screen.getByTestId("wex-op-newnote-pkm"));
+    fireEvent.click(screen.getByTestId("wex-op-submit")); // blank title
+    await waitFor(() => expect(screen.getByTestId("wex-op-error")).toHaveTextContent(/tiêu đề/));
+    expect(createWikiNote).not.toHaveBeenCalled();
+  });
+
+  it("the folder ⋯ menu now has BOTH the W3 ops AND the W3A import/note ops (mock-diff)", async () => {
+    getWikiTree.mockResolvedValue(ok(TREE));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-tree")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("wex-ops-toggle-pkm"));
+    // W3A added
+    expect(screen.getByTestId("wex-op-newnote-pkm")).toBeInTheDocument();
+    expect(screen.getByTestId("wex-op-importhere-pkm")).toBeInTheDocument();
+    // W3 KEPT
+    expect(screen.getByTestId("wex-op-newsub-pkm")).toBeInTheDocument();
+    expect(screen.getByTestId("wex-op-rename-pkm")).toBeInTheDocument();
+    expect(screen.getByTestId("wex-op-delete-pkm")).toBeInTheDocument();
   });
 });

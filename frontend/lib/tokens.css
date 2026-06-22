@@ -778,6 +778,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wex-ops-menu button:hover { background:var(--bg-2); color:var(--tx-0); }
 .wex-ops-menu button.neg { color:var(--red); }
 .wex-ops-menu button.neg:hover { background:color-mix(in oklch, var(--red) 16%, transparent); }
+.wex-ops-sep { height:1px; background:var(--line-2); margin:4px 2px; }
 .wex-caret { display:inline-block; transition:transform .12s; font-size:10px; color:var(--tx-2); }
 .wex-caret.open { transform:rotate(90deg); }
 .wex-folder-name { font-weight:600; color:var(--tx-0); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
