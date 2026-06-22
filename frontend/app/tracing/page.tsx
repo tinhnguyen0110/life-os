@@ -18,12 +18,13 @@
    RENDER-ONLY: the backend computes everything (done/streak/heatmap/time). Errors = the
    #46/#70 {error:{code,message,hint}} shape.
    ============================================================ */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
 import { useTracingNotes } from "@/lib/useTracingNotes";
 import { apiBase, ApiError, getReminderChannels } from "@/lib/api";
 import { slugifyVi } from "@/lib/format";
 import { useClickAway } from "@/lib/useClickAway";
+import { Popover } from "@/components/Popover";
 import { TemplateSetsModal } from "./TemplateSetsModal";
 import type {
   ActivityView, ActivityInput, TracingNote, TracingNoteInput,
@@ -349,9 +350,10 @@ export default function TracingPage() {
     const [remOpen, setRemOpen] = useState(false);       // the per-card reminder editor
     const [timeOpen, setTimeOpen] = useState(false);     // #136 G3 — the per-card time editor
     const [timeVal, setTimeVal] = useState(railTime(a) ?? "");
-    // #137-T2 (UX) — close the ⋯ menu + the inline editors when a click lands outside
-    // (not re-click-the-icon). One ref per popover so an outside click closes the open one.
-    const menuRef = useClickAway<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
+    // #137-T2 (UX) — close the inline editors when a click lands outside (not
+    // re-click-the-icon). The ⋯ menu (#142-P1) is now a portaled <Popover> that owns
+    // its own click-away/Escape + viewport-edge collision; we just anchor it to the ⋯ button.
+    const menuBtnRef = useRef<HTMLButtonElement | null>(null);
     const timeEditorRef = useClickAway<HTMLDivElement>(timeOpen, () => setTimeOpen(false));
     const remEditorRef = useClickAway<HTMLDivElement>(remOpen, () => setRemOpen(false));
     const [rem, setRem] = useState<RemindState>({
@@ -441,22 +443,22 @@ export default function TracingPage() {
           {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
             <RemindChip at={a.remindAt} repeat={a.remindRepeat} channel={a.remindChannel} testid={`tl-remind-${a.id}`} />
           )}
-          {/* #136 — the per-card ⋯ menu (rename / reminder / delete). #137-T2: closes on outside-click. */}
-          <div className="tl-ops" style={{ position: "relative" }} ref={menuRef}>
-            <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+          {/* #136 — the per-card ⋯ menu (rename / reminder / delete). #142-P1: portaled
+              <Popover> (viewport-edge collision + outside-click/Escape close). */}
+          <div className="tl-ops" style={{ position: "relative" }}>
+            <button type="button" ref={menuBtnRef} className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
               aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`tl-ops-${a.id}`} title="Sửa việc này">⋯</button>
-            {menuOpen && (
-              <div className="tl-ops-menu" role="menu" data-testid={`tl-ops-menu-${a.id}`}>
-                <button type="button" role="menuitem" data-testid={`tl-op-rename-${a.id}`}
-                  onClick={() => { setMenuOpen(false); setNameVal(a.name); setEditing(true); }}>✎ Đổi tên</button>
-                <button type="button" role="menuitem" data-testid={`tl-op-time-${a.id}`}
-                  onClick={() => { setMenuOpen(false); setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }}>🕐 Đặt giờ</button>
-                <button type="button" role="menuitem" data-testid={`tl-op-remind-${a.id}`}
-                  onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
-                <button type="button" role="menuitem" className="neg" data-testid={`tl-op-delete-${a.id}`}
-                  onClick={() => { setMenuOpen(false); onArchiveTodo(a.id); }}>✕ Xóa</button>
-              </div>
-            )}
+            <Popover open={menuOpen} anchorRef={menuBtnRef} onClose={() => setMenuOpen(false)}
+              className="tl-ops-menu" testId={`tl-ops-menu-${a.id}`}>
+              <button type="button" role="menuitem" data-testid={`tl-op-rename-${a.id}`}
+                onClick={() => { setMenuOpen(false); setNameVal(a.name); setEditing(true); }}>✎ Đổi tên</button>
+              <button type="button" role="menuitem" data-testid={`tl-op-time-${a.id}`}
+                onClick={() => { setMenuOpen(false); setTimeVal(railTime(a) ?? ""); setTimeOpen((o) => !o); }}>🕐 Đặt giờ</button>
+              <button type="button" role="menuitem" data-testid={`tl-op-remind-${a.id}`}
+                onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
+              <button type="button" role="menuitem" className="neg" data-testid={`tl-op-delete-${a.id}`}
+                onClick={() => { setMenuOpen(false); onArchiveTodo(a.id); }}>✕ Xóa</button>
+            </Popover>
           </div>
         </div>
 
@@ -497,8 +499,9 @@ export default function TracingPage() {
   function NoteCard({ n }: { n: TracingNote }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [remOpen, setRemOpen] = useState(false);
-    // #137-T2 (UX) — close the note ⋯ menu + the reminder editor on outside-click.
-    const noteMenuRef = useClickAway<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
+    // #137-T2 (UX) — close the reminder editor on outside-click. #142-P1: the ⋯ menu is
+    // a portaled <Popover> (owns its own click-away/Escape); anchor it to the ⋯ button.
+    const noteMenuBtnRef = useRef<HTMLButtonElement | null>(null);
     const noteRemEditorRef = useClickAway<HTMLDivElement>(remOpen, () => setRemOpen(false));
     const hasRem = !!n.remindAt && (!!n.remindDate || n.remindRepeat !== "off");
     const [rem, setRem] = useState<RemindState>({
@@ -523,18 +526,17 @@ export default function TracingPage() {
             </div>
           )}
         </div>
-        {/* #136 — per-note ⋯ menu (set reminder / delete). #137-T2: closes on outside-click. */}
-        <div className="tl-ops" style={{ position: "relative" }} ref={noteMenuRef}>
-          <button type="button" className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+        {/* #136 — per-note ⋯ menu (set reminder / delete). #142-P1: portaled <Popover>. */}
+        <div className="tl-ops" style={{ position: "relative" }}>
+          <button type="button" ref={noteMenuBtnRef} className="tl-ops-btn" onClick={() => setMenuOpen((o) => !o)}
             aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`note-ops-${n.id}`} title="Sửa ghi chú này">⋯</button>
-          {menuOpen && (
-            <div className="tl-ops-menu" role="menu" data-testid={`note-ops-menu-${n.id}`}>
-              <button type="button" role="menuitem" data-testid={`note-op-remind-${n.id}`}
-                onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
-              <button type="button" role="menuitem" className="neg" data-testid={`note-op-delete-${n.id}`}
-                onClick={() => { setMenuOpen(false); onDeleteNote(n); }}>✕ Xóa</button>
-            </div>
-          )}
+          <Popover open={menuOpen} anchorRef={noteMenuBtnRef} onClose={() => setMenuOpen(false)}
+            className="tl-ops-menu" testId={`note-ops-menu-${n.id}`}>
+            <button type="button" role="menuitem" data-testid={`note-op-remind-${n.id}`}
+              onClick={() => { setMenuOpen(false); setRemOpen((o) => !o); }}>🔔 Nhắc nhở</button>
+            <button type="button" role="menuitem" className="neg" data-testid={`note-op-delete-${n.id}`}
+              onClick={() => { setMenuOpen(false); onDeleteNote(n); }}>✕ Xóa</button>
+          </Popover>
         </div>
         {/* the per-note reminder editor (recurring + one-shot, reuse RemindControls allowOnce). #137-T2: closes on outside-click. */}
         {remOpen && (

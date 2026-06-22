@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWikiTree } from "@/lib/useWiki";
 import { Icon } from "@/lib/icons";
+import { Popover } from "@/components/Popover";
 import {
   ApiError, createWikiFolder, deleteWikiFolder, moveWikiFolder, importWiki,
   createWikiNote, updateWikiNote,
@@ -78,6 +79,9 @@ function FolderNode({
   const isOpen = openFolders.has(node.path);
   const childFolders = [...node.folders].sort((a, b) => a.name.localeCompare(b.name));
   const [menuOpen, setMenuOpen] = useState(false);
+  // #142-P1 — the folder ⋯ menu is now a portaled <Popover> (escapes the scrollable
+  // explorer tree's overflow clip + adds the click-away/Escape it previously LACKED).
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   return (
     <div className="wex-folder" data-testid="wex-folder" data-folder={node.path}>
       <div className="wex-folder-head-row">
@@ -95,29 +99,28 @@ function FolderNode({
         </button>
         {/* #127-W3 — the per-folder ops ⋯ menu */}
         <div className="wex-folder-ops" data-testid={`wex-folder-ops-${node.path}`}>
-          <button type="button" className="wex-ops-btn" onClick={() => setMenuOpen((o) => !o)}
+          <button type="button" ref={menuBtnRef} className="wex-ops-btn" onClick={() => setMenuOpen((o) => !o)}
             aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`wex-ops-toggle-${node.path}`} title="Thao tác thư mục">⋯</button>
-          {menuOpen && (
-            <div className="wex-ops-menu" role="menu" data-testid={`wex-ops-menu-${node.path}`}>
-              {/* #127-W3A — add a file/note SCOPED to this folder */}
-              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-note", node); }} data-testid={`wex-op-newnote-${node.path}`}>
-                ＋ Note mới
-              </button>
-              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("import-here", node); }} data-testid={`wex-op-importhere-${node.path}`}>
-                📥 Import vào đây
-              </button>
-              <div className="wex-ops-sep" aria-hidden="true" />
-              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-sub", node); }} data-testid={`wex-op-newsub-${node.path}`}>
-                ＋ Thư mục con mới
-              </button>
-              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("rename", node); }} data-testid={`wex-op-rename-${node.path}`}>
-                ✎ Đổi tên / Chuyển
-              </button>
-              <button type="button" role="menuitem" className="neg" onClick={() => { setMenuOpen(false); onFolderOp("delete", node); }} data-testid={`wex-op-delete-${node.path}`}>
-                ✕ Xóa
-              </button>
-            </div>
-          )}
+          <Popover open={menuOpen} anchorRef={menuBtnRef} onClose={() => setMenuOpen(false)}
+            className="wex-ops-menu" testId={`wex-ops-menu-${node.path}`}>
+            {/* #127-W3A — add a file/note SCOPED to this folder */}
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-note", node); }} data-testid={`wex-op-newnote-${node.path}`}>
+              ＋ Note mới
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("import-here", node); }} data-testid={`wex-op-importhere-${node.path}`}>
+              📥 Import vào đây
+            </button>
+            <div className="wex-ops-sep" aria-hidden="true" />
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("new-sub", node); }} data-testid={`wex-op-newsub-${node.path}`}>
+              ＋ Thư mục con mới
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFolderOp("rename", node); }} data-testid={`wex-op-rename-${node.path}`}>
+              ✎ Đổi tên / Chuyển
+            </button>
+            <button type="button" role="menuitem" className="neg" onClick={() => { setMenuOpen(false); onFolderOp("delete", node); }} data-testid={`wex-op-delete-${node.path}`}>
+              ✕ Xóa
+            </button>
+          </Popover>
         </div>
       </div>
       {isOpen && (
