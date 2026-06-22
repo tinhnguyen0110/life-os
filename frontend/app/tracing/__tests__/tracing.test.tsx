@@ -206,7 +206,7 @@ describe("#65-P3 Tracing — log round-trip + errors (fail-closed)", () => {
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("add-activity")).toBeInTheDocument());
     await user.click(screen.getByTestId("add-activity"));
-    await user.type(screen.getByTestId("a-id"), "water");
+    // #110 lean form: id auto-slugs from the name (no a-id field by default)
     await user.type(screen.getByTestId("a-name"), "dup");
     await user.type(screen.getByTestId("a-goal"), "8");
     await user.click(screen.getByTestId("a-submit"));
@@ -237,7 +237,7 @@ describe("#75 Tracing — habit-reminder toggle (sets remind_at/remind_repeat; B
 
   it("remind toggle OFF (default) → create sends remind_at null + remind_repeat 'off'", async () => {
     const user = await openAdd();
-    await user.type(screen.getByTestId("a-id"), "run");
+    // #110 lean form: id auto-slugs from the name ("Run" → "run"); no a-id field by default
     await user.type(screen.getByTestId("a-name"), "Run");
     await user.type(screen.getByTestId("a-goal"), "5");
     // toggle is off by default — the time/repeat inputs are NOT shown
@@ -251,7 +251,7 @@ describe("#75 Tracing — habit-reminder toggle (sets remind_at/remind_repeat; B
 
   it("remind toggle ON → time + cadence inputs appear → create sends remind_at + remind_repeat", async () => {
     const user = await openAdd();
-    await user.type(screen.getByTestId("a-id"), "run");
+    // #110 lean form: id auto-slugs from the name ("Run" → "run")
     await user.type(screen.getByTestId("a-name"), "Run");
     await user.type(screen.getByTestId("a-goal"), "5");
     await user.click(screen.getByTestId("a-remind-toggle"));
@@ -280,5 +280,73 @@ describe("#75 Tracing — habit-reminder toggle (sets remind_at/remind_repeat; B
     render(<TracingPage />);
     await screen.findByTestId("act-run2");
     expect(screen.queryByTestId("remind-run2")).toBeNull();
+  });
+});
+
+/* ---- #110 lean-form restructure: 3 default fields + Advanced disclosure + auto-slug ---- */
+describe("#110 Tracing — lean add form", () => {
+  async function openAdd() {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "uong-nuoc", name: "Uống nước" }) });
+    const user = userEvent.setup();
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("add-activity")).toBeInTheDocument());
+    await user.click(screen.getByTestId("add-activity"));
+    return user;
+  }
+
+  it("default shows only Tên + Mục tiêu + Đơn vị — id/emoji/màu are HIDDEN (in Advanced)", async () => {
+    await openAdd();
+    expect(screen.getByTestId("a-name")).toBeInTheDocument();
+    expect(screen.getByTestId("a-goal")).toBeInTheDocument();
+    expect(screen.getByTestId("a-unit")).toBeInTheDocument();
+    // advanced fields are collapsed by default
+    expect(screen.queryByTestId("a-id")).toBeNull();
+    expect(screen.queryByTestId("a-emoji")).toBeNull();
+    expect(screen.queryByTestId("a-color")).toBeNull();
+    expect(screen.getByTestId("a-advanced-toggle")).toBeInTheDocument();
+  });
+
+  it("Advanced disclosure expands → id/emoji/màu appear", async () => {
+    const user = await openAdd();
+    await user.click(screen.getByTestId("a-advanced-toggle"));
+    expect(screen.getByTestId("a-advanced")).toBeInTheDocument();
+    expect(screen.getByTestId("a-id")).toBeInTheDocument();
+    expect(screen.getByTestId("a-emoji")).toBeInTheDocument();
+    expect(screen.getByTestId("a-color")).toBeInTheDocument();
+  });
+
+  it("id auto-slugs from the name (Vietnamese) — shown as a preview, sent on submit", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-name"), "Uống nước");
+    await user.type(screen.getByTestId("a-goal"), "8");
+    // the derived-id preview reflects the slug
+    expect(screen.getByTestId("a-id-preview")).toHaveTextContent("uong-nuoc");
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    expect(createActivity.mock.calls[0][0].id).toBe("uong-nuoc"); // auto-slugged id sent
+  });
+
+  it("Advanced id override → idManual, the typed id wins over the name-slug", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-name"), "Uống nước");
+    await user.type(screen.getByTestId("a-goal"), "8");
+    await user.click(screen.getByTestId("a-advanced-toggle"));
+    const idInput = screen.getByTestId("a-id");
+    await user.clear(idInput);
+    await user.type(idInput, "my-water");
+    // typing more name does NOT clobber the manual id; the preview is gone (manual)
+    expect(screen.queryByTestId("a-id-preview")).toBeNull();
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    expect(createActivity.mock.calls[0][0].id).toBe("my-water"); // manual id wins
+  });
+
+  it("submitting with no name → honest error (Cần tên), no API call", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-goal"), "8");
+    await user.click(screen.getByTestId("a-submit"));
+    expect(screen.getByTestId("add-error")).toHaveTextContent(/Cần tên/);
+    expect(createActivity).not.toHaveBeenCalled();
   });
 });

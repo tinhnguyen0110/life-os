@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { relativeTime, idleDays, orDash, fmtUSD, fmtSign, fmtPct, deltaGlyph } from "../format";
+import { relativeTime, idleDays, orDash, fmtUSD, fmtSign, fmtPct, deltaGlyph, slugifyVi } from "../format";
 
 describe("relativeTime", () => {
   beforeEach(() => {
@@ -138,5 +138,32 @@ describe("deltaGlyph (3-way honest delta — #81)", () => {
   it("the neutral tone is NEVER pos/neg (so it can't render green/red)", () => {
     expect(["pos", "neg"]).not.toContain(deltaGlyph(0).cls);
     expect(["pos", "neg"]).not.toContain(deltaGlyph(null).cls);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #110 — slugifyVi: name → kebab id, matching the BE slug (so the user never types
+// an id). Must reproduce the seed ids exactly (Uống nước → uong-nuoc).
+// ---------------------------------------------------------------------------
+describe("slugifyVi (#110 auto-slug)", () => {
+  it("matches the BE seed slugs (Vietnamese diacritics stripped)", () => {
+    expect(slugifyVi("Uống nước")).toBe("uong-nuoc");
+    expect(slugifyVi("Tập thể dục")).toBe("tap-the-duc");
+    expect(slugifyVi("Đọc sách")).toBe("doc-sach");
+    expect(slugifyVi("Thiền")).toBe("thien");
+    expect(slugifyVi("Viết nhật ký")).toBe("viet-nhat-ky");
+  });
+  it("đ/Đ → d, lowercases, collapses + trims hyphens", () => {
+    expect(slugifyVi("Đi bộ")).toBe("di-bo");
+    expect(slugifyVi("  Hello   World  ")).toBe("hello-world");
+    expect(slugifyVi("A!!!B")).toBe("a-b");
+  });
+  it("empty / diacritic-only / punctuation-only → '' (caller surfaces 'cần id')", () => {
+    expect(slugifyVi("")).toBe("");
+    expect(slugifyVi("   ")).toBe("");
+    expect(slugifyVi("!!!")).toBe("");
+  });
+  it("digits survive", () => {
+    expect(slugifyVi("Bài 5")).toBe("bai-5");
   });
 });

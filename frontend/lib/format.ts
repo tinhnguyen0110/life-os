@@ -106,6 +106,20 @@ export function deltaGlyph(v: number | null | undefined): { arrow: string; cls: 
   return v < 0 ? { arrow: "▼", cls: "neg" } : { arrow: "▲", cls: "pos" };
 }
 
+/** #110 — slugify a (Vietnamese) name → a kebab id, matching the BE slug so the user
+ *  doesn't type an id (e.g. "Uống nước" → "uong-nuoc", "Tập thể dục" → "tap-the-duc").
+ *  Strips diacritics (NFD + combining marks), maps đ→d, lowercases, non-alnum→hyphen,
+ *  collapses + trims hyphens. Empty/diacritic-only → "". */
+export function slugifyVi(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")   // strip combining diacritical marks
+    .replace(/đ/g, "d").replace(/Đ/g, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")       // any run of non-alnum → a single hyphen
+    .replace(/^-+|-+$/g, "");          // trim leading/trailing hyphens
+}
+
 /** duration in ms (or null) → "405ms" / "3.1s" / "2m 5s". null/NaN/neg → fallback. */
 export function fmtDuration(ms: number | null | undefined, fallback = "—"): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return fallback;

@@ -20,6 +20,7 @@ import { useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
 import { apiBase, ApiError } from "@/lib/api";
 import { TracingTemplatePicker } from "@/components/TracingTemplatePicker";
+import { slugifyVi } from "@/lib/format";
 import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
@@ -45,17 +46,23 @@ type AddForm = {
   // #75: optional habit-reminder nudge. remindOn drives the toggle; when on, remindTime
   // + remindRepeat become the activity's remindAt/remindRepeat (BE creates the reminder).
   remindOn: boolean; remindTime: string; remindRepeat: RemindRepeat;
+  // #110: idManual=true once the user edits the id in Advanced → auto-slug stops (so we
+  // don't clobber their manual id when they keep typing the name). A template pick sets
+  // an explicit id → also idManual (don't re-slug a picked id from its name).
+  idManual: boolean;
 };
 
 const EMPTY_ADD: AddForm = {
   id: "", name: "", goal: "", unit: "", emoji: "", color: "#FF6A33",
-  remindOn: false, remindTime: "07:00", remindRepeat: "daily",
+  remindOn: false, remindTime: "07:00", remindRepeat: "daily", idManual: false,
 };
 
 export default function TracingPage() {
   const { data, status, errMsg, warning, reload, log, add, archive } = useTracing();
   const [logForm, setLogForm] = useState<LogForm | null>(null);
   const [adding, setAdding] = useState<AddForm | null>(null);
+  // #110 — the "Nâng cao" (id/emoji/màu) disclosure; collapsed by default (lean form).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [rowErr, setRowErr] = useState("");
@@ -100,8 +107,15 @@ export default function TracingPage() {
     e.preventDefault();
     if (!adding) return;
     setFormErr("");
-    if (!adding.id.trim() || !adding.name.trim()) {
-      setFormErr("Cần id + tên hoạt động.");
+    // #110 — the id is auto-slugged from the name (user doesn't type it; Advanced lets
+    // them override). Derive it here so a lean Tên-only submit still has a valid id.
+    const id = (adding.id.trim() || slugifyVi(adding.name)).trim();
+    if (!adding.name.trim()) {
+      setFormErr("Cần tên hoạt động.");
+      return;
+    }
+    if (!id) {
+      setFormErr("Tên không tạo được id — đặt id ở Nâng cao.");
       return;
     }
     const goal = Number(adding.goal);
@@ -110,7 +124,7 @@ export default function TracingPage() {
       return;
     }
     const body: ActivityInput = {
-      id: adding.id.trim(),
+      id,
       name: adding.name.trim(),
       goal,
       unit: adding.unit.trim() || undefined,
@@ -156,7 +170,7 @@ export default function TracingPage() {
         <button
           className="btn accent"
           type="button"
-          onClick={() => { setAdding({ ...EMPTY_ADD }); setFormErr(""); }}
+          onClick={() => { setAdding({ ...EMPTY_ADD }); setFormErr(""); setAdvancedOpen(false); }}
           data-testid="add-activity"
         >
           + Hoạt động
@@ -205,23 +219,69 @@ export default function TracingPage() {
             <TracingTemplatePicker
               onPick={(t) => setAdding((prev) => ({
                 ...(prev ?? EMPTY_ADD),
+                // a picked template carries an explicit id → idManual so we don't re-slug
+                // it from the name. Prefills the advanced fields (id/emoji/color) too.
                 id: t.id, name: t.name, goal: t.goal, unit: t.unit, emoji: t.emoji, color: t.color,
+                idManual: true,
               }))}
             />
           </div>
           <form onSubmit={onAdd} style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div className="field"><span className="flabel">ID (không dấu, vd water)</span>
-              <input className="finput" value={adding.id} onChange={(e) => setAdding({ ...adding, id: e.target.value })} data-testid="a-id" placeholder="water" /></div>
-            <div className="field"><span className="flabel">Tên</span>
-              <input className="finput" value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} data-testid="a-name" placeholder="Uống nước" /></div>
+            {/* #110 — LEAN default: just the 3 essentials. id is auto-slugged from the
+                name (shown faint as a preview); emoji/màu/id-override live in Nâng cao. */}
+            <div className="field" style={{ gridColumn: "1 / 3" }}><span className="flabel">Tên hoạt động</span>
+              <input
+                className="finput"
+                value={adding.name}
+                onChange={(e) => setAdding({
+                  ...adding,
+                  name: e.target.value,
+                  // auto-slug the id from the name until the user overrides it in Advanced
+                  id: adding.idManual ? adding.id : slugifyVi(e.target.value),
+                })}
+                data-testid="a-name"
+                placeholder="Uống nước"
+                autoFocus
+              />
+              {/* the derived id, shown so the user sees what's saved (read-only preview) */}
+              {!adding.idManual && adding.name.trim() && (
+                <span className="hint faint" style={{ fontSize: 11 }} data-testid="a-id-preview">id: {slugifyVi(adding.name) || "—"}</span>
+              )}
+            </div>
             <div className="field"><span className="flabel">Mục tiêu / ngày</span>
               <input className="finput num" inputMode="decimal" value={adding.goal} onChange={(e) => setAdding({ ...adding, goal: e.target.value })} data-testid="a-goal" placeholder="8" /></div>
             <div className="field"><span className="flabel">Đơn vị</span>
               <input className="finput" value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} data-testid="a-unit" placeholder="ly" /></div>
-            <div className="field"><span className="flabel">Emoji</span>
-              <input className="finput" value={adding.emoji} onChange={(e) => setAdding({ ...adding, emoji: e.target.value })} data-testid="a-emoji" placeholder="💧" /></div>
-            <div className="field"><span className="flabel">Màu</span>
-              <input className="finput" type="color" value={adding.color} onChange={(e) => setAdding({ ...adding, color: e.target.value })} data-testid="a-color" /></div>
+
+            {/* #110 — Advanced (Nâng cao): id-override + emoji + màu. COLLAPSED by default. */}
+            <div className="field" style={{ gridColumn: "1 / 3" }}>
+              <button
+                type="button"
+                className="tab"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                aria-expanded={advancedOpen}
+                data-testid="a-advanced-toggle"
+                style={{ alignSelf: "flex-start" }}
+              >
+                {advancedOpen ? "▾ Nâng cao" : "▸ Nâng cao (id, emoji, màu)"}
+              </button>
+            </div>
+            {advancedOpen && (
+              <div className="adv-fields" data-testid="a-advanced" style={{ gridColumn: "1 / 3", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                <div className="field"><span className="flabel">ID (tự tạo từ tên)</span>
+                  <input
+                    className="finput"
+                    value={adding.id}
+                    onChange={(e) => setAdding({ ...adding, id: e.target.value, idManual: true })}
+                    data-testid="a-id"
+                    placeholder="uong-nuoc"
+                  /></div>
+                <div className="field"><span className="flabel">Emoji</span>
+                  <input className="finput" value={adding.emoji} onChange={(e) => setAdding({ ...adding, emoji: e.target.value })} data-testid="a-emoji" placeholder="💧" /></div>
+                <div className="field"><span className="flabel">Màu</span>
+                  <input className="finput" type="color" value={adding.color} onChange={(e) => setAdding({ ...adding, color: e.target.value })} data-testid="a-color" /></div>
+              </div>
+            )}
 
             {/* #75: habit-reminder nudge. Toggle on → time + cadence → sets the
                 activity's remindAt/remindRepeat; the BE creates the reminder. */}
