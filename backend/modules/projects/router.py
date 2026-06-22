@@ -66,8 +66,10 @@ def get_project(project_id: str):
     """One project (INCLUDES abandoned). 404 if the id is not tracked."""
     status = service.get_project(project_id)
     if status is None:
-        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
-                                    hint="GET /projects for valid ids")
+        return agent_error_response(
+            "NOT_FOUND", f"project {project_id!r} not found",
+            hint="use the .id field from GET /projects (not .name); ids are matched "
+                 "case-insensitively, so any case of a real id resolves")
     return ok(data=_attach_routines(status).model_dump())
 
 
@@ -80,8 +82,10 @@ def get_project_context(project_id: str):
     MCP≡REST byte-identical (#24). project_get stays lean; this is the 'everything about X' call."""
     ctx = service.get_context(project_id)
     if ctx is None:
-        return agent_error_response("NOT_FOUND", f"project {project_id!r} not found",
-                                    hint="GET /projects for valid ids")
+        return agent_error_response(
+            "NOT_FOUND", f"project {project_id!r} not found",
+            hint="use the .id field from GET /projects (not .name); ids are matched "
+                 "case-insensitively, so any case of a real id resolves")
     return ok(data=ctx)
 
 

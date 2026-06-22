@@ -309,12 +309,24 @@ def list_projects() -> tuple[list[ProjectStatus], list[str]]:
 
 
 def get_project(project_id: str) -> ProjectStatus | None:
-    """One project's status, or None if the id is not tracked. Includes abandoned."""
+    """One project's status, or None if the id is not tracked. Includes abandoned.
+
+    #105 case-insensitive / name-or-id: the tracked keys are lowercase slugs
+    (``reader.slug(folder_name)``). An agent naturally passes the human-readable ``name``
+    from projects_list ("ClaudeManager") or any case variant — so we ``slug()`` the INPUT the
+    same way before the dict lookup. "ClaudeManager", "claudemanager", "CLAUDEMANAGER", and a
+    spaced/punctuated "Claude Manager" all resolve to the same project. The stored id scheme is
+    unchanged (slugs stay lowercase) — we only match the input case-insensitively.
+
+    This is the single lookup chokepoint: ``get_context`` (and thus REST /{id}, /{id}/context
+    + the MCP project_get/project_context tools) route through here, so all inherit the fix.
+    """
     repos = _tracked_repos()
-    repo_path = repos.get(project_id)
+    key = slug(project_id) if project_id else ""
+    repo_path = repos.get(key)
     if repo_path is None:
         return None
-    return read_one(project_id, repo_path)
+    return read_one(key, repo_path)
 
 
 def get_context(project_id: str, notes_limit: int = 10) -> dict[str, Any] | None:
@@ -334,8 +346,11 @@ def get_context(project_id: str, notes_limit: int = 10) -> dict[str, Any] | None
     if status is None:
         return None
     # lazy import: the wiki reader (the project_notes tag-filter lives in the wiki module).
+    # #105: use the CANONICAL slug (status.id), not the raw input — so a mixed-case/name-form
+    # query resolves BOTH the metadata AND the project:<slug>-tagged notes (notes are tagged
+    # with the lowercase slug). get_project already canonicalized status.id.
     from modules.wiki import reader as wiki_reader
-    notes = wiki_reader.project_notes(project_id, limit=notes_limit)
+    notes = wiki_reader.project_notes(status.id, limit=notes_limit)
     return {
         "project": status.model_dump(),
         "notes": notes,

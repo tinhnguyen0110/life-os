@@ -557,6 +557,42 @@ class TestServiceGetProject:
         assert s is not None
         assert s.health == "dead"
 
+    # --- #105: case-insensitive / name-or-id lookup --------------------------- #
+    def test_105_get_project_case_insensitive(self, monkeypatch, isolated_paths):
+        """#105: the tracked key is the lowercase slug 'outboundos'; an agent passing the
+        human-readable name 'OutboundOS' (or any case) must resolve to the SAME project, and
+        the returned status carries the CANONICAL slug id (not the mixed-case input)."""
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {
+            "outboundos": REAL_REPOS["outboundos"],
+        })
+        for variant in ("OutboundOS", "outboundos", "OUTBOUNDOS", "outBoundOS"):
+            s = get_project(variant)
+            assert s is not None, f"case variant {variant!r} must resolve (case-insensitive)"
+            assert s.id == "outboundos", f"{variant!r} → canonical slug id, got {s.id!r}"
+
+    def test_105_get_project_name_with_separators_slugifies(self, monkeypatch, isolated_paths):
+        """#105: a name-form with separators ('Out Bound OS' / 'out-bound.os') slugifies the same
+        way the stored key was built → still resolves (robust full-slugify, not just lowercase)."""
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {
+            "out-bound-os": BOGUS_PATH,  # the stored key is the slug; path bogus → health=dead, id matches
+        })
+        for variant in ("Out Bound OS", "out-bound.os", "OUT_BOUND_OS"):
+            s = get_project(variant)
+            assert s is not None, f"separator name {variant!r} must slug-resolve"
+            assert s.id == "out-bound-os"
+
+    def test_105_get_project_still_404s_genuine_miss(self, monkeypatch, isolated_paths):
+        """#105: a genuinely-absent id (even slugified) still → None (the fix MATCHES case, it does
+        not invent projects)."""
+        from core import config
+        monkeypatch.setattr(config.settings, "project_repos", {
+            "outboundos": REAL_REPOS["outboundos"],
+        })
+        assert get_project("NoSuchProject") is None
+        assert get_project("") is None
+
 
 # ---------------------------------------------------------------------------
 # C. API endpoint tests (skip-guarded until T2 router lands)
@@ -709,6 +745,30 @@ class TestGetProjectDetail:
     def test_404_unknown(self, api_client):
         resp = api_client.get("/projects/this-project-does-not-exist-xyz")
         assert resp.status_code == 404, f"Unknown project must 404, got {resp.status_code}"
+
+    # --- #105: case-insensitive name-or-id lookup over REST -------------------- #
+    @skip_api
+    def test_105_api_case_insensitive_resolves(self, api_client):
+        """#105: the slug is 'outboundos'; an agent hitting the name-form 'OutboundOS' (or any
+        case) must get the SAME 200 project as the exact slug (agent uses .name → must work)."""
+        slug_resp = api_client.get("/projects/outboundos")
+        assert slug_resp.status_code == 200
+        canonical_id = slug_resp.json()["data"]["id"]
+        for variant in ("OutboundOS", "OUTBOUNDOS"):
+            r = api_client.get(f"/projects/{variant}")
+            assert r.status_code == 200, f"/projects/{variant} → {r.status_code}: {r.text}"
+            assert r.json()["data"]["id"] == canonical_id, "must resolve to the canonical project"
+
+    @skip_api
+    def test_105_404_hint_names_id_and_case_insensitive(self, api_client):
+        """#105: a genuine miss still 404s with the SHARPENED agent-error hint — naming the .id
+        field (not .name) + that ids are matched case-insensitively (NOT_FOUND, retryable false)."""
+        resp = api_client.get("/projects/this-project-does-not-exist-xyz")
+        assert resp.status_code == 404
+        body = resp.json()
+        err = body.get("error") or body  # agent-error envelope
+        hint = (err.get("hint") or "").lower()
+        assert ".id" in hint and "case-insensitive" in hint, f"hint must guide the agent: {err}"
 
 
 class TestPostProjects:

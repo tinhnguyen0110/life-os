@@ -449,8 +449,10 @@ def projects_list() -> dict[str, Any]:
 
 
 def project_get(project_id: str) -> dict[str, Any]:
-    """One project's status by id (includes abandoned). Unknown id →
-    ``{found: False}``."""
+    """One project's status by id (includes abandoned). ``project_id`` is matched
+    case-insensitively — pass the ``.id`` OR the human-readable ``.name`` from projects_list in
+    any case ("ClaudeManager"/"claudemanager") and it resolves (#105). Unknown id →
+    ``{found: False, project_id}``."""
     status = _proj_get(project_id)
     if status is None:
         return {"found": False, "project_id": project_id}
