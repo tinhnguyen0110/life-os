@@ -54,7 +54,11 @@ logger = logging.getLogger("life-os.finance.service")
 HOLDINGS_MD = "finance/holdings.md"
 GOLDEN_PATH_MD = "finance/golden_path.md"
 CRYPTO_BASIS_MD = "finance/crypto_basis.md"
-DRIFT_ALERT_PCT = 5.0
+DRIFT_ALERT_PCT = 5.0  # the structured driftAlert FIELD on each ChannelAlloc fires at |drift|>5%
+# #106: the NOISY per-channel drift WARNING (the agent/human attention-grab) fires only at a LARGER,
+# actually-notable drift — so finance_analytics isn't a wall of 5%-boilerplate. The driftAlert FIELD
+# (>5%) is the precise structured per-channel signal; the WARNING (>30%) is the "look at this" nudge.
+WARNING_DRIFT_PCT = 30.0
 DRY_CHANNEL = "dry"
 CHANNELS = ("crypto", "etf", "vn", "dry")
 # NB4 — common USD-pegged stablecoins. Held in the crypto channel they are dry-powder-
@@ -785,25 +789,33 @@ def _get_overview_impl(holdings: list[Holding]) -> tuple[FinanceOverview, list[s
         basis_unknown = _basis_unknown(ch_entries)
         stable_value, stable_pct = (None, None)
         crypto_undeployed = False
+        # #106: the NOISY drift WARNING fires only on a NOTABLE drift (>30%), not every >5% channel —
+        # the precise >5% signal lives on the structured driftAlert FIELD (unchanged).
+        notable_drift = abs(drift) > WARNING_DRIFT_PCT
         if ch == "crypto":
             stable_value, stable_pct = _stable_split(ch_entries, value)
             crypto_undeployed = stable_pct is not None and stable_pct > STABLE_UNDEPLOYED_PCT
-            if stable_pct is not None and stable_pct > STABLE_HEAVY_PCT:
-                warnings.append(
-                    f"crypto channel is {stable_pct:.0f}% stablecoins "
-                    f"(${stable_value:,.0f}) — dry-powder-like, not crypto exposure")
-        if drift_alert:
-            if crypto_undeployed:
-                # D3a: when crypto is >90% stablecoin, a "crypto drift" warning is
-                # misleading — the gap is UNDEPLOYED CASH sitting in the crypto channel,
-                # not over/under crypto EXPOSURE. Reframe (raw drift number unchanged).
-                warnings.append(
-                    f"crypto: {drift:+.1f}% vs target reflects ~{stable_pct:.0f}% UNDEPLOYED "
-                    f"stablecoin (cash-equivalent), not crypto exposure (target {target}%, "
-                    f"actual {pct}%)")
-            else:
-                warnings.append(
-                    f"{ch}: allocation drift {drift:+.1f}% (target {target}%, actual {pct}%)")
+        # #106: does the UNDEPLOYED-stablecoin REFRAME fire? (crypto >90% stablecoin AND a notable
+        # drift). If so it tells the WHOLE stablecoin story → SUPPRESS the separate dry-powder line
+        # so we don't say the same thing twice (the #106 dedup, fixed at the source).
+        reframe_fires = crypto_undeployed and notable_drift
+        # the dry-powder line fires when crypto is stablecoin-heavy AND the reframe is NOT firing.
+        if (ch == "crypto" and stable_pct is not None
+                and stable_pct > STABLE_HEAVY_PCT and not reframe_fires):
+            warnings.append(
+                f"crypto channel is {stable_pct:.0f}% stablecoins "
+                f"(${stable_value:,.0f}) — dry-powder-like, not crypto exposure")
+        if reframe_fires:
+            # D3a: when crypto is >90% stablecoin, a "crypto drift" warning is misleading — the gap
+            # is UNDEPLOYED CASH in the crypto channel, not over/under crypto EXPOSURE. Reframe (raw
+            # drift number unchanged). This single line subsumes the dry-powder line above (#106).
+            warnings.append(
+                f"crypto: {drift:+.1f}% vs target reflects ~{stable_pct:.0f}% UNDEPLOYED "
+                f"stablecoin (cash-equivalent), not crypto exposure (target {target}%, "
+                f"actual {pct}%)")
+        elif notable_drift:
+            warnings.append(
+                f"{ch}: allocation drift {drift:+.1f}% (target {target}%, actual {pct}%)")
         allocations.append(ChannelAlloc(
             channel=ch, value=value, pct=pct, target=target, drift=drift,  # type: ignore[arg-type]
             driftAlert=drift_alert, pnl=_pnl_framed(cost, value, basis_unknown),

@@ -324,3 +324,73 @@ def test_perf68_okx_discovery_read_does_not_drift_value(monkeypatch, mock_prices
     assert overview.totalValue == 61000.0
     # and the discovery read happened (proves get_overview DID pre-read for symbols)
     assert calls[0] >= 2
+
+
+# --------------------------------------------------------------------------- #
+# #106 — drift WARNING fires only at |drift|>30% (WARNING_DRIFT_PCT); the       #
+# precise >5% signal stays on the structured driftAlert FIELD (unchanged).       #
+# --------------------------------------------------------------------------- #
+def test_106_mid_drift_no_warning_but_field_still_alerts(mock_okx, mock_prices, isolated_paths):
+    """A channel that drifts BETWEEN 5% and 30% → NO noisy 'allocation drift' WARNING (boilerplate
+    cut), but its driftAlert FIELD is STILL True (the >5% structured signal is unchanged). crypto
+    is BTC (real exposure, no stablecoin reframe) at ~48% vs target 38 → drift +10% (5<10<30)."""
+    # crypto $48k BTC (real) + etf $52k → crypto pct = 48% → drift +10% vs target 38%.
+    mock_okx([OkxBalance(symbol="BTC", available=0.8, frozen=0, total=0.8, usdValue=48000.0)],
+             total=48000.0)
+    service.upsert_holding(HoldingInput(channel="etf", symbol="VOO", qty=130, avgCost=400))  # ~$52k cost-fallback
+    overview, warnings = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    # the FIELD still alerts (>5%) — structured signal unchanged
+    assert crypto.driftAlert is True, "driftAlert FIELD must still fire at >5% (the field is unchanged)"
+    assert abs(crypto.drift) > 5.0 and abs(crypto.drift) <= 30.0, f"need a 5-30% drift, got {crypto.drift}"
+    # but NO noisy WARNING for this mid-range drift (the #106 noise cut)
+    assert not any("crypto: allocation drift" in w for w in warnings), \
+        f"a 5-30% drift must NOT emit a WARNING (only the field): {warnings}"
+
+
+def test_106_large_drift_still_warns(mock_okx, mock_prices, isolated_paths):
+    """DISTINGUISHING: a NOTABLE drift (>30%) DOES still emit the WARNING — proves the threshold
+    gates noise, not all drift. crypto ~100% (real BTC) vs target 38 → drift +62% (>30)."""
+    mock_okx([OkxBalance(symbol="BTC", available=1.5, frozen=0, total=1.5, usdValue=90000.0)],
+             total=90000.0)  # crypto ≈100%, real exposure (no stable) → plain drift, drift +62%
+    overview, warnings = service.get_overview()
+    crypto = next(a for a in overview.allocations if a.channel == "crypto")
+    assert abs(crypto.drift) > 30.0
+    assert any("crypto: allocation drift" in w for w in warnings), \
+        ">30% drift must still emit the WARNING"
+
+
+def test_106_stablecoin_warning_not_duplicated_when_reframed(mock_okx, mock_prices, isolated_paths):
+    """#106 dedup: crypto >90% stablecoin AND a notable (>30%) drift → ONLY the UNDEPLOYED reframe
+    fires; the separate 'dry-powder-like' line is SUPPRESSED (the two stated the same observation).
+    So the stablecoin story appears EXACTLY ONCE, not twice."""
+    mock_okx([
+        OkxBalance(symbol="USDT", available=98000, frozen=0, total=98000, usdValue=98000.0),
+        OkxBalance(symbol="BTC", available=0.03, frozen=0, total=0.03, usdValue=2000.0),
+    ], total=100000.0)  # 98% stable, crypto ≈100% → drift +62% (notable) → reframe fires
+    _, warnings = service.get_overview()
+    crypto_warns = [w for w in warnings if w.startswith("crypto")]
+    # the reframe is present...
+    assert any("UNDEPLOYED stablecoin" in w for w in crypto_warns)
+    # ...and the separate dry-powder line is SUPPRESSED (no duplicate stablecoin observation)
+    assert not any("dry-powder" in w for w in crypto_warns), \
+        "the dry-powder line must be suppressed when the reframe already tells the stablecoin story (#106 dedup)"
+    # exactly ONE crypto-stablecoin warning total
+    stable_mentions = [w for w in crypto_warns if "stablecoin" in w.lower() or "dry-powder" in w.lower()]
+    assert len(stable_mentions) == 1, f"stablecoin story must appear ONCE, got {len(stable_mentions)}: {stable_mentions}"
+
+
+def test_106_dry_powder_kept_when_no_reframe(mock_okx, mock_prices, isolated_paths):
+    """DISTINGUISHING: a stablecoin-heavy crypto (>50%) but NOT undeployed-with-notable-drift keeps
+    the dry-powder line (it's the only stablecoin signal then). 70% stable + crypto ≈100% → 70<90 so
+    NOT 'undeployed' → no reframe → the dry-powder line MUST stay (proves the dedup is conditional)."""
+    mock_okx([
+        OkxBalance(symbol="USDT", available=70000, frozen=0, total=70000, usdValue=70000.0),
+        OkxBalance(symbol="BTC", available=0.5, frozen=0, total=0.5, usdValue=30000.0),
+    ], total=100000.0)  # 70% stable (>50 dry-powder, <90 not undeployed)
+    _, warnings = service.get_overview()
+    crypto_warns = [w for w in warnings if w.startswith("crypto")]
+    assert any("dry-powder" in w for w in crypto_warns), \
+        "70% stable (<90) keeps the dry-powder line — not suppressed (no reframe to subsume it)"
+    assert not any("UNDEPLOYED stablecoin" in w for w in crypto_warns), \
+        "70% stable is NOT 'undeployed' (>90) → no reframe"

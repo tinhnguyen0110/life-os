@@ -170,7 +170,7 @@ class MacroSignal(BaseModel):
     status: str = Field(..., description="e.g. fear | greed | neutral")
     note: str = Field("", description="short human note")
     source: str = Field("mock", description="where the value came from: live (real feed) | mock (no feed)")  # FNG-HONEST
-    asOf: str | None = Field(None, description="ISO ts of the underlying data point; None = no live data")  # FNG-HONEST
+    asOf: str = Field("", description="ISO ts of the underlying data point; '' = no live data (shape-stable: ALWAYS a string so an agent's asOf[:10] never crashes — #106)")  # FNG-HONEST
 
 
 class PricePoint(BaseModel):

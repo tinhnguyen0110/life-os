@@ -613,7 +613,9 @@ def macro_signals() -> list[MacroSignal]:
     decision/guardian/life_brief already cite — so market no longer contradicts them with a hardcoded
     number (the honest-mirror breach this fixes). A store with no point → value="n/a" + source="mock"
     (HONEST — never fabricate a number; the DXY-HONEST precedent). Brent has no free feed → keep its
-    mock value but mark source="mock". ``asOf`` carries the data point's ts so an agent can age it.
+    mock value but mark source="mock". ``asOf`` carries the data point's ts so an agent can age it;
+    a mock/no-live entry has ``asOf=""`` (#106 shape-stable — ALWAYS a string, never None, so an
+    agent's ``asOf[:10]`` never crashes; "" honestly means "no timestamp", source="mock" signals it).
 
     Reads ``macro.store.latest(...)`` directly (the same points decision reads) — lazy-imported to
     avoid a market↔macro circular import, and leaner than macro_overview (no FRED cold-start; the
@@ -643,7 +645,7 @@ def macro_signals() -> list[MacroSignal]:
     else:
         signals.append(MacroSignal(
             name="Fear & Greed", value="n/a", status="n/a",
-            note="no live fear_greed point", source="mock", asOf=None))
+            note="no live fear_greed point", source="mock", asOf=""))  # #106 shape-stable: "" not None
 
     btcd = _latest("btc_dominance")
     if btcd is not None:
@@ -653,11 +655,11 @@ def macro_signals() -> list[MacroSignal]:
     else:
         signals.append(MacroSignal(
             name="BTC Dominance", value="n/a", status="n/a",
-            note="no live btc_dominance point", source="mock", asOf=None))
+            note="no live btc_dominance point", source="mock", asOf=""))  # #106 shape-stable: "" not None
 
-    # Brent: no free feed → mock value, honestly source-marked.
+    # Brent: no free feed → mock value, honestly source-marked. asOf="" (#106 shape-stable: never None).
     signals.append(MacroSignal(
-        name="Brent Oil", value="$72", status="neutral", note="", source="mock", asOf=None))
+        name="Brent Oil", value="$72", status="neutral", note="", source="mock", asOf=""))
     return signals
 
 

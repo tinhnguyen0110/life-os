@@ -64,15 +64,18 @@ def test_btc_dominance_reads_store(macro_db):
 # honest-mirror — a None store → "n/a", NOT a fabricated number                  #
 # --------------------------------------------------------------------------- #
 def test_fng_none_store_is_honest_na_not_a_number(macro_db):
-    """No fear_greed point in the store → value=="n/a", source=="mock", asOf is None — NEVER a
-    fabricated number (the DXY-HONEST precedent). The old hardcode "38" was exactly this lie."""
+    """No fear_greed point in the store → value=="n/a", source=="mock", asOf=="" — NEVER a
+    fabricated number (the DXY-HONEST precedent). The old hardcode "38" was exactly this lie.
+    #106 shape-stable: asOf is "" (NOT None) for a no-live entry — ALWAYS a string so an agent's
+    asOf[:10] never crashes; "" honestly means 'no timestamp' (value="n/a"+source="mock" signal it)."""
     fng = _signal(mkt.macro_signals(), "Fear & Greed")  # nothing seeded
-    assert fng.value == "n/a" and fng.status == "n/a" and fng.source == "mock" and fng.asOf is None
+    assert fng.value == "n/a" and fng.status == "n/a" and fng.source == "mock" and fng.asOf == ""
 
 
 def test_btc_dominance_none_store_is_honest_na(macro_db):
+    # #106 shape-stable: asOf=="" (not None) for the no-live n/a fallback.
     btc = _signal(mkt.macro_signals(), "BTC Dominance")
-    assert btc.value == "n/a" and btc.source == "mock" and btc.asOf is None
+    assert btc.value == "n/a" and btc.source == "mock" and btc.asOf == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -81,6 +84,36 @@ def test_btc_dominance_none_store_is_honest_na(macro_db):
 def test_brent_is_mock_marked(macro_db):
     brent = _signal(mkt.macro_signals(), "Brent Oil")
     assert brent.source == "mock"  # honest: no free feed → mock-marked, not pretend-live
+
+
+# --------------------------------------------------------------------------- #
+# #106 — asOf is SHAPE-STABLE: ALWAYS a string (Brent + n/a fallbacks → "")     #
+# so an agent iterating macro[] with asOf[:10] never crashes on a null.          #
+# --------------------------------------------------------------------------- #
+def test_106_brent_asof_is_empty_string_not_none(macro_db):
+    """Brent has no feed → asOf=="" (NOT None) — #106 shape-stable, so any string op on asOf
+    is safe even for the always-mock entry."""
+    brent = _signal(mkt.macro_signals(), "Brent Oil")
+    assert brent.asOf == "", f"Brent asOf must be '' (shape-stable), got {brent.asOf!r}"
+
+
+def test_106_every_macro_asof_is_a_string_no_live(macro_db):
+    """No store points seeded → EVERY entry (F&G/BTC.d n/a + Brent mock) has a STRING asOf, and an
+    agent doing `asOf[:10]` over the whole block does NOT crash (the inconsistent-null shape bug)."""
+    signals = mkt.macro_signals()
+    for s in signals:
+        assert isinstance(s.asOf, str), f"{s.name} asOf must ALWAYS be a string, got {type(s.asOf)}"
+    # the exact agent op the bug crashed on — must run clean over every entry
+    prefixes = [s.asOf[:10] for s in signals]  # no TypeError on a None
+    assert all(isinstance(p, str) for p in prefixes)
+
+
+def test_106_live_entry_keeps_iso_asof_string(macro_db):
+    """A live point → asOf carries its ISO ts (a real string) — the shape-stable change does NOT
+    blank a live timestamp (only the no-live fallbacks are "")."""
+    macro_store.record_point("fear_greed", 50.0, source="live", ts="2026-06-21T00:00:00+00:00")
+    fng = _signal(mkt.macro_signals(), "Fear & Greed")
+    assert fng.asOf == "2026-06-21T00:00:00+00:00" and fng.asOf[:10] == "2026-06-21"
 
 
 # --------------------------------------------------------------------------- #

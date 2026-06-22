@@ -108,16 +108,16 @@ def warn_fixture(isolated_paths, monkeypatch):
     return isolated_paths
 
 
-# The captured PRE-refactor baseline (the byte-identical anchor — these are the exact lists
-# the inline `gp_warnings + price_warnings` assembly emitted before _finance_warnings existed).
+# The byte-identical anchor (REST≡MCP parity HARD LOCK). Both surfaces emit this EXACT list/order.
+# #106: the noisy per-channel drift WARNING now fires ONLY at |drift|>30% (WARNING_DRIFT_PCT) — the
+# precise >5% signal lives on the structured driftAlert FIELD (unchanged). So of this fixture's four
+# drifts (crypto +7.5%, dry -20%, etf +30.6%, vn -18%) only etf (+30.6% > 30) keeps a WARNING; the
+# other three are suppressed boilerplate. (4 drift warnings → 1: exactly the #106 noise cut.)
 _BASE_OVERVIEW = [
     "golden-path absent — using baseline targets (crypto38/etf24/vn18/dry20)",
     "GHOST: no market price — using avgCost",
     "ZZZ: no market price — using avgCost",
-    "crypto: allocation drift +7.5% (target 38.0%, actual 45.45%)",
-    "dry: allocation drift -20.0% (target 20.0%, actual 0.0%)",
     "etf: allocation drift +30.6% (target 24.0%, actual 54.55%)",
-    "vn: allocation drift -18.0% (target 18.0%, actual 0.0%)",
 ]
 _BASE_ANALYTICS = _BASE_OVERVIEW + ["no portfolio value series yet — return/volatility unavailable"]
 _BASE_CHANNEL = _BASE_OVERVIEW[:3]   # gp + the two price warnings (no drift/okx on the detail path)
@@ -184,17 +184,16 @@ def okx_warn_fixture(isolated_paths, monkeypatch):
     return isolated_paths
 
 
-# Captured pre-refactor baselines WITH the okx warning present (the okx line sits AFTER the
-# gp+price prefix the helper owns, BEFORE the drift warnings — proving append-order intact).
+# Baselines WITH the okx warning present (the okx line sits AFTER the gp+price prefix the helper
+# owns, BEFORE the drift warnings — proving append-order intact). #106: of the four drifts only
+# crypto (+61.9% > 30 WARNING_DRIFT_PCT) keeps a WARNING; dry/etf/vn (-20/-23.9/-18, all ≤30) are
+# suppressed boilerplate. The okx-line position relative to the (now single) drift warning is intact.
 _OKX_BASE_OVERVIEW = [
     "golden-path absent — using baseline targets (crypto38/etf24/vn18/dry20)",
     "GHOST: no market price — using avgCost",
     "ZZZ: no market price — using avgCost",
     "OKX: balances stale (>1h) — showing cached",
     "crypto: allocation drift +61.9% (target 38.0%, actual 99.88%)",
-    "dry: allocation drift -20.0% (target 20.0%, actual 0.0%)",
-    "etf: allocation drift -23.9% (target 24.0%, actual 0.12%)",
-    "vn: allocation drift -18.0% (target 18.0%, actual 0.0%)",
 ]
 _OKX_BASE_CHANNEL = [
     "golden-path absent — using baseline targets (crypto38/etf24/vn18/dry20)",
