@@ -21,6 +21,7 @@ import logging
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Any
 
 from . import store
 from .schema import (
@@ -29,6 +30,8 @@ from .schema import (
     ActivityUpdate,
     ActivityView,
     LogInput,
+    Template,
+    TemplateInput,
     TodayStat,
     TracingOverview,
     TracingScore,
@@ -301,6 +304,94 @@ def archive_activity(activity_id: str) -> bool:
         except Exception as exc:  # noqa: BLE001 — add-on; never break the archive
             logger.error("dev: reminder delete-on-archive failed for %s: %s", activity_id, exc)
     return ok
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX T1 (#109): task templates — prefill suggestions for the "new        #
+# activity" form. The list = SEED (immutable code) ⊕ USER OVERRIDE (the store).   #
+# Templates are PREFILL ONLY — they never create activities (the FE prefills the  #
+# form → the existing create_activity does the create). decide-and-log: ~8 seeds. #
+# --------------------------------------------------------------------------- #
+# The immutable SEED templates (in code, NOT editable). A user who "edits a seed"
+# creates an override row with the SAME id (override wins); deleting a seed writes
+# a tombstone (hidden=1). Goals/units are sensible Vietnamese-habit prefills.
+_SEED_TEMPLATES: list[dict[str, Any]] = [
+    {"id": "uong-nuoc",   "name": "Uống nước",      "emoji": "💧", "icon": "droplet",  "unit": "ly",    "goal": 8.0,  "color": "#38bdf8"},
+    {"id": "tap-the-duc", "name": "Tập thể dục",    "emoji": "🏃", "icon": "run",      "unit": "phút",  "goal": 30.0, "color": "#f97316"},
+    {"id": "doc-sach",    "name": "Đọc sách",       "emoji": "📖", "icon": "book",     "unit": "trang", "goal": 20.0, "color": "#a78bfa"},
+    {"id": "ngu",         "name": "Ngủ đủ giấc",    "emoji": "😴", "icon": "moon",     "unit": "giờ",   "goal": 8.0,  "color": "#818cf8"},
+    {"id": "thien",       "name": "Thiền",          "emoji": "🧘", "icon": "lotus",    "unit": "phút",  "goal": 10.0, "color": "#34d399"},
+    {"id": "di-bo",       "name": "Đi bộ",          "emoji": "🚶", "icon": "walk",     "unit": "bước",  "goal": 6000.0, "color": "#fbbf24"},
+    {"id": "hoc",         "name": "Học",            "emoji": "📚", "icon": "study",    "unit": "phút",  "goal": 60.0, "color": "#60a5fa"},
+    {"id": "viet",        "name": "Viết nhật ký",   "emoji": "✍️", "icon": "pen",      "unit": "phút",  "goal": 15.0, "color": "#f472b6"},
+]
+
+
+def list_templates() -> list[Template]:
+    """The merged template list: SEED ⊕ USER OVERRIDE, each tagged ``source``. Rules:
+    - a user override with the SAME id as a seed → REPLACES it (source='user', override wins);
+    - a tombstone override (hidden=1) → HIDES the matching seed (dropped from the list);
+    - a user-only id (no seed) → appears (source='user');
+    - an un-overridden seed → appears (source='seed').
+    Order: seeds (in seed order) first, then user-only templates (by id). LEAN — prefill fields only.
+    """
+    overrides = {r["id"]: r for r in store.list_template_overrides()}
+    out: list[Template] = []
+    # 1) seeds, applying any override / tombstone keyed by the seed id
+    for seed in _SEED_TEMPLATES:
+        ov = overrides.pop(seed["id"], None)
+        if ov is None:
+            out.append(Template(source="seed", **seed))
+            continue
+        if ov["hidden"]:
+            continue  # tombstoned seed → hidden
+        out.append(Template(
+            id=ov["id"], name=ov["name"], emoji=ov["emoji"], icon=ov["icon"],
+            unit=ov["unit"], goal=ov["goal"], color=ov["color"], source="user"))
+    # 2) remaining overrides = user-only templates (not matching any seed); skip tombstones (a
+    #    tombstone for a non-seed id is meaningless → just hide it, don't surface an empty row)
+    for ov in sorted((o for o in overrides.values() if not o["hidden"]), key=lambda r: r["id"]):
+        out.append(Template(
+            id=ov["id"], name=ov["name"], emoji=ov["emoji"], icon=ov["icon"],
+            unit=ov["unit"], goal=ov["goal"], color=ov["color"], source="user"))
+    return out
+
+
+def _is_seed(template_id: str) -> bool:
+    return any(s["id"] == template_id for s in _SEED_TEMPLATES)
+
+
+def upsert_template(template_id: str, inp: TemplateInput) -> Template:
+    """Upsert a user template override (create a new one OR override a seed). Returns the merged
+    Template (always source='user' — it's now an override). The caller validated ``inp`` (→ 422)."""
+    store.upsert_template(
+        id=template_id, name=inp.name, emoji=inp.emoji, icon=inp.icon,
+        unit=inp.unit, goal=inp.goal, color=inp.color)
+    return Template(id=template_id, name=inp.name, emoji=inp.emoji, icon=inp.icon,
+                    unit=inp.unit, goal=inp.goal, color=inp.color, source="user")
+
+
+def delete_template(template_id: str) -> bool:
+    """Delete a template: a USER template → remove its override row; a SEED → write a tombstone
+    (hidden). Returns True if the list changed. A non-existent, non-seed id → False (idempotent-ish:
+    nothing to do). SCOPED to tracing_template (never touches real activities)."""
+    if _is_seed(template_id):
+        store.tombstone_template(template_id)  # hide the seed
+        return True
+    return store.delete_template_override(template_id)  # remove the user row (False if absent)
+
+
+def bulk_delete_templates(ids: list[str]) -> int:
+    """Bulk-delete templates (#109 bulk-action): each id → seed-tombstone or user-row-remove (reuses
+    ``delete_template``). Returns the count that changed the list. Empty ids → 0 (no-op); an absent
+    non-seed id → skipped (idempotent, never errors). SCOPED to tracing_template."""
+    return sum(1 for tid in ids if delete_template(tid))
+
+
+def reset_templates() -> int:
+    """RESET all templates to pure SEED: delete every override row. Returns the count deleted.
+    SCOPED — never touches activities/logs (the #72 lesson)."""
+    return store.reset_templates()
 
 
 def log_session(activity_id: str, inp: LogInput) -> ActivityView:

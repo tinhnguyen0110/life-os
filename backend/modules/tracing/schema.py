@@ -119,6 +119,51 @@ class ActivityUpdate(BaseModel):
         return _validate_hhmm(v)
 
 
+# --------------------------------------------------------------------------- #
+# TRACING-UX T1 (#109): task templates — prefill the "new activity" form.       #
+# A template is NOT an activity (it's a prefill suggestion). The list = SEED     #
+# (hard-coded, immutable) ⊕ USER OVERRIDE (the tracing_template table). Each     #
+# returned item carries source="seed"|"user". Templates never create activities  #
+# (the FE prefills the form → the existing POST /activities creates).             #
+# --------------------------------------------------------------------------- #
+TemplateSource = Literal["seed", "user"]
+
+
+class TemplateInput(BaseModel):
+    """Upsert payload for a user template override (PUT /tracing/templates/{id}). The id is the path
+    param (a stable slug); the body is the prefill fields. A blank name → 422; goal ≥ 0."""
+
+    name: str = Field(..., min_length=1, max_length=120, description="display name")
+    emoji: str = Field(default="", max_length=16, description="display emoji")
+    icon: str = Field(default="", max_length=64, description="icon key (FE)")
+    unit: str = Field(default="", max_length=32, description="unit of val, e.g. 'ly', 'min'")
+    goal: float = Field(default=0.0, ge=0, description="suggested daily goal (0 = no goal)")
+    color: str = Field(default="", max_length=32, description="display color (FE)")
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("name must not be blank")
+        return s
+
+
+class Template(BaseModel):
+    """A merged template list item (SEED ⊕ OVERRIDE). ``source`` tells the agent/FE whether it's a
+    built-in seed or a user override (a user-edited seed reports source='user'). LEAN — exactly the
+    prefill fields, no derived metrics (templates are prefill suggestions, not activities)."""
+
+    id: str
+    name: str
+    emoji: str = ""
+    icon: str = ""
+    unit: str = ""
+    goal: float = Field(default=0.0, ge=0)
+    color: str = ""
+    source: TemplateSource = Field(..., description="'seed' (built-in) | 'user' (override)")
+
+
 class LogInput(BaseModel):
     """Log one session against an activity. ``val`` ≥ 0 (a negative is a 422). ``date`` defaults to
     today-VN; multiple logs the same day ACCUMULATE (summed), they don't overwrite."""

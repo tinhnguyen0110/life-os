@@ -113,11 +113,18 @@ def test_tracing_log_negative_val_raises(trc_db):
 # --------------------------------------------------------------------------- #
 # build + registration                                                           #
 # --------------------------------------------------------------------------- #
-def test_build_server_registers_two_tools():
+def test_build_server_registers_three_tools():
     srv = trc.build_server()
     assert srv is not None and type(srv).__name__ == "FastMCP"
-    assert len(srv._tool_manager.list_tools()) == 2
-    assert set(trc.TOOLS.keys()) == {"tracing_overview", "tracing_log"}
+    # #109: +tracing_templates (was 2: overview + log)
+    assert len(srv._tool_manager.list_tools()) == 3
+    assert set(trc.TOOLS.keys()) == {"tracing_overview", "tracing_templates", "tracing_log"}
+
+
+def test_tracing_templates_is_identity_across_servers():
+    """#109: lifeos-tracing's tracing_templates IS read_server's own fn (the per-domain anti-dup
+    spine — reference-imported, same fn object, can't drift)."""
+    assert trc.TOOLS["tracing_templates"] is rs.tracing_templates
 
 
 def test_read_server_has_tracing_overview():

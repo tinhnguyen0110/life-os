@@ -10,12 +10,19 @@ logic. NO writes here (reads only); NO recomputation outside ``service``.
 from __future__ import annotations
 
 from . import service
-from .schema import Activity, ActivityView, TracingOverview
+from .schema import Activity, ActivityView, Template, TracingOverview
 
 
 def get_overview() -> TracingOverview:
     """The whole tracing board for today-VN (delegates to the service derivations)."""
     return service.overview()
+
+
+def list_templates() -> list[Template]:
+    """TRACING-UX T1 (#109): the merged task-template list (SEED ⊕ USER OVERRIDE), each tagged
+    source. The ONE read fn behind BOTH REST GET /tracing/templates and the MCP tracing_templates
+    tool → byte-identical (#24). Lean prefill suggestions, not activities."""
+    return service.list_templates()
 
 
 def get_activity(activity_id: str) -> Activity | None:

@@ -42,11 +42,22 @@ CREATE TABLE IF NOT EXISTS tracing_logs (
     note        TEXT                        -- optional session note
 );
 CREATE INDEX IF NOT EXISTS idx_tracing_logs_act_date ON tracing_logs(activity_id, date);
+CREATE TABLE IF NOT EXISTS tracing_template (
+    id      TEXT    PRIMARY KEY,           -- template slug (matches a seed id to OVERRIDE it, or new)
+    name    TEXT    NOT NULL DEFAULT '',
+    emoji   TEXT    NOT NULL DEFAULT '',
+    icon    TEXT    NOT NULL DEFAULT '',
+    unit    TEXT    NOT NULL DEFAULT '',
+    goal    REAL    NOT NULL DEFAULT 0,
+    color   TEXT    NOT NULL DEFAULT '',
+    hidden  INTEGER NOT NULL DEFAULT 0      -- #109 tombstone: 1 = this id (a seed) is hidden from the list
+);
 """
 
 _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
              "remind_at, remind_repeat")  # TRACING-REMINDERS (#75): +remind_at, +remind_repeat
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
+_TPL_COLS = "id, name, emoji, icon, unit, goal, color, hidden"  # #109 template override row
 
 
 def init_tracing_tables() -> sqlite3.Connection:
@@ -182,3 +193,75 @@ def logs_since(since_date: str) -> list[sqlite3.Row]:
             f"SELECT {_LOG_COLS} FROM tracing_logs WHERE date >= ? ORDER BY ts ASC, id ASC",
             (since_date,),
         ).fetchall()
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX T1 (#109): task-template OVERRIDE rows (the user layer; SEED lives  #
+# in service.py as immutable code). The merge SEED ⊕ OVERRIDE happens in service.#
+# Every fn is SCOPED to tracing_template — NEVER touches tracing_activities/logs #
+# (the #72 scoped-delete lesson: a template reset must not wipe real activities). #
+# --------------------------------------------------------------------------- #
+def list_template_overrides() -> list[sqlite3.Row]:
+    """All user override rows (incl. tombstones, hidden=1). The service merges these onto the seed."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        return conn.execute(
+            f"SELECT {_TPL_COLS} FROM tracing_template ORDER BY id ASC"
+        ).fetchall()
+
+
+def upsert_template(*, id: str, name: str, emoji: str, icon: str, unit: str,
+                    goal: float, color: str) -> None:
+    """Insert-or-replace a user template override (hidden reset to 0 — upserting un-hides a
+    previously-tombstoned seed). Caller validated the payload (→ 422 before here)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO tracing_template(id, name, emoji, icon, unit, goal, color, hidden) "
+            "VALUES (?,?,?,?,?,?,?,0) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, emoji=excluded.emoji, "
+            "icon=excluded.icon, unit=excluded.unit, goal=excluded.goal, color=excluded.color, "
+            "hidden=0",
+            (id, name, emoji, icon, unit, goal, color),
+        )
+        conn.commit()
+
+
+def tombstone_template(id: str) -> None:
+    """Mark a SEED id hidden (a tombstone override: a row with hidden=1). Idempotent — upserts the
+    flag. Used when the user deletes a seed (the seed lives in code, so we record a hide-marker)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO tracing_template(id, name, hidden) VALUES (?, '', 1) "
+            "ON CONFLICT(id) DO UPDATE SET hidden=1",
+            (id,),
+        )
+        conn.commit()
+
+
+def delete_template_override(id: str) -> bool:
+    """Remove a user template override row entirely (used to delete a user-created template). Returns
+    True if a row was removed. (A SEED has no row → False; the router routes a seed-delete to
+    tombstone_template instead.) SCOPED to tracing_template."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM tracing_template WHERE id = ?", (id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def reset_templates() -> int:
+    """RESET: delete ALL override rows → the list returns to pure SEED. Returns the count deleted.
+    🔴 SCOPED: ``DELETE FROM tracing_template`` ONLY — NEVER touches tracing_activities / tracing_logs
+    (the #72 blanket-delete lesson: resetting templates must not wipe the user's real habits/logs)."""
+    init_tracing_tables()
+    conn = db.get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM tracing_template")
+        conn.commit()
+        return cur.rowcount

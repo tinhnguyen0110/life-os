@@ -15,8 +15,9 @@ Mounts (every server `list_tools_catalog()` enumerates — #32):
   `read` in the catalog (the honest "what THIS agent sees" view) — adds no NEW tool fns.
 - reminders domain (writable): **3 reminders** — `/mcp/reminders` — reminders_list (read) +
   reminder_create/reminder_tick (reversible single-user direct write, no proposal gate).
-- tracing domain (writable): **2 tracing** — `/mcp/tracing` — tracing_overview (read, is-identity
-  with the shared read tool) + tracing_log (reversible single-user direct append, no proposal gate).
+- tracing domain (writable): **3 tracing** — `/mcp/tracing` — tracing_overview + tracing_templates
+  (reads, is-identity with the shared read tools) + tracing_log (reversible single-user direct
+  append, no proposal gate).
 
 The wiki tools were CONSOLIDATED onto the standalone wiki servers (no longer duplicated on the
 shared servers). The shared write-server's `propose_note` was renamed `propose_quicknote` (the
@@ -73,6 +74,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `life_brief` | ✓ | THE agent data-layer: ONE call → a neutral, source-tagged snapshot of the |
 | `insights` | ✓ | Cross-domain NEUTRAL evidence-grounded observations (undeployed-capital / all-crypto-overbought / framework-vs-execution / stalled-project) over real data |
 | `tracing_overview` | ✓ | The habit/activity board for today-VN: per-activity today/streak/week/history12w + 12w heatmap (per-day COUNT of activities met) + score. All derived server-side. Byte-identical to REST GET /tracing (#65). |
+| `tracing_templates` | ✓ | Merged task-template list (built-in SEED ⊕ user override), each tagged source. LEAN prefill suggestions {id,name,goal,unit,emoji,color,source} for starting a habit without typing. Byte-identical to REST GET /tracing/templates (#109). |
 | `dev_activity` | ✓ | Local git dev-activity over N days: per VN day × repo × source(you/other) commits + LOC(filtered, INFORMATIONAL) + active-span + byRepo + summary. honest-empty + warnings (roots/identity). Byte-identical to REST GET /dev_activity (#63). |
 | `code_insight` | ✓ | On-demand FRESH read of a repo for a cold agent: top-level structure + README excerpt + recent git-log + detected stack + asOf (live, never indexed). repo = name|path under the :ro roots. honest found:false + bounded (caps warned). Byte-identical to REST GET /code_insight (#64). |
 | `repo_memory` | ✓ | The DURABLE curated Repos/<name> wiki note (summary/stack/decisions/lessons/in-progress) a cold agent reads — the persisted complement to code_insight. found:false if none. Write = the wiki PROPOSE tool (kind=note, folder=Repos). Byte-identical to REST GET /code_insight/memory (#64). |
@@ -130,6 +132,7 @@ The wiki MCP tools live on the standalone wiki servers (modules/wiki/mcp), NOT t
 | Tool | Server | Description |
 |---|---|---|
 | `tracing_overview` | tracing | The habit board for today-VN (per-activity today/streak/week/history12w + 12w heatmap + score). is-identity with the shared read tool |
+| `tracing_templates` | tracing | Merged task-template list (SEED ⊕ user override, each tagged source) — LEAN prefill suggestions. is-identity with the shared read tool (#109) |
 | `tracing_log` | tracing | Log a session against an activity — DIRECT write-through (no proposal gate); same-day logs accumulate; returns the updated activity view. Unknown id → {found:False} |
 
 ## Regenerate this doc

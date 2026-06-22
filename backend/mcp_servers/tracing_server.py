@@ -24,6 +24,7 @@ registration; stringized annotations crash that introspection.
 from typing import Any, Callable
 
 from mcp_servers.read_server import tracing_overview as _tracing_overview
+from mcp_servers.read_server import tracing_templates as _tracing_templates  # #109 prefill templates
 from modules.tracing import service as _tracing_service
 from modules.tracing.schema import LogInput
 
@@ -48,6 +49,7 @@ def tracing_log(activity_id: str, val: float, dur_min: int | None = None,
 # per-domain anti-dup spine); tracing_log is this server's write tool (direct append).
 TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "tracing_overview": _tracing_overview,  # reference-imported → is read_server.tracing_overview
+    "tracing_templates": _tracing_templates,  # #109 reference-imported → is read_server.tracing_templates
     "tracing_log": tracing_log,
 }
 

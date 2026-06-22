@@ -42,7 +42,7 @@ def test_finance_analytics_tool_registered_and_count(app_db):
     added project_context; #28 added reminders_list; was 40 after MCP-DEDUP #70 removed 6 wiki dups)."""
     from mcp_servers import read_server as rs
     assert "finance_analytics" in rs.TOOLS
-    assert len(rs.TOOLS) == 46  # REPO-MEMORY-P2 #64: +repo_memory (was 45; #64-P1 +code_insight)
+    assert len(rs.TOOLS) == 47  # TRACING-UX #109: +tracing_templates (was 46; #64 +repo_memory)
 
 
 def test_finance_analytics_envelope_and_jsonable(app_db, monkeypatch):

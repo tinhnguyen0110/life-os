@@ -145,6 +145,7 @@ from modules.reminders.service import list_reminders as _reminders_list
 # DAILY-TRACING-P2 (#65): the agent reads "what did I do today / my streaks" — get_overview is a
 # READ fn (no mutation; log_session/CRUD live on the lifeos-tracing write surface). Read-gate-safe.
 from modules.tracing.reader import get_overview as _tracing_overview
+from modules.tracing.reader import list_templates as _tracing_templates  # #109 read: prefill templates
 # DEV-TRACING-P1 (#63): the agent reads "my dev activity" — get_overview is a READ fn (no mutation;
 # the scan/upsert lives in service + the routine, NOT imported here). Read-gate-safe.
 from modules.dev_activity.reader import get_overview as _dev_activity_overview
@@ -559,6 +560,16 @@ def tracing_overview() -> dict[str, Any]:
     BYTE-IDENTICAL to REST GET /tracing (#24 parity — both return reader.get_overview().model_dump()).
     Read-only (logging a session lives on the lifeos-tracing write surface)."""
     return _tracing_overview().model_dump()
+
+
+def tracing_templates() -> dict[str, Any]:
+    """TRACING-UX T1 (#109): the merged task-template list — built-in SEED templates ⊕ the user's
+    overrides, each tagged ``source`` ('seed' | 'user'). LEAN prefill suggestions
+    ``{templates:[{id,name,goal,unit,emoji,color,source}]}`` for starting a new habit without typing
+    every field. Templates are PREFILL-ONLY (they don't create activities — that's tracing_log /
+    the REST create). BYTE-IDENTICAL to REST GET /tracing/templates (#24 — both via
+    reader.list_templates). Read-only (upsert/delete/reset live on the REST write surface)."""
+    return {"templates": [t.model_dump() for t in _tracing_templates()]}
 
 
 def dev_activity(days: int = 90) -> dict[str, Any]:
@@ -1468,6 +1479,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)
     "tracing_overview": tracing_overview,  # DAILY-TRACING-P2 #65: habit board on lifeos-read (read-only)
+    "tracing_templates": tracing_templates,  # TRACING-UX T1 #109: prefill templates (read, lean, parity)
     "dev_activity": dev_activity,  # DEV-TRACING-P1 #63: local git dev-activity on lifeos-read (read-only)
     "code_insight": code_insight,  # REPO-MEMORY-P1 #64: on-demand repo read on lifeos-read (read-only)
     "repo_memory": repo_memory,  # REPO-MEMORY-P2 #64: durable Repos/<name> note read (read-only)
