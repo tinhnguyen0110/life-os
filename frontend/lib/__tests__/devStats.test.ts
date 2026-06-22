@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   netLoc, commitsPerDay, peakHours, peakHour, totalActiveMinutes, fmtMinutes,
-  velocityWindows, youVsOther, sortRepos,
+  velocityWindows, youVsOther, sortRepos, buildGithubHeatmap,
 } from "../devStats";
 import type { DayView, RepoDay, RepoSummary } from "../types";
 
@@ -126,5 +126,91 @@ describe("devStats — sortable per-repo table", () => {
     const orig = rows.map((r) => r.repo);
     sortRepos(rows, "commits", "desc");
     expect(rows.map((r) => r.repo)).toEqual(orig);
+  });
+});
+
+/* ---- #123 GitHub-style contribution heatmap (pure, deterministic on the data anchor) ---- */
+describe("devStats — buildGithubHeatmap (GitHub-style contribution grid)", () => {
+  // a small, deterministic byDay (newest-first). 2026-06-22 is a Monday.
+  const BYDAY: DayView[] = [
+    DAY({ date: "2026-06-22", totalCommits: 29 }), // Mon
+    DAY({ date: "2026-06-21", totalCommits: 4 }),  // Sun
+    DAY({ date: "2026-06-20", totalCommits: 0 }),  // Sat
+    DAY({ date: "2026-06-19", totalCommits: 12 }), // Fri
+    DAY({ date: "2026-06-15", totalCommits: 8 }),  // prev Mon
+  ];
+
+  it("returns N week-columns, each 7 cells Mon→Sun", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    expect(hm.weeks).toHaveLength(4);
+    for (const wk of hm.weeks) expect(wk).toHaveLength(7);
+  });
+
+  it("places each day's count on the correct (week-col, weekday-row) cell", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    // flatten + index by date
+    const byDate = new Map(hm.weeks.flat().map((c) => [c.date, c]));
+    expect(byDate.get("2026-06-22")?.count).toBe(29); // Mon → row 0
+    expect(byDate.get("2026-06-21")?.count).toBe(4);  // Sun → row 6
+    expect(byDate.get("2026-06-19")?.count).toBe(12); // Fri → row 4
+    // a day with no entry → count 0 (honest, not fabricated)
+    expect(byDate.get("2026-06-18")?.count).toBe(0);
+  });
+
+  it("the last column is the newest date's week; Monday is row 0, Sunday row 6", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    const lastCol = hm.weeks[hm.weeks.length - 1];
+    expect(lastCol[0].date).toBe("2026-06-22"); // Mon row0
+    expect(lastCol[6].date).toBe("2026-06-28"); // Sun row6 (this week's tail)
+  });
+
+  it("bands a count into 0–4 (0 = empty, max → band 4)", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    const byDate = new Map(hm.weeks.flat().map((c) => [c.date, c]));
+    expect(byDate.get("2026-06-20")?.band).toBe(0); // 0 commits → empty band
+    expect(byDate.get("2026-06-22")?.band).toBe(4); // 29 = max → top band
+    expect(byDate.get("2026-06-21")?.band).toBeGreaterThan(0); // 4 commits → some green
+  });
+
+  it("future-of-anchor cells (this week's tail) are inRange=false (blank pad)", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    const byDate = new Map(hm.weeks.flat().map((c) => [c.date, c]));
+    // anchor = 2026-06-22 (Mon); 06-23..06-28 are after it → out of range
+    expect(byDate.get("2026-06-23")?.inRange).toBe(false);
+    expect(byDate.get("2026-06-28")?.inRange).toBe(false);
+    expect(byDate.get("2026-06-22")?.inRange).toBe(true);
+  });
+
+  it("emits month labels (one per month boundary, anchored at a week-col)", () => {
+    const hm = buildGithubHeatmap(BYDAY, 53);
+    expect(hm.monthLabels.length).toBeGreaterThan(0);
+    // each label points at a valid column index + a Th* label
+    for (const ml of hm.monthLabels) {
+      expect(ml.col).toBeGreaterThanOrEqual(0);
+      expect(ml.col).toBeLessThan(hm.weeks.length);
+      expect(ml.label).toMatch(/^Th\d{1,2}$/);
+    }
+  });
+
+  it("totalCommits + maxCount reflect the YOUR-commit data (render-only)", () => {
+    const hm = buildGithubHeatmap(BYDAY, 53);
+    expect(hm.maxCount).toBe(29);
+    expect(hm.totalCommits).toBe(29 + 4 + 0 + 12 + 8);
+  });
+
+  it("empty byDay → empty grid (honest, no crash, no fabricated cells)", () => {
+    const hm = buildGithubHeatmap([], 53);
+    expect(hm.weeks).toEqual([]);
+    expect(hm.monthLabels).toEqual([]);
+    expect(hm.totalCommits).toBe(0);
+    expect(hm.maxCount).toBe(0);
+  });
+
+  it("thresholds are monotonically increasing (distinct bands)", () => {
+    const hm = buildGithubHeatmap(BYDAY, 4);
+    const [t1, t2, t3, t4] = hm.thresholds;
+    expect(t1).toBeLessThanOrEqual(t2);
+    expect(t2).toBeLessThanOrEqual(t3);
+    expect(t3).toBeLessThanOrEqual(t4);
   });
 });

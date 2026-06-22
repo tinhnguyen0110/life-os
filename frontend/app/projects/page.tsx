@@ -48,8 +48,11 @@ const EMPTY_SUMMARY: ProjectsSummary = { act: 0, slow: 0, stall: 0, dead: 0, tot
 function ProjectsInner() {
   const router = useSafeRouter();
   const params = useSearchParams();
+  // #123 — DEFAULT sub-tab = Dev Activity (user-CHỐT "default dec activity", supersedes
+  // #120's running-default; latest user directive wins). The ?tab=running and
+  // ?tab=graveyard deep-links still work explicitly; no/unknown param → dev.
   const tabParam = params?.get("tab");
-  const subTab: SubTab = tabParam === "graveyard" ? "graveyard" : tabParam === "dev" ? "dev" : "running";
+  const subTab: SubTab = tabParam === "running" ? "running" : tabParam === "graveyard" ? "graveyard" : "dev";
 
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
   const [summary, setSummary] = useState<ProjectsSummary>(EMPTY_SUMMARY);
@@ -89,7 +92,9 @@ function ProjectsInner() {
   );
 
   function setTab(t: SubTab) {
-    router.push(t === "graveyard" ? "/projects?tab=graveyard" : t === "dev" ? "/projects?tab=dev" : "/projects");
+    // #123 — dev is the DEFAULT → it's the bare /projects URL; running/graveyard are the
+    // explicit ?tab deep-links. (?tab=dev still resolves to dev too, for the old link.)
+    router.push(t === "graveyard" ? "/projects?tab=graveyard" : t === "running" ? "/projects?tab=running" : "/projects");
   }
 
   async function onHide(p: ProjectStatus) {
@@ -115,13 +120,16 @@ function ProjectsInner() {
         </button>
       </div>
 
-      {/* #114 · #120 sub-tab: Đang chạy | Nghĩa địa | Dev Activity */}
-      <div className="seg" data-testid="project-subtab" role="tablist" style={{ marginBottom: 12 }}>
+      {/* #114 · #120 · #123 sub-tab: Đang chạy | Nghĩa địa | Dev Activity.
+          #123 — underline-tab style (.subnav): active = accent-underline + bright text. */}
+      <div className="subnav" data-testid="project-subtab" role="tablist" style={{ marginBottom: 14 }}>
         <button type="button" role="tab" aria-selected={subTab === "running"} className={subTab === "running" ? "on" : ""} onClick={() => setTab("running")} data-testid="subtab-running">
           Đang chạy
+          {summary.total > 0 && <span className="subnav-count" data-testid="subtab-running-count">{summary.total}</span>}
         </button>
         <button type="button" role="tab" aria-selected={subTab === "graveyard"} className={subTab === "graveyard" ? "on" : ""} onClick={() => setTab("graveyard")} data-testid="subtab-graveyard">
-          Nghĩa địa{summary.dead > 0 ? ` (${summary.dead})` : ""}
+          Nghĩa địa
+          {summary.dead > 0 && <span className="subnav-count" data-testid="subtab-graveyard-count">{summary.dead}</span>}
         </button>
         <button type="button" role="tab" aria-selected={subTab === "dev"} className={subTab === "dev" ? "on" : ""} onClick={() => setTab("dev")} data-testid="subtab-dev">
           Dev Activity

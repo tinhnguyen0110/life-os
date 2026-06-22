@@ -100,6 +100,106 @@ export function youVsOther(byRepo: RepoSummary[], otherRepos: RepoDay[]): { you:
   return { you, other, youPct: total > 0 ? (you / total) * 100 : null };
 }
 
+/* ---- #123 GitHub-style contribution heatmap (pure, testable) ---- */
+
+/** one heatmap cell. date "YYYY-MM-DD", count = YOUR commits that day, band 0–4
+ *  (0 = empty, 1–4 = intensity), inRange=false for the leading pad cells before the
+ *  window start (rendered blank so week 1 aligns to its weekday row). */
+export interface HeatCell {
+  date: string;
+  count: number;
+  band: 0 | 1 | 2 | 3 | 4;
+  inRange: boolean;
+}
+/** a week column = 7 cells, Mon(row0)→Sun(row6). */
+export type HeatWeek = HeatCell[];
+/** a month label anchored at a week-column index (for the strip along the top). */
+export interface HeatMonthLabel { col: number; label: string }
+export interface GithubHeatmap {
+  weeks: HeatWeek[];
+  monthLabels: HeatMonthLabel[];
+  maxCount: number;
+  totalCommits: number;
+  /** the 5-band thresholds actually used (for the legend), [t1,t2,t3,t4]. */
+  thresholds: [number, number, number, number];
+}
+
+const MONTHS_VI = ["Th1", "Th2", "Th3", "Th4", "Th5", "Th6", "Th7", "Th8", "Th9", "Th10", "Th11", "Th12"];
+
+/** band a per-day count into 0–4 by quartile-ish thresholds of the max (GitHub-style:
+ *  0 empty; then 4 increasing greens). Honest: 0 stays band 0. */
+function bandFor(count: number, t: [number, number, number, number]): 0 | 1 | 2 | 3 | 4 {
+  if (count <= 0) return 0;
+  if (count >= t[3]) return 4;
+  if (count >= t[2]) return 3;
+  if (count >= t[1]) return 2;
+  return 1;
+}
+
+/** Build a GitHub-style contribution grid from byDay (newest-first). `weeks` columns,
+ *  each Mon→Sun. Anchors the grid to END on the newest byDay date (its week), going
+ *  `weeks` columns back. Leading cells before the earliest data day are inRange=false
+ *  (blank pad) so the first real week sits on the correct weekday row.
+ *  PURE — given the same byDay it returns the same grid (no Date.now); the anchor is the
+ *  data's newest date, not "today", so it's deterministic + testable. */
+export function buildGithubHeatmap(byDay: DayView[], weeks = 53): GithubHeatmap {
+  const counts = new Map<string, number>();
+  let maxCount = 0;
+  let totalCommits = 0;
+  for (const d of byDay) {
+    counts.set(d.date, d.totalCommits);
+    if (d.totalCommits > maxCount) maxCount = d.totalCommits;
+    totalCommits += d.totalCommits;
+  }
+  // thresholds for the 5 bands (1..4): split the max into quarters (≥1 each, monotone).
+  const q = (f: number) => Math.max(1, Math.ceil(maxCount * f));
+  const thresholds: [number, number, number, number] = maxCount <= 0
+    ? [1, 1, 1, 1]
+    : [1, q(0.25), q(0.5), q(0.75)];
+  // dedupe identical thresholds upward so bands stay distinct-ish (cheap monotone fix).
+  for (let i = 1; i < 4; i++) if (thresholds[i] <= thresholds[i - 1]) thresholds[i] = thresholds[i - 1] + 1;
+
+  // anchor: the newest byDay date (fallback: empty grid).
+  const newest = byDay[0]?.date;
+  if (!newest) {
+    return { weeks: [], monthLabels: [], maxCount: 0, totalCommits: 0, thresholds };
+  }
+  const end = new Date(newest + "T00:00:00Z");
+  // walk back to the Monday of the newest date's week (UTC, Mon=0 convention).
+  const endDow = (end.getUTCDay() + 6) % 7; // 0=Mon .. 6=Sun
+  // last column's Monday:
+  const lastMon = new Date(end);
+  lastMon.setUTCDate(end.getUTCDate() - endDow);
+  // first column's Monday = lastMon − (weeks-1)*7 days.
+  const firstMon = new Date(lastMon);
+  firstMon.setUTCDate(lastMon.getUTCDate() - (weeks - 1) * 7);
+
+  const out: HeatWeek[] = [];
+  const monthLabels: HeatMonthLabel[] = [];
+  let lastLabeledMonth = -1;
+  for (let w = 0; w < weeks; w++) {
+    const week: HeatWeek = [];
+    const colMon = new Date(firstMon);
+    colMon.setUTCDate(firstMon.getUTCDate() + w * 7);
+    // a month label when this column's Monday begins a new month (and there's room).
+    const mo = colMon.getUTCMonth();
+    if (mo !== lastLabeledMonth) {
+      monthLabels.push({ col: w, label: MONTHS_VI[mo] });
+      lastLabeledMonth = mo;
+    }
+    for (let r = 0; r < 7; r++) {
+      const cell = new Date(colMon);
+      cell.setUTCDate(colMon.getUTCDate() + r);
+      const key = cell.toISOString().slice(0, 10);
+      const inRange = cell <= end; // future-of-anchor cells (this week's tail) → out
+      const count = counts.get(key) ?? 0;
+      week.push({ date: key, count, band: inRange ? bandFor(count, thresholds) : 0, inRange });
+    }
+    out.push(week);
+  }
+  return { weeks: out, monthLabels, maxCount, totalCommits, thresholds };
+}
+
 /* ---- sortable per-repo table ---- */
 export type RepoSortKey = "repo" | "commits" | "locAdded" | "locDeleted" | "activeDays" | "lastActive";
 export type SortDir = "asc" | "desc";
