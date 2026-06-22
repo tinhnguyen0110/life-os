@@ -30,7 +30,7 @@ const err422 = (field: string, msg: string) =>
 
 describe("S12 Settings — render + states", () => {
   it("renders the 4 panels render-only from config", async () => {
-    getSettings.mockResolvedValueOnce(ENV(CONFIG()));
+    getSettings.mockResolvedValue(ENV(CONFIG()));
     render(<SettingsPage />);
     await waitFor(() => expect(screen.getByTestId("settings-automation")).toBeInTheDocument());
     expect(screen.getByTestId("settings-account")).toBeInTheDocument();
