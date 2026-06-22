@@ -170,6 +170,7 @@ def _derive_activity_view(act: Activity) -> ActivityView:
         id=act.id, name=act.name, emoji=act.emoji, icon=act.icon, unit=act.unit,
         goal=act.goal, color=act.color,
         remindAt=act.remindAt, remindRepeat=act.remindRepeat,  # #75: surface the reminder link (camel)
+        remindChannel=act.remindChannel,  # #117: the GET /tracing read-back was dropping this → in_app default masked the stored channel
         today=today_stat, streak=streak, week=week, history12w=history,
     )
 

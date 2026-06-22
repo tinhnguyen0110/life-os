@@ -147,3 +147,35 @@ def test_invalid_remind_at_rejected_422(db):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         ActivityInput(id="x", name="X", goal=1.0, remindAt="25:99", remindRepeat="daily")
+
+
+# --- #117: GET /tracing READ-BACK must surface the stored remindChannel ------- #
+# The bug: write persisted remind_channel + _row_to_activity read it, but
+# _derive_activity_view (the ActivityView built for the overview/GET /tracing
+# read-back) DROPPED it → the view always defaulted to in_app, masking the
+# stored discord/email. EXERCISE the read-back surface (svc.overview() →
+# ActivityView), not the POST echo (which was always correct).
+@pytest.mark.parametrize("channel", ["in_app", "email", "discord"])
+def test_117_overview_readback_surfaces_stored_channel(db, channel):
+    """create remindChannel=<channel> → the GET /tracing read-back (overview ActivityView)
+    must report the SAME channel (the #117 read-path bug: it was defaulting to in_app)."""
+    trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
+                                      remindAt="07:00", remindRepeat="daily",
+                                      remindChannel=channel))
+    ov = trc.overview()
+    views = [v for v in ov.activities if v.id == "run"]
+    assert len(views) == 1
+    assert views[0].remindChannel == channel, (
+        f"GET /tracing read-back must surface the stored channel {channel!r}, "
+        f"got {views[0].remindChannel!r} (the #117 view-serializer drop)"
+    )
+
+
+def test_117_get_activity_readback_surfaces_channel(db):
+    """The single-activity read path (get_activity → Activity) already surfaced the channel;
+    pin it alongside the view fix so both read surfaces agree (discord ≠ the in_app default)."""
+    trc.create_activity(ActivityInput(id="run", name="Run", goal=5.0,
+                                      remindAt="07:00", remindRepeat="daily",
+                                      remindChannel="discord"))
+    act = trc.get_activity("run")
+    assert act is not None and act.remindChannel == "discord"
