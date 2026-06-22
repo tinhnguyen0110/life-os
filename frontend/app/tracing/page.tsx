@@ -1,27 +1,33 @@
 "use client";
 /* ============================================================
-   /tracing (#65-P3 · S14 · G-HABIT) — the Daily Tracing habit board. The user
-   sees today's per-activity cards (streak + progress), a 12-week heatmap, the
-   score panel, and can LOG a session + add/archive activities.
+   /daily-tracing (#65-P3 · S14 · G-HABIT → #122 TRACING-UX2 redesign)
 
-   Ported from mock template/Life Command/app/screens-active.js (S14 block):
-   per-activity card w/ streak badge (🔥≥7 / ✦≥3 / none), week bars, today
-   progress; score KPI strip; 12-week heatmap (band by per-day COUNT). RENDER-ONLY
-   — the backend computes ALL derived metrics (streak/pct/week/heatmap/score); the
-   FE displays them + POSTs raw sessions, never recomputes.
+   USER-CHỐT 2-column redesign — track daily todos → notice/nudge if not ticked. SIMPLE:
+   text + action + optional-remind. The old chip-row / emoji / color / goal / heavy
+   multi-field form / template-picker are INTENTIONALLY DROPPED (user rejected them).
 
-   ADAPTATION (honest-mirror): the mock timeline shows per-session rows with
-   timestamps, but the API exposes only a per-activity TODAY rollup (no per-session
-   list) — so the timeline renders one row per activity that has today activity,
-   from the real API, instead of fabricating session timestamps.
-   Errors are the #46/#70 {error:{code,message,hint}} shape — message + hint shown.
+   • LEFT  — Hoạt động (todos): add-via-text (type → Enter → adds an activity), each
+     todo = text + a tick checkbox + an optional inline 🔔-remind (time + repeat +
+     #111 channel). A "todo" is an activity with a hidden goal=1; ticking = logging one
+     completing session (val=1) → today.done flips (verified live). RENDER-ONLY: done/
+     streak from the backend.
+   • RIGHT — Note (day-note, #121): a text card + optional 🔔-remind. Wired to
+     GET/POST/PUT/DELETE /tracing/notes. A note WITH a remind links a reminder (BE-side).
+   • Streak + heatmap KEPT but SMALL / collapsed (a <details>, not the focus).
+
+   RENDER-ONLY: the backend computes everything (done/streak/heatmap/score); the FE
+   displays + POSTs raw todos/sessions/notes. Errors = the #46/#70 {error:{code,message,
+   hint}} shape — message + hint shown.
    ============================================================ */
 import { useEffect, useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
+import { useTracingNotes } from "@/lib/useTracingNotes";
 import { apiBase, ApiError, getReminderChannels } from "@/lib/api";
-import { TracingTemplatePicker } from "@/components/TracingTemplatePicker";
 import { slugifyVi } from "@/lib/format";
-import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat, RemindChannel, ReminderChannelOption } from "@/lib/types";
+import type {
+  ActivityView, ActivityInput, TracingNote, TracingNoteInput,
+  RemindRepeat, RemindChannel, ReminderChannelOption,
+} from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
 
@@ -30,44 +36,96 @@ function streakBadge(streak: number): string {
   return streak >= 7 ? "🔥" : streak >= 3 ? "✦" : "";
 }
 
-/** heatmap cell color by per-day COUNT (0 = empty; band by count/max where max =
- *  active-activity-count, capped so a 0-activity board doesn't divide-by-zero).
- *  Ours is COUNT (not the mock's capped 0-4) — band relative to max. */
+/** heatmap cell color by per-day COUNT (0 = empty; band by count/max). */
 function heatColor(count: number, max: number): string {
   if (count <= 0) return "var(--bg-3)";
   const denom = Math.max(1, max);
-  const a = 0.18 + 0.82 * Math.min(1, count / denom); // 18%..100% opacity
+  const a = 0.18 + 0.82 * Math.min(1, count / denom);
   return `color-mix(in oklch, var(--accent) ${Math.round(a * 100)}%, var(--bg-3))`;
 }
 
-type LogForm = { id: string; name: string; unit: string; val: string; durMin: string; note: string };
-type AddForm = {
-  id: string; name: string; goal: string; unit: string; emoji: string; color: string;
-  // #75: optional habit-reminder nudge. remindOn drives the toggle; when on, remindTime
-  // + remindRepeat become the activity's remindAt/remindRepeat (BE creates the reminder).
-  remindOn: boolean; remindTime: string; remindRepeat: RemindRepeat;
-  // #111: which channel the linked reminder fires on (in_app/email/discord). Default in_app.
-  remindChannel: RemindChannel;
-  // #110: idManual=true once the user edits the id in Advanced → auto-slug stops (so we
-  // don't clobber their manual id when they keep typing the name). A template pick sets
-  // an explicit id → also idManual (don't re-slug a picked id from its name).
-  idManual: boolean;
-};
+/** ApiError message + hint (hint shown when present — #46/#70 agent-error). */
+function errText(err: unknown): string {
+  if (err instanceof ApiError) return err.hint ? `${err.message} (${err.hint})` : err.message;
+  return (err as Error).message;
+}
 
-const EMPTY_ADD: AddForm = {
-  id: "", name: "", goal: "", unit: "", emoji: "", color: "#FF6A33",
-  remindOn: false, remindTime: "07:00", remindRepeat: "daily", remindChannel: "in_app", idManual: false,
-};
+/** a small, reusable inline 🔔-remind control: a toggle + (when on) time + repeat +
+ *  #111 channel. Used by BOTH the todo-add row and the note card. Controlled. */
+type RemindState = { on: boolean; time: string; repeat: RemindRepeat; channel: RemindChannel };
+const EMPTY_REMIND: RemindState = { on: false, time: "07:00", repeat: "daily", channel: "in_app" };
+
+function RemindControls({
+  value, onChange, channels, idPrefix,
+}: {
+  value: RemindState;
+  onChange: (next: RemindState) => void;
+  channels: ReminderChannelOption[];
+  idPrefix: string;
+}) {
+  return (
+    <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button
+        type="button"
+        className={`tab${value.on ? " on" : ""}`}
+        onClick={() => onChange({ ...value, on: !value.on })}
+        data-testid={`${idPrefix}-remind-toggle`}
+        aria-pressed={value.on}
+      >
+        🔔 {value.on ? "Bật" : "Nhắc nhở"}
+      </button>
+      {value.on && (
+        <>
+          <input
+            className="finput num" type="time" style={{ width: 110 }}
+            value={value.time}
+            onChange={(e) => onChange({ ...value, time: e.target.value })}
+            data-testid={`${idPrefix}-remind-time`}
+            aria-label="Giờ nhắc"
+          />
+          <select
+            className="finput" style={{ width: 140 }}
+            value={value.repeat}
+            onChange={(e) => onChange({ ...value, repeat: e.target.value as RemindRepeat })}
+            data-testid={`${idPrefix}-remind-repeat`}
+            aria-label="Lặp lại"
+          >
+            <option value="daily">Hằng ngày</option>
+            <option value="weekdays">Ngày thường (T2–T6)</option>
+          </select>
+          <select
+            className="finput" style={{ width: 130 }}
+            value={value.channel}
+            onChange={(e) => onChange({ ...value, channel: e.target.value as RemindChannel })}
+            data-testid={`${idPrefix}-remind-channel`}
+            aria-label="Kênh nhắc nhở"
+          >
+            {channels.map((c) => (
+              <option key={c.id} value={c.id} disabled={!c.available} data-testid={`${idPrefix}-channel-opt-${c.id}`}>
+                {c.label}{c.available ? "" : " (chưa cấu hình)"}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** a compact remind chip shown on a todo/note that has a remind set. */
+function RemindChip({ at, repeat, testid }: { at: string; repeat: RemindRepeat; testid: string }) {
+  return (
+    <span className="tagchip acc" data-testid={testid} title="Nhắc nhở">
+      🔔 <span className="num">{at}</span> {repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : ""}
+    </span>
+  );
+}
 
 export default function TracingPage() {
   const { data, status, errMsg, warning, reload, log, add, archive } = useTracing();
-  const [logForm, setLogForm] = useState<LogForm | null>(null);
-  const [adding, setAdding] = useState<AddForm | null>(null);
-  // #110 — the "Nâng cao" (id/emoji/màu) disclosure; collapsed by default (lean form).
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const notesApi = useTracingNotes();
 
-  // #111 — reminder channels (in_app/email/discord). Fetched once; render-safe fallback
-  // to in_app-only-enabled if the API errors (so the form never blocks).
+  // #111 — reminder channels (in_app/email/discord). Fetched once; render-safe fallback.
   const IN_APP_ONLY: ReminderChannelOption[] = [{ id: "in_app", label: "In-app", available: true }];
   const [channels, setChannels] = useState<ReminderChannelOption[]>(IN_APP_ONLY);
   useEffect(() => {
@@ -78,107 +136,112 @@ export default function TracingPage() {
         if (!alive) return;
         const list = res?.data?.channels;
         if (Array.isArray(list) && list.length > 0) setChannels(list);
-      } catch {
-        // fallback already = in_app-only; the form still works
-      }
+      } catch { /* fallback already = in_app-only */ }
     })();
     return () => { alive = false; };
   }, []);
-  const [busy, setBusy] = useState(false);
-  const [formErr, setFormErr] = useState("");
+
+  // ---- LEFT: add-a-todo (text + optional remind) ----
+  const [todoText, setTodoText] = useState("");
+  const [todoRemind, setTodoRemind] = useState<RemindState>({ ...EMPTY_REMIND });
+  const [addBusy, setAddBusy] = useState(false);
+  const [addErr, setAddErr] = useState("");
   const [rowErr, setRowErr] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // ---- RIGHT: add-a-note (text + optional remind) ----
+  const [noteText, setNoteText] = useState("");
+  const [noteRemind, setNoteRemind] = useState<RemindState>({ ...EMPTY_REMIND });
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteErr, setNoteErr] = useState("");
+  const [noteRowErr, setNoteRowErr] = useState("");
+  const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
 
   const acts = data.activities ?? [];
   const sc = data.score;
-  // max per-day count across the heatmap (for relative banding); fall back to active count.
-  const heatMax = useMemo(
-    () => Math.max(sc.total, ...data.heatmap12w),
-    [data.heatmap12w, sc.total],
-  );
-  // timeline (adapted): one row per activity that has any today activity.
-  const todayRows = useMemo(() => acts.filter((a) => a.today.sessions > 0), [acts]);
+  const heatMax = useMemo(() => Math.max(sc.total, ...data.heatmap12w), [data.heatmap12w, sc.total]);
 
-  async function onLog(e: React.FormEvent) {
+  async function onAddTodo(e: React.FormEvent) {
     e.preventDefault();
-    if (!logForm) return;
-    setFormErr("");
-    const val = Number(logForm.val);
-    if (logForm.val.trim() === "" || !Number.isFinite(val) || val < 0) {
-      setFormErr("Cần một giá trị ≥ 0.");
-      return;
-    }
-    const durMin = logForm.durMin.trim() === "" ? null : Number(logForm.durMin);
-    if (durMin != null && (!Number.isInteger(durMin) || durMin < 0)) {
-      setFormErr("Thời lượng (phút) phải là số nguyên ≥ 0.");
-      return;
-    }
-    const body: TracingLogInput = { val, dur_min: durMin, note: logForm.note.trim() || null };
-    setBusy(true);
-    try {
-      await log(logForm.id, body);
-      setLogForm(null);
-    } catch (err) {
-      setFormErr(errText(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!adding) return;
-    setFormErr("");
-    // #110 — the id is auto-slugged from the name (user doesn't type it; Advanced lets
-    // them override). Derive it here so a lean Tên-only submit still has a valid id.
-    const id = (adding.id.trim() || slugifyVi(adding.name)).trim();
-    if (!adding.name.trim()) {
-      setFormErr("Cần tên hoạt động.");
-      return;
-    }
-    if (!id) {
-      setFormErr("Tên không tạo được id — đặt id ở Nâng cao.");
-      return;
-    }
-    const goal = Number(adding.goal);
-    if (adding.goal.trim() === "" || !Number.isFinite(goal) || goal <= 0) {
-      setFormErr("Mục tiêu phải là số > 0.");
-      return;
-    }
+    setAddErr("");
+    const text = todoText.trim();
+    if (!text) { setAddErr("Nhập nội dung việc cần làm."); return; }
+    const id = slugifyVi(text);
+    if (!id) { setAddErr("Nội dung không tạo được id — thử chữ có dấu cách / chữ cái."); return; }
+    // a "todo" = an activity with a hidden goal=1 (tick = log one completing session).
     const body: ActivityInput = {
-      id,
-      name: adding.name.trim(),
-      goal,
-      unit: adding.unit.trim() || undefined,
-      emoji: adding.emoji.trim() || undefined,
-      color: adding.color || undefined,
-      // #75: send remindAt/remindRepeat (CAMEL — the tracing module's wire convention,
-      // like durMin) ONLY when the toggle is on — the BE creates the linked reminder.
-      // Off → remindAt null (no reminder). FE just sends it.
-      remindAt: adding.remindOn ? adding.remindTime : null,
-      remindRepeat: adding.remindOn ? adding.remindRepeat : "off",
-      // #111: which channel the linked reminder fires on (only meaningful when on).
-      remindChannel: adding.remindOn ? adding.remindChannel : undefined,
+      id, name: text, goal: 1,
+      remindAt: todoRemind.on ? todoRemind.time : null,
+      remindRepeat: todoRemind.on ? todoRemind.repeat : "off",
+      remindChannel: todoRemind.on ? todoRemind.channel : undefined,
     };
-    setBusy(true);
+    setAddBusy(true);
     try {
       await add(body);
-      setAdding(null);
+      setTodoText("");
+      setTodoRemind({ ...EMPTY_REMIND });
     } catch (err) {
-      setFormErr(errText(err));
+      setAddErr(errText(err));
     } finally {
-      setBusy(false);
+      setAddBusy(false);
     }
   }
 
-  async function onArchive(id: string) {
-    setRowErr("");
-    setBusy(true);
+  // tick a todo = log one completing session (val=1 ≥ goal=1 → today.done flips).
+  async function onTickTodo(a: ActivityView) {
+    if (a.today.done) return; // already done — no un-tick (sessions are append-only)
+    setRowErr(""); setBusyId(a.id);
+    try {
+      await log(a.id, { val: 1, dur_min: null, note: null });
+    } catch (err) {
+      setRowErr(errText(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onArchiveTodo(id: string) {
+    setRowErr(""); setBusyId(id);
     try {
       await archive(id);
     } catch (err) {
       setRowErr(errText(err));
     } finally {
-      setBusy(false);
+      setBusyId(null);
+    }
+  }
+
+  async function onAddNote(e: React.FormEvent) {
+    e.preventDefault();
+    setNoteErr("");
+    const text = noteText.trim();
+    if (!text) { setNoteErr("Nhập nội dung ghi chú."); return; }
+    const body: TracingNoteInput = {
+      text,
+      remindAt: noteRemind.on ? noteRemind.time : null,
+      remindRepeat: noteRemind.on ? noteRemind.repeat : "off",
+      remindChannel: noteRemind.on ? noteRemind.channel : undefined,
+    };
+    setNoteBusy(true);
+    try {
+      await notesApi.create(body);
+      setNoteText("");
+      setNoteRemind({ ...EMPTY_REMIND });
+    } catch (err) {
+      setNoteErr(errText(err));
+    } finally {
+      setNoteBusy(false);
+    }
+  }
+
+  async function onDeleteNote(n: TracingNote) {
+    setNoteRowErr(""); setNoteBusyId(n.id);
+    try {
+      await notesApi.remove(n.id);
+    } catch (err) {
+      setNoteRowErr(errText(err));
+    } finally {
+      setNoteBusyId(null);
     }
   }
 
@@ -187,206 +250,13 @@ export default function TracingPage() {
       <div className="vtitle">
         <h1>Daily Tracing</h1>
         <span className="sub">
-          {data.date || "—"} · {sc.done}/{sc.total} activities · {sc.timeActive || "0m"} active
+          {data.date || "—"} · {sc.done}/{sc.total} việc xong{sc.timeActive ? ` · ${sc.timeActive} active` : ""}
         </span>
-        <span className="sp" />
-        <button
-          className="btn accent"
-          type="button"
-          onClick={() => { setAdding({ ...EMPTY_ADD }); setFormErr(""); setAdvancedOpen(false); }}
-          data-testid="add-activity"
-        >
-          + Hoạt động
-        </button>
       </div>
 
       {warning && (
         <div className="panel" style={{ padding: "10px 14px" }} data-testid="tracing-warning">
           <span className="hint mid">⚠ {warning}</span>
-        </div>
-      )}
-
-      {/* KPI strip — render-only from the backend score. */}
-      {status === "ready" && (
-        <div className="grid g-4" data-testid="tracing-score">
-          <div className="stat">
-            <span className="sl">Thời gian active</span>
-            <span className="sv acc">{sc.timeActive || "0m"}</span>
-            <span className="sd faint">hôm nay · {sc.done}/{sc.total} done</span>
-          </div>
-          <div className="stat">
-            <span className="sl">Streak tốt nhất</span>
-            <span className="sv pos">{sc.topStreak}</span>
-            <span className="sd faint">ngày liên tiếp</span>
-          </div>
-          <div className="stat">
-            <span className="sl">Hoàn thành hôm nay</span>
-            <span className="sv">{sc.pct}%</span>
-            <span className="sd faint">{sc.done}/{sc.total} đạt mục tiêu</span>
-          </div>
-          <div className="stat">
-            <span className="sl">Còn lại hôm nay</span>
-            <span className="sv mid">{Math.max(0, sc.total - sc.done)}</span>
-            <span className="sd faint">hoạt động chưa đạt</span>
-          </div>
-        </div>
-      )}
-
-      {/* Add-activity form */}
-      {adding && (
-        <div className="panel" data-testid="add-form">
-          <div className="phead"><span className="kicker">Hoạt động mới</span></div>
-          {/* #109 — template picker: tick a preset → prefill the form below (keeps the
-              user's reminder toggle state; only the activity fields are filled). */}
-          <div style={{ padding: "10px 16px 0" }}>
-            <TracingTemplatePicker
-              onPick={(t) => setAdding((prev) => ({
-                ...(prev ?? EMPTY_ADD),
-                // a picked template carries an explicit id → idManual so we don't re-slug
-                // it from the name. Prefills the advanced fields (id/emoji/color) too.
-                id: t.id, name: t.name, goal: t.goal, unit: t.unit, emoji: t.emoji, color: t.color,
-                idManual: true,
-              }))}
-            />
-          </div>
-          <form onSubmit={onAdd} style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {/* #110 — LEAN default: just the 3 essentials. id is auto-slugged from the
-                name (shown faint as a preview); emoji/màu/id-override live in Nâng cao. */}
-            <div className="field" style={{ gridColumn: "1 / 3" }}><span className="flabel">Tên hoạt động</span>
-              <input
-                className="finput"
-                value={adding.name}
-                onChange={(e) => setAdding({
-                  ...adding,
-                  name: e.target.value,
-                  // auto-slug the id from the name until the user overrides it in Advanced
-                  id: adding.idManual ? adding.id : slugifyVi(e.target.value),
-                })}
-                data-testid="a-name"
-                placeholder="Uống nước"
-                autoFocus
-              />
-              {/* the derived id, shown so the user sees what's saved (read-only preview) */}
-              {!adding.idManual && adding.name.trim() && (
-                <span className="hint faint" style={{ fontSize: 11 }} data-testid="a-id-preview">id: {slugifyVi(adding.name) || "—"}</span>
-              )}
-            </div>
-            <div className="field"><span className="flabel">Mục tiêu / ngày</span>
-              <input className="finput num" inputMode="decimal" value={adding.goal} onChange={(e) => setAdding({ ...adding, goal: e.target.value })} data-testid="a-goal" placeholder="8" /></div>
-            <div className="field"><span className="flabel">Đơn vị</span>
-              <input className="finput" value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} data-testid="a-unit" placeholder="ly" /></div>
-
-            {/* #110 — Advanced (Nâng cao): id-override + emoji + màu. COLLAPSED by default. */}
-            <div className="field" style={{ gridColumn: "1 / 3" }}>
-              <button
-                type="button"
-                className="tab"
-                onClick={() => setAdvancedOpen((o) => !o)}
-                aria-expanded={advancedOpen}
-                data-testid="a-advanced-toggle"
-                style={{ alignSelf: "flex-start" }}
-              >
-                {advancedOpen ? "▾ Nâng cao" : "▸ Nâng cao (id, emoji, màu)"}
-              </button>
-            </div>
-            {advancedOpen && (
-              <div className="adv-fields" data-testid="a-advanced" style={{ gridColumn: "1 / 3", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                <div className="field"><span className="flabel">ID (tự tạo từ tên)</span>
-                  <input
-                    className="finput"
-                    value={adding.id}
-                    onChange={(e) => setAdding({ ...adding, id: e.target.value, idManual: true })}
-                    data-testid="a-id"
-                    placeholder="uong-nuoc"
-                  /></div>
-                <div className="field"><span className="flabel">Emoji</span>
-                  <input className="finput" value={adding.emoji} onChange={(e) => setAdding({ ...adding, emoji: e.target.value })} data-testid="a-emoji" placeholder="💧" /></div>
-                <div className="field"><span className="flabel">Màu</span>
-                  <input className="finput" type="color" value={adding.color} onChange={(e) => setAdding({ ...adding, color: e.target.value })} data-testid="a-color" /></div>
-              </div>
-            )}
-
-            {/* #75: habit-reminder nudge. Toggle on → time + cadence → sets the
-                activity's remindAt/remindRepeat; the BE creates the reminder. */}
-            <div className="field" style={{ gridColumn: "1 / 3" }}>
-              <span className="flabel">Nhắc nhở (tùy chọn)</span>
-              <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className={`tab${adding.remindOn ? " on" : ""}`}
-                  onClick={() => setAdding({ ...adding, remindOn: !adding.remindOn })}
-                  data-testid="a-remind-toggle"
-                  aria-pressed={adding.remindOn}
-                >
-                  🔔 {adding.remindOn ? "Bật" : "Tắt"}
-                </button>
-                {adding.remindOn && (
-                  <>
-                    <input
-                      className="finput num"
-                      type="time"
-                      style={{ width: 120 }}
-                      value={adding.remindTime}
-                      onChange={(e) => setAdding({ ...adding, remindTime: e.target.value })}
-                      data-testid="a-remind-time"
-                    />
-                    <select
-                      className="finput"
-                      style={{ width: 150 }}
-                      value={adding.remindRepeat}
-                      onChange={(e) => setAdding({ ...adding, remindRepeat: e.target.value as RemindRepeat })}
-                      data-testid="a-remind-repeat"
-                    >
-                      <option value="daily">Hằng ngày</option>
-                      <option value="weekdays">Ngày thường (T2–T6)</option>
-                    </select>
-                    {/* #111 — channel select: only-available enabled; in_app always on. */}
-                    <select
-                      className="finput"
-                      style={{ width: 130 }}
-                      value={adding.remindChannel}
-                      onChange={(e) => setAdding({ ...adding, remindChannel: e.target.value as RemindChannel })}
-                      data-testid="a-remind-channel"
-                      aria-label="Kênh nhắc nhở"
-                    >
-                      {channels.map((c) => (
-                        <option key={c.id} value={c.id} disabled={!c.available} data-testid={`a-channel-opt-${c.id}`}>
-                          {c.label}{c.available ? "" : " (chưa cấu hình)"}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-              </div>
-              {adding.remindOn && <span className="fhint">BE sẽ tạo một nhắc nhở "{adding.remindTime} {adding.remindRepeat === "daily" ? "hằng ngày" : "ngày thường"}" cho thói quen này.</span>}
-            </div>
-
-            {formErr && <span className="hint neg" style={{ gridColumn: "1 / 3" }} data-testid="add-error">{formErr}</span>}
-            <div className="row" style={{ gap: 8, gridColumn: "1 / 3" }}>
-              <button className="btn accent" type="submit" disabled={busy} data-testid="a-submit">{busy ? "Đang lưu…" : "Tạo hoạt động"}</button>
-              <button className="btn" type="button" onClick={() => setAdding(null)} disabled={busy}>Hủy</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Log-session form */}
-      {logForm && (
-        <div className="panel" data-testid="log-form">
-          <div className="phead"><span className="kicker">Log · {logForm.name}</span></div>
-          <form onSubmit={onLog} style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div className="field"><span className="flabel">Giá trị{logForm.unit ? ` (${logForm.unit})` : ""}</span>
-              <input className="finput num" inputMode="decimal" value={logForm.val} onChange={(e) => setLogForm({ ...logForm, val: e.target.value })} data-testid="log-val" placeholder="3" autoFocus /></div>
-            <div className="field"><span className="flabel">Thời lượng (phút, tùy chọn)</span>
-              <input className="finput num" inputMode="numeric" value={logForm.durMin} onChange={(e) => setLogForm({ ...logForm, durMin: e.target.value })} data-testid="log-dur" placeholder="15" /></div>
-            <div className="field" style={{ gridColumn: "1 / 3" }}><span className="flabel">Ghi chú (tùy chọn)</span>
-              <input className="finput" value={logForm.note} onChange={(e) => setLogForm({ ...logForm, note: e.target.value })} data-testid="log-note" placeholder="sáng" /></div>
-            {formErr && <span className="hint neg" style={{ gridColumn: "1 / 3" }} data-testid="log-error">{formErr}</span>}
-            <div className="row" style={{ gap: 8, gridColumn: "1 / 3" }}>
-              <button className="btn accent" type="submit" disabled={busy} data-testid="log-submit">{busy ? "Đang lưu…" : "Ghi session"}</button>
-              <button className="btn" type="button" onClick={() => setLogForm(null)} disabled={busy}>Hủy</button>
-            </div>
-          </form>
         </div>
       )}
 
@@ -402,156 +272,187 @@ export default function TracingPage() {
 
       {status === "ready" && (
         <>
-          {rowErr && (
-            <div className="panel" style={{ padding: "10px 14px" }}>
-              <span className="hint neg" data-testid="row-error">⚠ {rowErr}</span>
-            </div>
-          )}
+          {/* ===== 2-COLUMN: todos (left) | note (right) ===== */}
+          <div className="grid tracing-2col" style={{ gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }} data-testid="tracing-2col">
 
-          {acts.length === 0 ? (
-            <div className="panel" data-testid="tracing-empty">
-              <div style={{ padding: "30px 18px", textAlign: "center" }}>
-                <div className="hint" style={{ fontSize: 13 }}>Chưa có hoạt động nào.</div>
-                <div className="hint faint" style={{ marginTop: 6 }}>
-                  Thêm một hoạt động (vd: uống nước, tập thể dục, đọc sách) để bắt đầu theo dõi mỗi ngày.
+            {/* ---------- LEFT — Hoạt động (todos) ---------- */}
+            <div className="panel" data-testid="tracing-todos" style={{ overflow: "hidden" }}>
+              <div className="phead">
+                <span className="kicker">Hoạt động hôm nay</span>
+                <span className="hint" style={{ marginLeft: "auto" }}>{sc.done}/{sc.total} xong</span>
+              </div>
+
+              {/* add-via-text row */}
+              <form onSubmit={onAddTodo} style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-form">
+                <div className="row" style={{ gap: 8 }}>
+                  <input
+                    className="finput"
+                    style={{ flex: 1 }}
+                    value={todoText}
+                    onChange={(e) => setTodoText(e.target.value)}
+                    placeholder="Thêm việc cần làm hôm nay…"
+                    data-testid="todo-input"
+                    aria-label="Việc cần làm"
+                  />
+                  <button className="btn accent" type="submit" disabled={addBusy} data-testid="todo-submit">
+                    {addBusy ? "…" : "Thêm"}
+                  </button>
                 </div>
-                <button className="btn accent" type="button" style={{ marginTop: 12 }} onClick={() => { setAdding({ ...EMPTY_ADD }); setFormErr(""); }} data-testid="empty-add">
-                  + Thêm hoạt động đầu tiên
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Activity cards */}
-              <div className="grid g-4" data-testid="activity-cards">
-                {acts.map((a) => <ActivityCard key={a.id} a={a} onLog={() => { setLogForm({ id: a.id, name: a.name, unit: a.unit, val: "", durMin: "", note: "" }); setFormErr(""); }} onArchive={() => onArchive(a.id)} busy={busy} />)}
-              </div>
+                <RemindControls value={todoRemind} onChange={setTodoRemind} channels={channels} idPrefix="todo" />
+                {addErr && <span className="hint neg" data-testid="todo-add-error">{addErr}</span>}
+              </form>
 
-              {/* Timeline + heatmap */}
-              <div className="grid" style={{ gridTemplateColumns: "1fr 320px", gap: 14 }}>
-                {/* today timeline (adapted: per-activity today rollup) */}
-                <div className="panel" style={{ overflow: "hidden" }} data-testid="tracing-timeline">
-                  <div className="phead">
-                    <span className="kicker">Hôm nay</span>
-                    <span className="hint" style={{ marginLeft: "auto" }}>{todayRows.length} hoạt động có session</span>
+              {rowErr && <div style={{ padding: "0 16px" }}><span className="hint neg" data-testid="todo-row-error">⚠ {rowErr}</span></div>}
+
+              {/* todo list */}
+              <div className="tl-list" style={{ padding: "6px 8px 10px" }}>
+                {acts.length === 0 ? (
+                  <div style={{ padding: "22px 12px", textAlign: "center" }} data-testid="todos-empty">
+                    <div className="hint" style={{ fontSize: 13 }}>Chưa có việc nào hôm nay.</div>
+                    <div className="hint faint" style={{ marginTop: 4 }}>Gõ ở trên + Enter để thêm việc đầu tiên.</div>
                   </div>
-                  <div className="tl-list">
-                    {todayRows.length === 0 ? (
-                      <div style={{ padding: "26px", textAlign: "center" }}><span className="hint faint">Chưa có session nào hôm nay.</span></div>
-                    ) : (
-                      todayRows.map((a) => (
-                        <div className="tl-row" key={a.id} data-testid={`tl-${a.id}`}>
-                          <div className="tl-time" style={{ color: a.today.done ? a.color : "var(--tx-2)" }}>{a.today.pct}%</div>
-                          <div className="tl-dot" style={{ background: a.color }} />
-                          <div className="tl-body">
-                            <span style={{ fontSize: 11, marginRight: 4 }}>{a.emoji}</span>
-                            <b style={{ color: "var(--tx-0)", fontFamily: "var(--mono)", fontSize: 12 }}>{a.name}</b>
-                            <span className="faint" style={{ fontSize: 11.5, marginLeft: 4 }}>· {a.today.val} {a.unit} · {a.today.dur} · {a.today.sessions} session</span>
-                            {a.today.note && <div className="faint" style={{ fontSize: 11, marginTop: 2 }}>{a.today.note}</div>}
-                          </div>
+                ) : (
+                  acts.map((a) => (
+                    <div className="todo-row" key={a.id} data-testid={`todo-${a.id}`} data-done={a.today.done}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 8px", borderBottom: "1px solid var(--bg-2)" }}>
+                      <button
+                        type="button"
+                        className={`todo-tick${a.today.done ? " on" : ""}`}
+                        onClick={() => onTickTodo(a)}
+                        disabled={busyId === a.id || a.today.done}
+                        data-testid={`tick-${a.id}`}
+                        aria-pressed={a.today.done}
+                        aria-label={a.today.done ? "Đã xong" : "Đánh dấu xong"}
+                        title={a.today.done ? "Đã xong hôm nay" : "Đánh dấu xong"}
+                        style={{
+                          width: 20, height: 20, borderRadius: 5, flexShrink: 0, cursor: a.today.done ? "default" : "pointer",
+                          border: `1.5px solid ${a.today.done ? "var(--green)" : "var(--tx-2)"}`,
+                          background: a.today.done ? "var(--green)" : "transparent",
+                          color: "var(--bg-0)", fontSize: 12, lineHeight: 1, fontWeight: 700,
+                        }}
+                      >
+                        {a.today.done ? "✓" : ""}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span data-testid={`todo-text-${a.id}`} style={{
+                          fontSize: 13, color: a.today.done ? "var(--tx-2)" : "var(--tx-0)",
+                          textDecoration: a.today.done ? "line-through" : "none",
+                        }}>{a.name}</span>
+                        <div className="row" style={{ gap: 6, marginTop: 3, alignItems: "center", flexWrap: "wrap" }}>
+                          {a.streak > 0 && (
+                            <span className="num faint" style={{ fontSize: 10.5 }} data-testid={`todo-streak-${a.id}`}>
+                              {a.streak}d {streakBadge(a.streak)}
+                            </span>
+                          )}
+                          {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
+                            <RemindChip at={a.remindAt} repeat={a.remindRepeat} testid={`todo-remind-${a.id}`} />
+                          )}
                         </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* heatmap */}
-                <div className="panel" style={{ overflow: "hidden" }} data-testid="tracing-heatmap">
-                  <div className="phead"><span className="kicker">Activity heatmap</span><span className="hint" style={{ marginLeft: "auto" }}>12 tuần qua</span></div>
-                  <div style={{ padding: "10px 14px 14px" }}>
-                    <div className="heatmap-wrap">
-                      <div className="hm-days">{WEEK_DAYS.map((d) => <div className="hm-day" key={d}>{d}</div>)}</div>
-                      <div className="hm-grid" data-testid="heatmap-grid" role="img" aria-label="Lịch sử 12 tuần — số hoạt động đạt mục tiêu mỗi ngày">
-                        {data.heatmap12w.map((v, i) => (
-                          <div className="hc" key={i} style={{ background: heatColor(v, heatMax) }} title={`${v} hoạt động đạt`} aria-label={`${v} hoạt động đạt`} data-testid={`hc-${i}`} data-count={v} />
-                        ))}
                       </div>
+                      <button className="btn sm ghost" type="button" onClick={() => onArchiveTodo(a.id)}
+                        disabled={busyId === a.id} data-testid={`todo-archive-${a.id}`} title="Xóa khỏi danh sách">✕</button>
                     </div>
-                    <div className="hm-legend" aria-hidden="true">
-                      <span className="faint">Ít</span>
-                      {[0, 1, 2, 3, 4].map((v) => <div className="hc" key={v} style={{ background: heatColor(v, 4) }} />)}
-                      <span className="faint">Nhiều</span>
-                    </div>
-                    <div className="hm-acts" style={{ marginTop: 14 }}>
-                      {acts.map((a) => (
-                        <div className="hma-row" key={a.id}>
-                          <span style={{ fontSize: 11 }}>{a.emoji}</span>
-                          <span style={{ fontSize: 12, flex: 1 }}>{a.name}</span>
-                          <span className="num" style={{ fontSize: 11.5, color: a.color }}>{a.streak}d streak {streakBadge(a.streak)}</span>
-                        </div>
-                      ))}
-                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* ---------- RIGHT — Note (day-note) ---------- */}
+            <div className="panel" data-testid="tracing-notes" style={{ overflow: "hidden" }}>
+              <div className="phead">
+                <span className="kicker">Ghi chú trong ngày</span>
+                <span className="hint" style={{ marginLeft: "auto" }}>{notesApi.notes.length} ghi chú</span>
+              </div>
+
+              {/* add-a-note */}
+              <form onSubmit={onAddNote} style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="note-add-form">
+                <textarea
+                  className="finput"
+                  rows={2}
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Ghi lại điều cần nhớ / một suy nghĩ trong ngày…"
+                  data-testid="note-input"
+                  aria-label="Nội dung ghi chú"
+                  style={{ resize: "vertical" }}
+                />
+                <RemindControls value={noteRemind} onChange={setNoteRemind} channels={channels} idPrefix="note" />
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn accent" type="submit" disabled={noteBusy} data-testid="note-submit">
+                    {noteBusy ? "Đang lưu…" : "Lưu ghi chú"}
+                  </button>
+                </div>
+                {noteErr && <span className="hint neg" data-testid="note-add-error">{noteErr}</span>}
+              </form>
+
+              {noteRowErr && <div style={{ padding: "0 16px" }}><span className="hint neg" data-testid="note-row-error">⚠ {noteRowErr}</span></div>}
+              {notesApi.status === "error" && (
+                <div style={{ padding: "0 16px 8px" }}><span className="hint neg" data-testid="notes-load-error">Không tải được ghi chú: {notesApi.errMsg}.</span></div>
+              )}
+
+              {/* note list */}
+              <div className="tl-list" style={{ padding: "6px 8px 10px" }}>
+                {notesApi.notes.length === 0 ? (
+                  <div style={{ padding: "22px 12px", textAlign: "center" }} data-testid="notes-empty">
+                    <div className="hint faint" style={{ fontSize: 12.5 }}>Chưa có ghi chú nào.</div>
                   </div>
+                ) : (
+                  notesApi.notes.map((n) => (
+                    <div className="note-row" key={n.id} data-testid={`note-${n.id}`}
+                      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 8px", borderBottom: "1px solid var(--bg-2)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div data-testid={`note-text-${n.id}`} style={{ fontSize: 13, color: "var(--tx-0)", whiteSpace: "pre-wrap" }}>{n.text}</div>
+                        {n.remindAt && n.remindRepeat !== "off" && (
+                          <div style={{ marginTop: 4 }}>
+                            <RemindChip at={n.remindAt} repeat={n.remindRepeat} testid={`note-remind-${n.id}`} />
+                          </div>
+                        )}
+                      </div>
+                      <button className="btn sm ghost" type="button" onClick={() => onDeleteNote(n)}
+                        disabled={noteBusyId === n.id} data-testid={`note-delete-${n.id}`} title="Xóa ghi chú">✕</button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ===== streak + heatmap — KEPT but SMALL / collapsed (not the focus) ===== */}
+          <details className="panel" data-testid="tracing-stats" style={{ marginTop: 14 }}>
+            <summary className="phead" style={{ cursor: "pointer", listStyle: "revert" }} data-testid="tracing-stats-summary">
+              <span className="kicker">Streak &amp; lịch sử 12 tuần</span>
+              <span className="hint" style={{ marginLeft: "auto" }}>streak tốt nhất {sc.topStreak}d · mở để xem</span>
+            </summary>
+            <div style={{ padding: "12px 16px 16px" }}>
+              {/* compact streak list */}
+              {acts.length > 0 && (
+                <div className="hm-acts" data-testid="streak-list" style={{ marginBottom: 14 }}>
+                  {acts.map((a) => (
+                    <div className="hma-row" key={a.id} data-testid={`streak-${a.id}`}>
+                      <span style={{ fontSize: 12, flex: 1 }}>{a.name}</span>
+                      <span className="num" style={{ fontSize: 11.5, color: "var(--accent)" }}>{a.streak}d streak {streakBadge(a.streak)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 12-week heatmap */}
+              <div className="heatmap-wrap">
+                <div className="hm-days">{WEEK_DAYS.map((d) => <div className="hm-day" key={d}>{d}</div>)}</div>
+                <div className="hm-grid" data-testid="heatmap-grid" role="img" aria-label="Lịch sử 12 tuần — số việc xong mỗi ngày">
+                  {data.heatmap12w.map((v, i) => (
+                    <div className="hc" key={i} style={{ background: heatColor(v, heatMax) }} title={`${v} việc xong`} aria-label={`${v} việc xong`} data-testid={`hc-${i}`} data-count={v} />
+                  ))}
                 </div>
               </div>
-            </>
-          )}
+              <div className="hm-legend" aria-hidden="true">
+                <span className="faint">Ít</span>
+                {[0, 1, 2, 3, 4].map((v) => <div className="hc" key={v} style={{ background: heatColor(v, 4) }} />)}
+                <span className="faint">Nhiều</span>
+              </div>
+            </div>
+          </details>
         </>
       )}
     </section>
-  );
-}
-
-/** ApiError message + hint (hint shown when present — #46/#70 agent-error). */
-function errText(err: unknown): string {
-  if (err instanceof ApiError) {
-    return err.hint ? `${err.message} (${err.hint})` : err.message;
-  }
-  return (err as Error).message;
-}
-
-/** One activity card — ported from mock actCard (streak badge, today, bar, week bars). */
-function ActivityCard({ a, onLog, onArchive, busy }: { a: ActivityView; onLog: () => void; onArchive: () => void; busy: boolean }) {
-  const done = a.today.done;
-  const barW = Math.min(100, a.today.pct);
-  const badge = streakBadge(a.streak);
-  return (
-    <div className={`act-card${done ? "" : " pending"}`} data-act={a.id} data-testid={`act-${a.id}`} data-done={done}>
-      <div className="ac-head">
-        <div className="ac-emoji">{a.emoji || "•"}</div>
-        <div className="ac-meta">
-          <div className="ac-name">{a.name}</div>
-          <div className="ac-goal faint">target <span className="num">{a.goal} {a.unit}</span> / ngày</div>
-          {/* #75: show the habit's reminder when set (defensive — field absent pre-#75-BE). */}
-          {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
-            <div className="ac-goal acc" data-testid={`remind-${a.id}`} title="Nhắc nhở từ thói quen này">
-              🔔 <span className="num">{a.remindAt}</span> {a.remindRepeat === "daily" ? "hằng ngày" : "ngày thường"}
-            </div>
-          )}
-        </div>
-        <div className="ac-streak" title={`Streak: ${a.streak} ngày liên tiếp`} data-testid={`streak-${a.id}`}>
-          <span className="num" style={{ fontSize: 20, color: a.color }}>{a.streak}</span>
-          <span className="faint" style={{ fontSize: 9, display: "block", textAlign: "center" }} data-testid={`badge-${a.id}`}>ngày {badge}</span>
-        </div>
-      </div>
-      <div className="ac-today">
-        <span className="num" style={{ fontSize: 18, fontWeight: 700, color: done ? a.color : "var(--tx-2)" }}>
-          {a.today.val} {a.unit}
-        </span>
-        <span className="faint" style={{ fontSize: 11 }}>{a.today.pct}% · {a.today.dur}</span>
-      </div>
-      <div className="bar" style={{ marginTop: 8, height: 5 }}>
-        <i style={{ width: `${barW}%`, background: done ? a.color : "var(--tx-2)", boxShadow: done ? `0 0 8px -2px ${a.color}` : undefined }} />
-      </div>
-      {a.today.note && (
-        <div className="faint" style={{ fontSize: 11, marginTop: 5, fontFamily: "var(--mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.today.note}</div>
-      )}
-      <div className="ac-week" data-testid={`week-${a.id}`}>
-        {a.week.map((v, i) => {
-          const pct = Math.min(100, Math.round((v / (a.goal || 1)) * 100));
-          const isToday = i === 6; // index 6 = today (Mon→Sun)
-          return (
-            <div className="ac-wbar" key={i}>
-              <div className="ac-wbar-fill" style={{ height: `${Math.max(4, pct)}%`, background: pct >= 100 ? a.color : "var(--bg-3)", outline: isToday ? `1px solid ${a.color}` : undefined }} />
-              <div className={`ac-wday${isToday ? " today" : ""}`}>{WEEK_DAYS[i]}</div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="row ac-logbtn" style={{ gap: 7 }}>
-        <button className="btn sm accent" type="button" onClick={onLog} disabled={busy} data-testid={`log-${a.id}`}>+ Log</button>
-        <button className="btn sm ghost" type="button" onClick={onArchive} disabled={busy} data-testid={`archive-${a.id}`} title="Lưu trữ">✕</button>
-      </div>
-    </div>
   );
 }

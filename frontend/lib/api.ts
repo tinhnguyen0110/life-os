@@ -83,6 +83,10 @@ import type {
   ActivityPatch,
   TracingTemplate,
   TracingTemplateList,
+  TracingNote,
+  TracingNoteInput,
+  TracingNoteUpdate,
+  TracingNoteList,
   TracingTemplateInput,
   DevActivityOverview,
   DevScanResult,
@@ -912,6 +916,30 @@ export function resetTracingTemplates(): Promise<ApiResponse<{ reset: boolean; c
 /** POST /tracing/templates/bulk-delete — remove/hide many (idempotent). Returns {deleted}. */
 export function bulkDeleteTracingTemplates(ids: string[]): Promise<ApiResponse<{ deleted: number }>> {
   return apiPost<{ deleted: number }>("/tracing/templates/bulk-delete", { ids });
+}
+
+/* ---- #121 / #122 Tracing day-notes — text + optional 🔔-remind (note→reminder link) ---- */
+
+/** GET /tracing/notes — all day-notes, newest-first. honest-empty {notes: []}. */
+export function getTracingNotes(): Promise<ApiResponse<TracingNoteList>> {
+  return apiGet<TracingNoteList>("/tracing/notes");
+}
+
+/** POST /tracing/notes — create a day-note (text + optional remind). 201 + the Note.
+ *  A note WITH remindAt + remindRepeat≠"off" links a reminder (BE-side). blank text → 422. */
+export function createTracingNote(body: TracingNoteInput): Promise<ApiResponse<TracingNote>> {
+  return apiPost<TracingNote>("/tracing/notes", body);
+}
+
+/** PUT /tracing/notes/{id} — partial update; only supplied fields change. To CLEAR the
+ *  remind pass remindRepeat:"off". Returns the updated Note. 404 if unknown id. */
+export function updateTracingNote(id: string, body: TracingNoteUpdate): Promise<ApiResponse<TracingNote>> {
+  return apiPut<TracingNote>(`/tracing/notes/${encodeURIComponent(id)}`, body);
+}
+
+/** DELETE /tracing/notes/{id} — remove the note (+ its linked reminder). {deleted:id}. 404 if unknown. */
+export function deleteTracingNote(id: string): Promise<ApiResponse<{ deleted: string }>> {
+  return apiDelete<{ deleted: string }>(`/tracing/notes/${encodeURIComponent(id)}`);
 }
 
 /* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----

@@ -1943,6 +1943,51 @@ export interface Activity {
   remindRepeat?: RemindRepeat;
 }
 
+/* ============================================================================
+   #121 / #122 Tracing day-notes — a day-note = text + optional 🔔-remind. A note WITH
+   a remind (remindAt + remindRepeat≠"off") drives a linked reminder (source
+   "tracing-note", the #75 wire + #111 channel); clearing/deleting removes it.
+   Mirrors the FROZEN backend tracing/schema.py Note/NoteInput/NoteUpdate (verified live:
+   GET/POST/PUT/DELETE /tracing/notes → {id,text,remindAt,remindRepeat,remindChannel,created}).
+   Named Tracing* to avoid collision with the wiki `NoteInput` (a different module).
+   ============================================================================ */
+/** GET /tracing/notes list item + the create/update echo (the FROZEN Note shape). */
+export interface TracingNote {
+  /** the note id (autoincrement PK, stringified). */
+  id: string;
+  text: string;
+  /** HH:MM VN reminder time, or null = no reminder. CAMEL wire (tracing convention). */
+  remindAt: string | null;
+  /** "off"/absent ⇒ no reminder. */
+  remindRepeat: RemindRepeat;
+  /** #111 — which channel the linked reminder fires on (default in_app). */
+  remindChannel: RemindChannel;
+  /** ISO-8601 (VN) when the note was created. */
+  created: string;
+}
+
+/** POST /tracing/notes body — create a day-note. id/created server-set. blank text → 422. */
+export interface TracingNoteInput {
+  text: string;
+  remindAt?: string | null;
+  remindRepeat?: RemindRepeat;
+  remindChannel?: RemindChannel;
+}
+
+/** PUT /tracing/notes/{id} body — partial update; only supplied fields change. To CLEAR
+ *  the remind pass remindRepeat:"off" (the linked reminder is then deleted). */
+export interface TracingNoteUpdate {
+  text?: string;
+  remindAt?: string | null;
+  remindRepeat?: RemindRepeat;
+  remindChannel?: RemindChannel;
+}
+
+/** GET /tracing/notes → the day-note list (honest-empty: {notes: []}). */
+export interface TracingNoteList {
+  notes: TracingNote[];
+}
+
 /* ---- Dev Activity (#63 · DEVACT) — git-contribution tracing ----
    Mirrors the FROZEN backend dev_activity/schema.py (P1). "what did I code, which
    project, when" derived FROM git (commits/LOC/active-span per date×repo). RENDER-ONLY:
