@@ -311,17 +311,21 @@ select.finput { cursor:pointer; }
 .tl-ops-menu button.neg { color:var(--red); }
 .tl-ops-menu button.neg:hover { background:color-mix(in oklch, var(--red) 16%, transparent); }
 
-/* #139 — a legacy null-time row shows a PROMINENT, actionable "⏰ Đặt giờ" pill in the time
-   cell (instead of a faint passive "—"), so no row reads as a blank dash. Accent-tinted so it
-   invites a tap; clicking opens the same per-card time editor. No auto-backfill of any time. */
+/* #139 — a legacy null-time row shows an actionable "⏰ Đặt giờ" pill in the time cell
+   (instead of a faint passive "—"), so no row reads as a blank dash; clicking opens the same
+   per-card time editor (no auto-backfill of any time).
+   #143-R2: GHOST style (was accent-tinted) — a saturated pill on 6/7 rows was a loud DEFAULT
+   state that dominated the column + buried a real set-time. Now QUIET: muted text + a subtle
+   neutral outline, no fill. Still clearly a clickable affordance (≈ the ⋯-btn .55 bar) — the
+   unset state recedes so a SET time (or a real alert) stands out. Hover = a gentle lift. */
 .tl-settime-pill { display:inline-flex; align-items:center; gap:3px; justify-self:end;
-  background:color-mix(in oklch, var(--accent) 13%, transparent); color:var(--accent);
-  border:1px solid color-mix(in oklch, var(--accent) 32%, transparent); border-radius:999px;
+  background:transparent; color:var(--tx-2);
+  border:1px solid var(--line-2); border-radius:999px;
   padding:2px 7px; font-size:10px; font-family:var(--sans); line-height:1.2; cursor:pointer;
-  white-space:nowrap; transition:background .12s, border-color .12s; }
-.tl-settime-pill:hover { background:color-mix(in oklch, var(--accent) 22%, transparent);
-  border-color:color-mix(in oklch, var(--accent) 50%, transparent); }
-.tl-settime-pill-label { font-weight:600; }
+  white-space:nowrap; opacity:.8; transition:background .12s, border-color .12s, color .12s, opacity .12s; }
+.tl-settime-pill:hover { background:var(--bg-2); color:var(--tx-1);
+  border-color:var(--tx-2); opacity:1; }
+.tl-settime-pill-label { font-weight:500; }
 
 /* #123 — underline sub-nav (the /projects [Đang chạy | Nghĩa địa | Dev Activity] tabs).
    A lighter, GitHub-ish tab style: a bottom hairline; the active tab = accent underline +
