@@ -405,6 +405,59 @@ def reset_templates() -> int:
     return store.reset_templates()
 
 
+def get_template(template_id: str) -> Template | None:
+    """One template by id from the merged SEED⊕USER list (None if unknown / tombstoned). #124:
+    the lookup behind the add-button — uses the SAME merge as list_templates so a user-overridden
+    or user-only template resolves, and a tombstoned seed reads as absent."""
+    tid = (template_id or "").strip()
+    if not tid:
+        return None
+    return next((t for t in list_templates() if t.id == tid), None)
+
+
+def _template_to_activity_input(t: Template) -> ActivityInput:
+    """#124 (CORRECTED): map a saved template → a BINARY TODO activity — name ONLY + goal=1.
+    🔴 The #122 redesign made /tracing text+tick (a todo = goal=1, tick=done; the user REJECTED
+    goals/units/emoji/progress-bars — the screen is checkboxes). A #109 template has a stored goal
+    (e.g. seed 'uống nước' goal=8) but importing WITH that goal would render a measured progress-bar
+    on a checkbox screen (wrong/inconsistent). So a 'template' now = a saved todo TEXT: we take
+    t.name + goal=1 and DROP the stored goal/unit/emoji/color. (The #109 store keeps those columns
+    for backward-compat — unchanged — only this IMPORT path ignores them.) remind* = defaults; the
+    user sets a remind separately."""
+    return ActivityInput(id=t.id, name=t.name, goal=1.0)  # binary todo: name-only, goal=1
+
+
+def add_template_to_today(template_id: str) -> tuple[Activity | None, bool]:
+    """#124: 1-click "add from my template" → create today's activity from the saved template.
+    Returns (activity, added): added=True when newly created; added=False when an activity with that
+    id already exists (incl. archived) → returns the EXISTING one, NO duplicate (the decided
+    already-added behavior — idempotent, honest). (None, False) when the template id is unknown
+    (router → 404). SCOPED: reads tracing_template + writes tracing_activities only (never the
+    rejected auto-seed)."""
+    t = get_template(template_id)
+    if t is None:
+        return None, False
+    existing = get_activity(t.id)  # incl. archived (the PK would collide on re-create)
+    if existing is not None:
+        return existing, False  # already added → return existing, no dup
+    return create_activity(_template_to_activity_input(t)), True
+
+
+def add_all_templates() -> tuple[list[Activity], list[str]]:
+    """#124: add ALL non-hidden templates → today's activities in one call. Returns
+    (created, skipped_ids): each template not already present → created; an already-present id →
+    skipped (honest, no dup). honest-empty ([],[]) when there are no templates. list_templates()
+    already excludes tombstoned/hidden, so this respects the #109 override/hidden model."""
+    created: list[Activity] = []
+    skipped: list[str] = []
+    for t in list_templates():
+        if get_activity(t.id) is not None:
+            skipped.append(t.id)
+            continue
+        created.append(create_activity(_template_to_activity_input(t)))
+    return created, skipped
+
+
 def log_session(activity_id: str, inp: LogInput) -> ActivityView:
     """Append one raw session against an activity, then return the activity's freshly-derived view
     (so the caller sees the accumulated today/streak immediately). The activity MUST exist + be

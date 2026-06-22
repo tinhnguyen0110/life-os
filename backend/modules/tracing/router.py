@@ -148,6 +148,31 @@ def reset_templates():
     return ok(data={"reset": True, "count": count})
 
 
+# #124 NOTE: /templates/add-all is declared BEFORE /templates/{template_id}/add so the static path
+# is matched first (FastAPI would also disambiguate, but explicit order is clearest).
+@router.post("/templates/add-all")
+def add_all_templates():
+    """#124: add ALL non-hidden templates → today's activities in one call (the user's saved-todo
+    list → today). 200 + {created:[Activity], skipped:[ids]}. An already-present id is SKIPPED (no
+    dup, honest). honest-empty {created:[], skipped:[]} when there are no templates. SCOPED — reads
+    tracing_template + writes tracing_activities only (NOT the rejected auto-seed-into-the-form)."""
+    created, skipped = service.add_all_templates()
+    return ok(data={"created": [a.model_dump() for a in created], "skipped": skipped})
+
+
+@router.post("/templates/{template_id}/add")
+def add_template_to_today(template_id: str):
+    """#124: 1-click "add from my template" → create today's activity from the saved template.
+    200 + {activity, added}. added=False when an activity with that id already exists (returns the
+    EXISTING, no dup — idempotent). 404 if the template id is unknown. Explicit user action (the
+    "+ Từ mẫu" button), NOT the rejected hard-code-chip auto-seed."""
+    activity, added = service.add_template_to_today(template_id)
+    if activity is None:
+        return agent_error_response("NOT_FOUND", f"template {template_id!r} not found",
+                                    hint="GET /tracing/templates for valid ids")
+    return ok(data={"activity": activity.model_dump(), "added": added})
+
+
 # --------------------------------------------------------------------------- #
 # TRACING-UX2 T1 (#121): day-notes — text + optional remind (note→reminder link).#
 # --------------------------------------------------------------------------- #
