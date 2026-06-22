@@ -16,12 +16,12 @@
    from the real API, instead of fabricating session timestamps.
    Errors are the #46/#70 {error:{code,message,hint}} shape — message + hint shown.
    ============================================================ */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTracing } from "@/lib/useTracing";
-import { apiBase, ApiError } from "@/lib/api";
+import { apiBase, ApiError, getReminderChannels } from "@/lib/api";
 import { TracingTemplatePicker } from "@/components/TracingTemplatePicker";
 import { slugifyVi } from "@/lib/format";
-import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat } from "@/lib/types";
+import type { ActivityView, ActivityInput, TracingLogInput, RemindRepeat, RemindChannel, ReminderChannelOption } from "@/lib/types";
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
 
@@ -46,6 +46,8 @@ type AddForm = {
   // #75: optional habit-reminder nudge. remindOn drives the toggle; when on, remindTime
   // + remindRepeat become the activity's remindAt/remindRepeat (BE creates the reminder).
   remindOn: boolean; remindTime: string; remindRepeat: RemindRepeat;
+  // #111: which channel the linked reminder fires on (in_app/email/discord). Default in_app.
+  remindChannel: RemindChannel;
   // #110: idManual=true once the user edits the id in Advanced → auto-slug stops (so we
   // don't clobber their manual id when they keep typing the name). A template pick sets
   // an explicit id → also idManual (don't re-slug a picked id from its name).
@@ -54,7 +56,7 @@ type AddForm = {
 
 const EMPTY_ADD: AddForm = {
   id: "", name: "", goal: "", unit: "", emoji: "", color: "#FF6A33",
-  remindOn: false, remindTime: "07:00", remindRepeat: "daily", idManual: false,
+  remindOn: false, remindTime: "07:00", remindRepeat: "daily", remindChannel: "in_app", idManual: false,
 };
 
 export default function TracingPage() {
@@ -63,6 +65,25 @@ export default function TracingPage() {
   const [adding, setAdding] = useState<AddForm | null>(null);
   // #110 — the "Nâng cao" (id/emoji/màu) disclosure; collapsed by default (lean form).
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // #111 — reminder channels (in_app/email/discord). Fetched once; render-safe fallback
+  // to in_app-only-enabled if the API errors (so the form never blocks).
+  const IN_APP_ONLY: ReminderChannelOption[] = [{ id: "in_app", label: "In-app", available: true }];
+  const [channels, setChannels] = useState<ReminderChannelOption[]>(IN_APP_ONLY);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getReminderChannels();
+        if (!alive) return;
+        const list = res?.data?.channels;
+        if (Array.isArray(list) && list.length > 0) setChannels(list);
+      } catch {
+        // fallback already = in_app-only; the form still works
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [rowErr, setRowErr] = useState("");
@@ -135,6 +156,8 @@ export default function TracingPage() {
       // Off → remindAt null (no reminder). FE just sends it.
       remindAt: adding.remindOn ? adding.remindTime : null,
       remindRepeat: adding.remindOn ? adding.remindRepeat : "off",
+      // #111: which channel the linked reminder fires on (only meaningful when on).
+      remindChannel: adding.remindOn ? adding.remindChannel : undefined,
     };
     setBusy(true);
     try {
@@ -316,6 +339,21 @@ export default function TracingPage() {
                     >
                       <option value="daily">Hằng ngày</option>
                       <option value="weekdays">Ngày thường (T2–T6)</option>
+                    </select>
+                    {/* #111 — channel select: only-available enabled; in_app always on. */}
+                    <select
+                      className="finput"
+                      style={{ width: 130 }}
+                      value={adding.remindChannel}
+                      onChange={(e) => setAdding({ ...adding, remindChannel: e.target.value as RemindChannel })}
+                      data-testid="a-remind-channel"
+                      aria-label="Kênh nhắc nhở"
+                    >
+                      {channels.map((c) => (
+                        <option key={c.id} value={c.id} disabled={!c.available} data-testid={`a-channel-opt-${c.id}`}>
+                          {c.label}{c.available ? "" : " (chưa cấu hình)"}
+                        </option>
+                      ))}
                     </select>
                   </>
                 )}

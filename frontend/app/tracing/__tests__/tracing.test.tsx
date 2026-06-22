@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -12,6 +12,8 @@ const getTracing = vi.fn();
 const logTracingSession = vi.fn();
 const createActivity = vi.fn();
 const archiveActivity = vi.fn();
+const getReminderChannels = vi.fn();
+const getTracingTemplates = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -20,16 +22,31 @@ vi.mock("@/lib/api", async () => {
     logTracingSession: (...a: unknown[]) => logTracingSession(...a),
     createActivity: (...a: unknown[]) => createActivity(...a),
     archiveActivity: (...a: unknown[]) => archiveActivity(...a),
+    getReminderChannels: (...a: unknown[]) => getReminderChannels(...a),
+    getTracingTemplates: (...a: unknown[]) => getTracingTemplates(...a),
   };
 });
 
 import TracingPage from "../page";
+
+// default the #111 channels + #109 templates so the form renders deterministically.
+const CHANNELS_OK = { success: true, data: { channels: [
+  { id: "in_app", label: "In-app", available: true },
+  { id: "email", label: "Email", available: true },
+  { id: "discord", label: "Discord", available: true },
+] } };
+beforeEach(() => {
+  getReminderChannels.mockResolvedValue(CHANNELS_OK);
+  getTracingTemplates.mockResolvedValue({ success: true, data: { templates: [] } });
+});
 
 afterEach(() => {
   getTracing.mockReset();
   logTracingSession.mockReset();
   createActivity.mockReset();
   archiveActivity.mockReset();
+  getReminderChannels.mockReset();
+  getTracingTemplates.mockReset();
 });
 
 const ACT = (over = {}) => ({
@@ -348,5 +365,77 @@ describe("#110 Tracing — lean add form", () => {
     await user.click(screen.getByTestId("a-submit"));
     expect(screen.getByTestId("add-error")).toHaveTextContent(/Cần tên/);
     expect(createActivity).not.toHaveBeenCalled();
+  });
+});
+
+/* ---- #111 channel-select in the reminder block ---- */
+describe("#111 Tracing — reminder channel select", () => {
+  async function openAdd() {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "run", name: "Run" }) });
+    const user = userEvent.setup();
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("add-activity")).toBeInTheDocument());
+    await user.click(screen.getByTestId("add-activity"));
+    return user;
+  }
+
+  it("channel select is HIDDEN until the 🔔 toggle is ON", async () => {
+    const user = await openAdd();
+    expect(screen.queryByTestId("a-remind-channel")).toBeNull();
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    await waitFor(() => expect(screen.getByTestId("a-remind-channel")).toBeInTheDocument());
+  });
+
+  it("shows in_app/email/discord (all available → enabled)", async () => {
+    const user = await openAdd();
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    const sel = await screen.findByTestId("a-remind-channel");
+    expect(within(sel).getByTestId("a-channel-opt-in_app")).toBeInTheDocument();
+    expect(within(sel).getByTestId("a-channel-opt-email")).toBeInTheDocument();
+    expect((within(sel).getByTestId("a-channel-opt-discord") as HTMLOptionElement).disabled).toBe(false);
+  });
+
+  it("an UNAVAILABLE channel is disabled + tagged 'chưa cấu hình'", async () => {
+    getReminderChannels.mockResolvedValue({ success: true, data: { channels: [
+      { id: "in_app", label: "In-app", available: true },
+      { id: "discord", label: "Discord", available: false },
+    ] } });
+    const user = await openAdd();
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    const disc = await screen.findByTestId("a-channel-opt-discord");
+    expect((disc as HTMLOptionElement).disabled).toBe(true);
+    expect(disc).toHaveTextContent(/chưa cấu hình/);
+  });
+
+  it("picking discord → create sends remindChannel:'discord' (only when toggle ON)", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-name"), "Run");
+    await user.type(screen.getByTestId("a-goal"), "5");
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    await user.selectOptions(screen.getByTestId("a-remind-channel"), "discord");
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    expect(createActivity.mock.calls[0][0].remindChannel).toBe("discord");
+  });
+
+  it("toggle OFF → create does NOT send a channel (undefined)", async () => {
+    const user = await openAdd();
+    await user.type(screen.getByTestId("a-name"), "Run");
+    await user.type(screen.getByTestId("a-goal"), "5");
+    // toggle stays off
+    await user.click(screen.getByTestId("a-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    expect(createActivity.mock.calls[0][0].remindChannel).toBeUndefined();
+  });
+
+  it("channels API error → fallback to in_app-only (render-safe, form still works)", async () => {
+    getReminderChannels.mockRejectedValue(new Error("channels 500"));
+    const user = await openAdd();
+    await user.click(screen.getByTestId("a-remind-toggle"));
+    const sel = await screen.findByTestId("a-remind-channel");
+    // only in_app present (fallback), email/discord absent — form not blocked
+    expect(within(sel).getByTestId("a-channel-opt-in_app")).toBeInTheDocument();
+    expect(within(sel).queryByTestId("a-channel-opt-discord")).toBeNull();
   });
 });

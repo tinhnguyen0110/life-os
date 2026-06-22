@@ -1862,6 +1862,26 @@ export interface ActivityInput {
   remindAt?: string | null;
   /** "off"/absent = no reminder. [#75] */
   remindRepeat?: RemindRepeat;
+  /** #111 — which channel the linked reminder fires on (default in_app). CAMEL wire,
+   *  like remindAt. Only relevant when remindAt is set. */
+  remindChannel?: RemindChannel;
+}
+
+/** #111 — a reminder delivery channel. in_app always available; email/discord depend
+ *  on config. Mirrors GET /reminders/channels ids. */
+export type RemindChannel = "in_app" | "email" | "discord";
+
+/** One channel option (GET /reminders/channels). available=false → disabled in the UI
+ *  ("chưa cấu hình"). in_app is always available. */
+export interface ReminderChannelOption {
+  id: RemindChannel;
+  label: string;
+  available: boolean;
+}
+
+/** GET /reminders/channels → the selectable channels. */
+export interface ReminderChannelList {
+  channels: ReminderChannelOption[];
 }
 
 /** PUT /tracing/activities/{id} body — partial edit (all fields optional). */

@@ -73,6 +73,7 @@ import type {
   Reminder,
   ReminderInput,
   ReminderList,
+  ReminderChannelList,
   TracingOverview,
   ActivityView,
   Activity,
@@ -807,6 +808,12 @@ export function getReminders(
   filter: "today" | "week" | "undone" | "all" = "all",
 ): Promise<ApiResponse<ReminderList>> {
   return apiGet<ReminderList>(`/reminders?filter=${encodeURIComponent(filter)}`);
+}
+
+/** #111 GET /reminders/channels — the selectable reminder channels (in_app/email/
+ *  discord) + whether each is available (configured). in_app always available. */
+export function getReminderChannels(): Promise<ApiResponse<ReminderChannelList>> {
+  return apiGet<ReminderChannelList>("/reminders/channels");
 }
 
 /** Create a reminder. 201 + the created reminder. Blank title / unparseable due_at
