@@ -87,6 +87,7 @@ class ActivityInput(BaseModel):
     unit: str = Field(default="", max_length=32, description="unit of val, e.g. 'km', 'min', 'reps'")
     goal: float = Field(default=0.0, ge=0, description="daily goal in `unit` (0 = no goal)")
     color: str = Field(default="", max_length=32, description="display color (FE)")
+    time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii); None = none)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
@@ -99,7 +100,7 @@ class ActivityInput(BaseModel):
             raise ValueError("must not be blank")
         return s
 
-    @field_validator("remindAt")
+    @field_validator("remindAt", "time")  # #136: time mirrors remindAt's HH:MM validation
     @classmethod
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
@@ -116,6 +117,7 @@ class ActivityUpdate(BaseModel):
     color: str | None = Field(default=None, max_length=32)
     # TRACING-REMINDERS (#75): None means "not supplied" (leave unchanged). To CLEAR the reminder,
     # pass remind_repeat="off" (or an explicit empty remind_at via the router's clear path).
+    time: str | None = Field(default=None, description="HH:MM VN scheduled time (#136 G3-(ii); None = unchanged)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
     remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel | None = Field(default=None, description="in_app|email|discord (#111)")
@@ -130,7 +132,7 @@ class ActivityUpdate(BaseModel):
             raise ValueError("name must not be blank")
         return s
 
-    @field_validator("remindAt")
+    @field_validator("remindAt", "time")  # #136: time mirrors remindAt's HH:MM validation
     @classmethod
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
@@ -226,6 +228,7 @@ class Activity(BaseModel):
     color: str = ""
     created: str
     archived: bool = False
+    time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii))")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
@@ -253,6 +256,7 @@ class ActivityView(BaseModel):
     unit: str = ""
     goal: float = Field(default=0.0, ge=0)
     color: str = ""
+    time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii)) — the FE timeline rails by this (fallback remindAt)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
     remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")

@@ -83,6 +83,7 @@ def _row_to_activity(row: sqlite3.Row) -> Activity:
         remindAt=row["remind_at"] if "remind_at" in keys else None,  # camel field ← snake DB col
         remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
         remindChannel=row["remind_channel"] if "remind_channel" in keys else "in_app",  # #111
+        time=row["time"] if "time" in keys else None,  # #136: _ACT_COLS aliases sched_time AS time
     )
 
 
@@ -177,6 +178,7 @@ def _derive_activity_view(act: Activity) -> ActivityView:
         goal=act.goal, color=act.color,
         remindAt=act.remindAt, remindRepeat=act.remindRepeat,  # #75: surface the reminder link (camel)
         remindChannel=act.remindChannel,  # #117: the GET /tracing read-back was dropping this → in_app default masked the stored channel
+        time=act.time,  # #136 G3-(ii): surface the scheduled time (the FE timeline rails by it) — same thread-through lesson as #117
         today=today_stat, streak=streak, week=week, history12w=history,
     )
 
@@ -275,18 +277,20 @@ def create_activity(inp: ActivityInput) -> Activity:
         goal=inp.goal, color=inp.color, created=vn_now_iso(),
         remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,  # store col snake ← camel field
         remind_channel=inp.remindChannel,  # #111
+        sched_time=inp.time,  # #136 G3-(ii): per-activity scheduled time (independent of the reminder)
     )
     created = store.get_activity(inp.id)
     assert created is not None  # just inserted
     act = _row_to_activity(created)
-    _sync_reminder(act)  # #75: materialize/clear the linked reminder
+    _sync_reminder(act)  # #75: materialize/clear the linked reminder (NOTE: time does NOT touch this)
     return act
 
 
-# 75-TWEAK: the camel wire field → snake store column (only the remind fields differ; the rest
-# share the same name in both field + column).
+# 75-TWEAK: the camel wire field → snake store column (only the remind fields + #136 time differ;
+# the rest share the same name in both field + column).
 _FIELD_TO_COL = {"remindAt": "remind_at", "remindRepeat": "remind_repeat",
-                 "remindChannel": "remind_channel"}  # #111
+                 "remindChannel": "remind_channel",  # #111
+                 "time": "sched_time"}  # #136 G3-(ii): API field `time` → DB col `sched_time`
 
 
 def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:
