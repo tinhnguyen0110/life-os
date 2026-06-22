@@ -112,6 +112,7 @@ from modules.market.service import watchlist_data as _mkt_watchlist
 from modules.projects.service import list_projects as _proj_list
 from modules.projects.service import get_project as _proj_get
 from modules.projects.service import get_context as _proj_context  # PROJECT-MEMORY #42
+from modules.projects.service import dev_stat_for_project as _proj_dev_stat  # PROJECTS-UNIFY #112
 from modules.graveyard.service import get_graveyard as _grave_get
 from modules.claude_usage.service import get_usage as _claude_usage
 from modules.brief.service import generate_brief as _brief_generate
@@ -473,6 +474,18 @@ def project_context(project_id: str) -> dict[str, Any]:
     if ctx is None:
         return {"found": False, "project_id": project_id}
     return ctx
+
+
+def project_dev_activity(project_id: str, days: int = 90) -> dict[str, Any]:
+    """PROJECTS-UNIFY T1 (#112): a project's dev-activity over the last ``days`` VN-days, JOINED by
+    slug(dev_activity.repo)==project_id (projects use lowercase slugs; dev_activity stores raw
+    basenames — the join normalizes at read). ``{projectId, found, commits, locNet, lastActiveDay,
+    days, activeDays, matches:[{repo,commits,locNet,lastActiveDay,activeDays}], reason?, warning?}``.
+    HONEST: a project NOT in the dev_activity scan → found=false + commits=0 + reason (NOT a fabricated
+    0). A slug-collision (≥2 repos same basename) → found=true, summed, + matches[] + warning.
+    project_id is case-insensitive (slugified). BYTE-IDENTICAL to REST GET /projects/{id}/dev-activity
+    (#24 — both via service.dev_stat_for_project). Read-only."""
+    return _jsonable(_proj_dev_stat(project_id, days=int(days)))
 
 
 def graveyard_overview() -> dict[str, Any]:
@@ -1487,6 +1500,7 @@ TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "projects_list": projects_list,
     "project_get": project_get,
     "project_context": project_context,  # PROJECT-MEMORY #42: metadata + tagged wiki notes
+    "project_dev_activity": project_dev_activity,  # PROJECTS-UNIFY #112: slug-join dev-stat (read, parity)
     "graveyard_overview": graveyard_overview,
     "claude_usage": claude_usage,
     "reminders_list": reminders_list,  # REMINDERS-2 #28: agenda on lifeos-read (read-only)

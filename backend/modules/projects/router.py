@@ -89,6 +89,19 @@ def get_project_context(project_id: str):
     return ok(data=ctx)
 
 
+@router.get("/{project_id}/dev-activity")
+def get_project_dev_activity(project_id: str, days: int = 90):
+    """PROJECTS-UNIFY T1 (#112): a project's dev-activity, JOINED by slug(dev_activity.repo)==project_id
+    (projects use lowercase slugs; dev_activity stores raw basenames — the join normalizes at READ).
+    ``{projectId, found, commits, locNet, lastActiveDay, days, activeDays, matches[], reason?, warning?}``.
+    HONEST: a project whose repo is NOT in the dev_activity scan → found=false + commits=0 + reason
+    (NOT a fabricated 0). A slug-collision (≥2 repos same basename) → found=true, summed, + matches[] +
+    warning. 200 always (found=false is a valid honest answer, not a 404). Same service.dev_stat_for_project
+    the MCP ``project_dev_activity`` tool calls → MCP≡REST byte-identical (#24). ``days`` clamped to ≥1."""
+    stat = service.dev_stat_for_project(project_id, days=days)
+    return ok(data=stat.model_dump())
+
+
 @router.post("")
 def register_project(body: ProjectRegisterInput):
     """Register a project: write its status.md (one commit) + return fresh status.

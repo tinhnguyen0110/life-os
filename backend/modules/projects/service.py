@@ -32,7 +32,7 @@ from store import md_store
 
 from . import reader
 from .reader import slug
-from .schema import ProjectAbandonInput, ProjectRegisterInput, ProjectStatus
+from .schema import ProjectAbandonInput, ProjectDevStat, ProjectRegisterInput, ProjectStatus
 
 logger = logging.getLogger("life-os.projects.service")
 
@@ -356,6 +356,88 @@ def get_context(project_id: str, notes_limit: int = 10) -> dict[str, Any] | None
         "notes": notes,
         "noteCount": len(notes),
     }
+
+
+# --------------------------------------------------------------------------- #
+# PROJECTS-UNIFY T1 (#112): per-project dev-activity, JOINED by slug.            #
+# projects id = slug(folder) (lowercase); dev_activity stores repo = basename    #
+# RAW-case. The join key = slug(dev_activity.repo) == project_id, at the READ     #
+# layer ONLY (dev_activity's basename storage is git-honest, unchanged). honest-  #
+# not-found when the repo isn't scanned (NOT a fake 0); slug-collision → both +   #
+# warning. The ONE impl behind REST GET /{id}/dev-activity + the MCP tool (#24).  #
+# --------------------------------------------------------------------------- #
+_DEV_STAT_DEFAULT_DAYS = 90  # the dev_activity default window (mirrors dev_activity.reader._DEFAULT_DAYS)
+
+
+def dev_stat_for_project(project_id: str, days: int = _DEV_STAT_DEFAULT_DAYS) -> "ProjectDevStat":
+    """A project's dev-activity over the last ``days`` VN-days, JOINED by slug(repo)==project_id.
+
+    Lazy-imports dev_activity (store + the VN window helpers) to avoid a projects↔dev_activity import
+    cycle (the market↔macro precedent). Reads dev_activity.store.rows_since(window_start) → filters to
+    rows whose slug(repo) == the canonical project slug → aggregates commits / locNet / lastActiveDay /
+    activeDays, grouped by the RAW repo basename (so a slug-collision returns BOTH, each tagged).
+
+    honest-mirror: a project whose repo is NOT in the dev_activity scan (not in DEV_TRACING_ROOTS) →
+    found=false, commits=0, reason (NEVER a fabricated 0-as-if-real). A slug-collision (≥2 repos →
+    same slug) → found=true, summed, + a warning + the per-repo matches (not silently merged).
+
+    ``days`` is clamped to ≥1 (the window is at least today). ``project_id`` is slugified (case-
+    insensitive, the #105 lookup convention) before the match."""
+    from .schema import RepoDevStat  # ProjectDevStat is imported at module top
+    days = max(1, int(days))
+    key = slug(project_id) if project_id else ""
+
+    # lazy import (avoid the cycle) — the store read + the VN window helpers.
+    from datetime import timedelta
+    from modules.dev_activity import store as dev_store
+    from modules.dev_activity import service as dev_service
+
+    today_vn = dev_service._now().astimezone(dev_service.VN_TZ).date()
+    since = (today_vn - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    rows = dev_store.rows_since(since)
+
+    # group matched rows by RAW repo basename (distinguishes a slug-collision).
+    by_repo: dict[str, dict] = {}
+    for r in rows:
+        if slug(r["repo"]) != key:
+            continue
+        agg = by_repo.setdefault(r["repo"], {"commits": 0, "locNet": 0, "days": set(),
+                                             "lastActiveDay": None})
+        agg["commits"] += int(r["commits"])
+        agg["locNet"] += int(r["loc_added"]) - int(r["loc_deleted"])
+        if int(r["commits"]) > 0 or int(r["loc_added"]) or int(r["loc_deleted"]):
+            agg["days"].add(r["date"])
+            if agg["lastActiveDay"] is None or r["date"] > agg["lastActiveDay"]:
+                agg["lastActiveDay"] = r["date"]
+
+    if not by_repo:
+        # HONEST not-found: the project's repo isn't in the dev_activity scan (NOT a fake 0).
+        return ProjectDevStat(
+            projectId=key, found=False, commits=0, locNet=0, lastActiveDay=None,
+            days=days, activeDays=0, matches=[],
+            reason="repo not in the dev_activity scan (not in DEV_TRACING_ROOTS / not scanned yet)",
+            warning=None)  # explicit (no pydantic mypy plugin → defaulted fields read as required)
+
+    matches = [
+        RepoDevStat(repo=repo, commits=a["commits"], locNet=a["locNet"],
+                    lastActiveDay=a["lastActiveDay"], activeDays=len(a["days"]))
+        for repo, a in sorted(by_repo.items())
+    ]
+    all_days: set[str] = set()
+    for a in by_repo.values():
+        all_days |= a["days"]
+    last_active = max((a["lastActiveDay"] for a in by_repo.values() if a["lastActiveDay"]),
+                      default=None)
+    warning = None
+    if len(matches) > 1:  # slug-collision — honest, not silently merged
+        warning = (f"slug-collision: {len(matches)} repos share the slug {key!r} "
+                   f"({', '.join(m.repo for m in matches)}) — stats are SUMMED; see matches[] per-repo")
+    return ProjectDevStat(
+        projectId=key, found=True,
+        commits=sum(m.commits for m in matches),
+        locNet=sum(m.locNet for m in matches),
+        lastActiveDay=last_active, days=days, activeDays=len(all_days),
+        matches=matches, warning=warning, reason=None)  # explicit (no pydantic mypy plugin)
 
 
 def list_abandoned() -> tuple[list[tuple[ProjectStatus, dict]], list[str]]:

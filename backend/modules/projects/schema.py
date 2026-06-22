@@ -57,6 +57,40 @@ class ProjectStatus(BaseModel):
     lastAuto: str | None = Field(None, description="ISO-8601 UTC of last automation touch, else None")
 
 
+class RepoDevStat(BaseModel):
+    """PROJECTS-UNIFY T1 (#112): the dev-activity aggregate for ONE matched repo (slug == project_id).
+    Carries ``repo`` (the raw basename, to distinguish a slug-collision) so two different-path repos
+    that slug to the same id are both returned, each identified by its basename."""
+
+    repo: str = Field(..., description="the dev_activity repo basename (raw-case) this stat is for")
+    commits: int = Field(0, ge=0, description="Σ commits over the window (all sources)")
+    locNet: int = Field(0, description="Σ(loc_added - loc_deleted) — net LOC, can be negative")
+    lastActiveDay: str | None = Field(None, description="most recent VN-day with activity, or None")
+    activeDays: int = Field(0, ge=0, description="count of distinct VN-days with activity in the window")
+
+
+class ProjectDevStat(BaseModel):
+    """PROJECTS-UNIFY T1 (#112): a project's dev-activity, JOINED by slug(dev_activity.repo)==project_id.
+
+    ``found`` = whether the project's repo appears in the dev_activity scan (DEV_TRACING_ROOTS). A
+    registered project NOT in the scan → ``found: false`` + ``commits: 0`` + ``reason`` (HONEST — never
+    a fabricated 0-as-if-real). A slug-COLLISION (≥2 repos same basename→same slug) → ``found: true``,
+    the aggregate summed across matches, AND ``matches`` listing each repo + a ``warning`` (honest, not
+    silently merged). REST + MCP byte-identical (#24)."""
+
+    projectId: str = Field(..., description="the project slug this dev-stat is for")
+    found: bool = Field(..., description="true if the repo is in the dev_activity scan; false = not scanned")
+    commits: int = Field(0, ge=0, description="Σ commits across matched repos over the window")
+    locNet: int = Field(0, description="Σ net LOC (added-deleted) across matched repos")
+    lastActiveDay: str | None = Field(None, description="most recent active VN-day across matches, or None")
+    days: int = Field(..., ge=1, description="the window in VN-days this stat covers")
+    activeDays: int = Field(0, ge=0, description="distinct active VN-days in the window (across matches)")
+    matches: list[RepoDevStat] = Field(default_factory=list,
+                                       description="per-repo breakdown (>1 only on a slug-collision)")
+    reason: str | None = Field(None, description="why found=false (e.g. not in DEV_TRACING_ROOTS), else None")
+    warning: str | None = Field(None, description="honest note, e.g. a slug-collision across repos")
+
+
 class ProjectRegisterInput(BaseModel):
     """Body of POST /projects (register). id is derived = slug(name); the body's
     human fields are written into the new project's status.md front-matter."""

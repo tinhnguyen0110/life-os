@@ -56,6 +56,7 @@ focused tools instead of the 40-tool whole-app read. Deeper TA + cross-domain co
 | `projects_list` |  | All tracked, non-abandoned projects with derived health/commit/lang status |
 | `project_get` |  | One project's status by id (includes abandoned). Unknown id → |
 | `project_context` | read | A project's full context: metadata + its wiki notes (tagged project:<id>) as "project memory". {project, notes, noteCount} (#42). |
+| `project_dev_activity` | read | A project's dev-activity, JOINED by slug(dev_activity.repo)==project_id. {projectId, found, commits, locNet, lastActiveDay, days, activeDays, matches[], reason?, warning?}. found:false honest when not in the scan; slug-collision → both+warning. Byte-identical to REST GET /projects/{id}/dev-activity (#112). |
 | `graveyard_overview` |  | The graveyard: abandoned projects + post-mortem pattern aggregates |
 | `claude_usage` |  | Claude token-usage view: per-day burn series, by-model / by-project split, |
 | `daily_brief` |  | Generate today's brief on the fly from live reads: prioritised actions + |
