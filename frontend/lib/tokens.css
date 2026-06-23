@@ -1237,12 +1237,29 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wimport-actions { margin-top:14px; display:flex; justify-content:flex-end; }
 
 /* #88-part-2 scope editor + catalog audit */
-.scope-editor { max-height:380px; overflow:auto; border:1px solid var(--line-2); border-radius:var(--r); padding:10px 12px; }
+/* #165 — scope editor: domain TABS (was a 380px scroll-box with all domains flat at once).
+   The box-scroll (max-height/overflow) is DROPPED — natural flow, only the active tab's
+   tools render. .scope-domain/-head kept for the read-only McpCatalogAudit (still flat). */
+.scope-editor { border:1px solid var(--line-2); border-radius:var(--r); padding:10px 12px; }
+/* the tab row — one chip per domain (whole-domain tick + name + count) */
+.scope-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.scope-tab { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg-1); cursor:pointer; font-family:var(--mono); font-size:11.5px; color:var(--tx-1); transition:border-color .12s, background .12s, color .12s; }
+.scope-tab:hover { border-color:var(--line-2); color:var(--tx-0); }
+.scope-tab.on { border-color:color-mix(in oklch, var(--accent) 50%, transparent); background:var(--accent-dim); color:var(--tx-0); }
+.scope-tab.checked .scope-tab-name { color:var(--accent); font-weight:600; }
+.scope-tab:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.scope-tab-check { flex-shrink:0; cursor:pointer; }
+.scope-tab-name { color:inherit; }
+.scope-tab-count { color:var(--tx-2); background:var(--bg-2); border-radius:20px; padding:0 6px; font-size:10px; }
+.scope-tab.on .scope-tab-count { background:var(--bg-0); }
 .scope-domain { margin-bottom:12px; }
 .scope-domain-head { display:flex; align-items:center; gap:8px; cursor:pointer; padding:4px 0; font-weight:600; }
 .scope-domain-name { font-family:var(--mono); font-size:12px; }
-/* #128 — a touch more breathing room in the tick grid (was gap:2px/padding:1px — cramped) */
-.scope-tools { padding-left:22px; display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+/* #128 — a touch more breathing room in the tick grid (was gap:2px/padding:1px — cramped).
+   #165: the active tab's tools no longer need the 22px domain-indent (tabs aren't nested). */
+.scope-tools { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+/* the read-only audit still nests tools under a domain head → keep its indent there. */
+[data-testid^="audit-domain-"] .scope-tools { padding-left:22px; }
 .scope-tool-wrap { border-radius:6px; }
 .scope-tool-wrap:hover { background:color-mix(in oklch, var(--bg-2) 60%, transparent); }
 .scope-tool { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11.5px; padding:3px 6px; border-radius:6px; }

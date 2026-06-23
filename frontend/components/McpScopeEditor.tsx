@@ -82,6 +82,12 @@ export function McpScopeEditor({
     return next;
   });
 
+  // #165 — domain TABS (was: all 7 domains + ~98 tools FLAT at once — overwhelming, user
+  // feedback). activeDomain = pure VIEW state; only this domain's tools render below. The
+  // selection MATH is unchanged (toggleDomain/toggleTool). Default = the first domain.
+  const [activeDomain, setActiveDomain] = useState<string>(groups[0]?.domain ?? "");
+  const active = groups.find((g) => g.domain === activeDomain) ?? groups[0];
+
   return (
     <div className="scope-editor" data-testid="scope-editor">
       <div className="hint faint" style={{ marginBottom: 8 }}>
@@ -89,46 +95,67 @@ export function McpScopeEditor({
         {" "}({scope.domains.length} domain + {scope.tools.length} tool lẻ)
       </div>
 
-      {groups.map(({ domain, tools }) => {
-        const domainOn = isDomainSelected(scope, domain);
-        const count = catalog.counts.byMount[domain] ?? tools.length;
-        return (
-          <div className="scope-domain" key={domain} data-testid={`scope-domain-${domain}`}>
-            <label className="scope-domain-head">
+      {/* TAB ROW — one per domain. Each tab: whole-domain tick (domain-check, ALWAYS
+          reachable for every domain) + name + count. Clicking the tab BODY (not the
+          checkbox) switches activeDomain → only that domain's tools render below. */}
+      <div className="scope-tabs" role="tablist" data-testid="scope-tabs">
+        {groups.map(({ domain, tools }) => {
+          const domainOn = isDomainSelected(scope, domain);
+          const count = catalog.counts.byMount[domain] ?? tools.length;
+          const isActive = active?.domain === domain;
+          return (
+            <div
+              key={domain}
+              className={`scope-tab${isActive ? " on" : ""}${domainOn ? " checked" : ""}`}
+              data-testid={`scope-domain-${domain}`}
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={0}
+              onClick={() => setActiveDomain(domain)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveDomain(domain); } }}
+            >
+              {/* whole-domain tick — stopPropagation so ticking doesn't ALSO switch the tab */}
               <input
                 type="checkbox"
+                className="scope-tab-check"
                 checked={domainOn}
+                onClick={(e) => e.stopPropagation()}
                 onChange={() => onChange(toggleDomain(scope, domain, catalog.tools))}
                 data-testid={`domain-check-${domain}`}
+                aria-label={`Chọn cả domain ${domain}`}
               />
-              <span className="scope-domain-name acc">{domain}</span>
-              <span className="tagchip" data-testid={`domain-count-${domain}`}>{count} tool</span>
-            </label>
-            <div className="scope-tools">
-              {tools.map((t) => {
-                const isOpen = expanded.has(t.name);
-                return (
-                  <div className="scope-tool-wrap" key={t.name}>
-                    <label className="scope-tool" title={t.description} data-testid={`tool-row-${t.name}`}>
-                      <input
-                        type="checkbox"
-                        checked={isToolSelected(scope, t)}
-                        onChange={() => onChange(toggleTool(scope, t, catalog.tools))}
-                        data-testid={`tool-check-${t.name}`}
-                      />
-                      <span className="scope-tool-name">{t.name}</span>
-                      {t.capability !== "read" && <span className="tagchip mid" style={{ fontSize: 9 }}>{t.capability}</span>}
-                      <span className="scope-tool-desc hint faint">{t.description}</span>
-                      <DetailToggle open={isOpen} onToggle={() => toggle(t.name)} name={t.name} />
-                    </label>
-                    {isOpen && <ToolDetail tool={t} />}
-                  </div>
-                );
-              })}
+              <span className="scope-tab-name">{domain}</span>
+              <span className="scope-tab-count" data-testid={`domain-count-${domain}`}>{count}</span>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+
+      {/* BELOW TABS — ONLY the active domain's tools (the existing tool-row, unchanged). */}
+      {active && (
+        <div className="scope-tools" data-testid={`scope-tools-${active.domain}`}>
+          {active.tools.map((t) => {
+            const isOpen = expanded.has(t.name);
+            return (
+              <div className="scope-tool-wrap" key={t.name}>
+                <label className="scope-tool" title={t.description} data-testid={`tool-row-${t.name}`}>
+                  <input
+                    type="checkbox"
+                    checked={isToolSelected(scope, t)}
+                    onChange={() => onChange(toggleTool(scope, t, catalog.tools))}
+                    data-testid={`tool-check-${t.name}`}
+                  />
+                  <span className="scope-tool-name">{t.name}</span>
+                  {t.capability !== "read" && <span className="tagchip mid" style={{ fontSize: 9 }}>{t.capability}</span>}
+                  <span className="scope-tool-desc hint faint">{t.description}</span>
+                  <DetailToggle open={isOpen} onToggle={() => toggle(t.name)} name={t.name} />
+                </label>
+                {isOpen && <ToolDetail tool={t} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

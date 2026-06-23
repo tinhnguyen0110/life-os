@@ -192,7 +192,10 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     await user.click(screen.getByTestId("key-new-toggle"));
     await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     await user.type(screen.getByTestId("key-label-input"), "mix");
-    await user.click(screen.getByTestId("domain-check-finance"));   // whole finance
+    await user.click(screen.getByTestId("domain-check-finance"));   // whole finance (tab row, always reachable)
+    // #165 — trc_a (a TRACING tool) only renders when the tracing tab is active → switch
+    // to the tracing tab FIRST (click its tab body, not the domain-check), then tick the tool.
+    await user.click(screen.getByTestId("scope-domain-tracing"));
     await user.click(screen.getByTestId("tool-check-trc_a"));       // + one tracing tool
     await waitFor(() => expect(screen.getByTestId("scope-selected-count")).toHaveTextContent("3"));
     await user.click(screen.getByTestId("key-create-btn"));
@@ -296,6 +299,24 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     expect(screen.getByTestId("scope-domain-tracing")).toBeInTheDocument();
     expect(screen.getByTestId("scope-domain-write")).toBeInTheDocument();
     expect(screen.getByTestId("tool-row-fin_a")).toBeInTheDocument();
+  });
+
+  // #165 — domain TABS: clicking a domain tab filters → ONLY that domain's tool-rows render
+  // (another domain's tool-rows are ABSENT from the DOM, not just hidden — the flat-dump fix).
+  it("#165 domain tabs — clicking a tab renders ONLY that domain's tools", async () => {
+    getMcpKeys.mockResolvedValue(LIST([]));
+    render(<McpKeysPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("key-new-toggle"));
+    await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
+    // default = the first domain (finance): its tools render; tracing's do NOT (absent from DOM).
+    expect(screen.getByTestId("tool-row-fin_a")).toBeInTheDocument();
+    expect(screen.getByTestId("tool-row-fin_b")).toBeInTheDocument();
+    expect(screen.queryByTestId("tool-row-trc_a")).not.toBeInTheDocument();
+    // click the tracing tab → trc_a appears, finance tools leave the DOM.
+    await user.click(screen.getByTestId("scope-domain-tracing"));
+    expect(screen.getByTestId("tool-row-trc_a")).toBeInTheDocument();
+    expect(screen.queryByTestId("tool-row-fin_a")).not.toBeInTheDocument();
   });
 
   // catalog fetch fails → the scope-editor area shows an honest error (not a blank form).
