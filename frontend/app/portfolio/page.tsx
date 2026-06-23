@@ -80,7 +80,11 @@ export default function PortfolioPage() {
     <section className="view" data-screen="S6" data-testid="portfolio-screen">
       <div className="vtitle">
         <h1>Danh mục</h1>
-        <span className="sub" data-testid="portfolio-counts">{allHoldings.length} vị thế · {channelCount} kênh</span>
+        {/* honest count: only show real numbers once data is ready — during loading/error
+            an "0 vị thế · 0 kênh" header would contradict the loading body (fabricated zero). */}
+        <span className="sub" data-testid="portfolio-counts">
+          {status === "ready" ? `${allHoldings.length} vị thế · ${channelCount} kênh` : "—"}
+        </span>
         <span className="sp" />
         {/* channel filter tabs — only when >1 channel held (a single channel needs no filter) */}
         {heldChannels.length > 1 && (
