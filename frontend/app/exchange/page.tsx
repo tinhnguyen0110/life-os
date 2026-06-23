@@ -123,8 +123,8 @@ function OkxTab() {
         </div>
         <pre
           style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
+            background: "var(--bg-2)",
+            border: "1px solid var(--line)",
             borderRadius: 8,
             padding: "12px 20px",
             textAlign: "left",
@@ -188,7 +188,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
       {/* KPI row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
         <div className="card" style={{ padding: "20px 24px" }}>
-          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--tx-2)", marginBottom: 8 }}>
             Tổng tài khoản
           </div>
           <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--font-mono, monospace)", letterSpacing: "-0.01em" }} data-testid="exchange-total" data-amount>
@@ -196,7 +196,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
           </div>
         </div>
         <div className="card" style={{ padding: "20px 24px" }}>
-          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--tx-2)", marginBottom: 8 }}>
             Số coin
           </div>
           <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--font-mono, monospace)" }}>
@@ -204,7 +204,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
           </div>
         </div>
         <div className="card" style={{ padding: "20px 24px" }}>
-          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--tx-2)", marginBottom: 8 }}>
             Open Positions
           </div>
           <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "var(--font-mono, monospace)" }}>
@@ -219,7 +219,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
           padding: "14px 16px",
           fontWeight: 600,
           fontSize: 13,
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "1px solid var(--line)",
           display: "flex",
           alignItems: "center",
           gap: 8,
@@ -236,22 +236,22 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} aria-label="Số dư tài sản trên sàn">
             <thead>
-              <tr style={{ background: "var(--surface, rgba(255,255,255,0.03))" }}>
-                <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+              <tr style={{ background: "var(--bg-2)" }}>
+                <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>
                   Coin
                 </th>
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>
                   Khả dụng
                 </th>
                 {hasFrozen && (
-                  <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+                  <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>
                     Đang khóa
                   </th>
                 )}
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>
                   Giá trị USD
                 </th>
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>
                   P&amp;L (giá vốn)
                 </th>
               </tr>
@@ -271,17 +271,17 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
                     style={{
                       // dust gets a stronger separator (it's a rollup boundary, not just
                       // another coin) + a fully muted look; small coins stay dimmed.
-                      // NOTE: the surrounding rows use `var(--border)` which is UNDEFINED in
+                      // NOTE: the surrounding rows use `var(--line)` which is UNDEFINED in
                       // this token system (→ no border renders) — flagged separately. The
                       // dust separator uses a REAL token (--line-2) so it actually shows.
-                      borderTop: isDust ? "1px solid var(--line-2)" : "1px solid var(--border)",
+                      borderTop: isDust ? "1px solid var(--line-2)" : "1px solid var(--line)",
                       opacity: isDust ? 0.7 : isSmall ? 0.55 : 1,
                     }}
                     data-testid={`balance-row-${b.symbol}`}
                   >
                     <td style={{ padding: "11px 16px", fontWeight: isDust ? 400 : 600, fontSize: 14 }}>
                       {isDust ? (
-                        <span style={{ fontStyle: "italic", color: "var(--text-faint)" }} data-testid="balance-dust-label">
+                        <span style={{ fontStyle: "italic", color: "var(--tx-2)" }} data-testid="balance-dust-label">
                           {b.symbol}
                           {b.count != null && (
                             <span style={{ fontSize: 11, marginLeft: 6 }}>({b.count} coin gộp)</span>
@@ -291,11 +291,11 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
                         b.symbol
                       )}
                     </td>
-                    <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono, monospace)", color: "var(--text-secondary, var(--text-faint))" }}>
+                    <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono, monospace)", color: "var(--tx-2)" }}>
                       {b.available.toLocaleString("en", { maximumFractionDigits: 6 })}
                     </td>
                     {hasFrozen && (
-                      <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono, monospace)", color: "var(--text-faint)" }}>
+                      <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono, monospace)", color: "var(--tx-2)" }}>
                         {b.frozen > 0 ? b.frozen.toLocaleString("en", { maximumFractionDigits: 6 }) : "—"}
                       </td>
                     )}
@@ -328,24 +328,24 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
             padding: "14px 16px",
             fontWeight: 600,
             fontSize: 13,
-            borderBottom: "1px solid var(--border)",
+            borderBottom: "1px solid var(--line)",
           }}>
             Open Positions
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} aria-label="Vị thế đang mở">
             <thead>
-              <tr style={{ background: "var(--surface, rgba(255,255,255,0.03))" }}>
-                <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Instrument</th>
-                <th style={{ textAlign: "center", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Side</th>
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Qty</th>
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Avg Open</th>
-                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Unrealized P&L</th>
-                <th style={{ textAlign: "center", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-faint)" }}>Lev</th>
+              <tr style={{ background: "var(--bg-2)" }}>
+                <th style={{ textAlign: "left", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Instrument</th>
+                <th style={{ textAlign: "center", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Side</th>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Qty</th>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Avg Open</th>
+                <th style={{ textAlign: "right", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Unrealized P&L</th>
+                <th style={{ textAlign: "center", padding: "9px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--tx-2)" }}>Lev</th>
               </tr>
             </thead>
             <tbody>
               {overview.positions.map((p: OkxPosition, i: number) => (
-                <tr key={`${p.instId}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
+                <tr key={`${p.instId}-${i}`} style={{ borderTop: "1px solid var(--line)" }}>
                   <td style={{ padding: "11px 16px", fontWeight: 600 }}>{p.instId}</td>
                   <td style={{ padding: "11px 16px", textAlign: "center" }}>
                     <span style={{
@@ -374,7 +374,7 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
                       {p.unrealizedPnl >= 0 ? "+" : ""}{fmtUSD(p.unrealizedPnl)}
                     </span>
                   </td>
-                  <td style={{ padding: "11px 16px", textAlign: "center", color: "var(--text-faint)", fontSize: 13 }}>
+                  <td style={{ padding: "11px 16px", textAlign: "center", color: "var(--tx-2)", fontSize: 13 }}>
                     {p.lever}×
                   </td>
                 </tr>
@@ -397,7 +397,7 @@ function BinanceTab() {
       style={{
         padding: "60px 32px",
         textAlign: "center",
-        border: "1px dashed var(--border)",
+        border: "1px dashed var(--line)",
         background: "transparent",
       }}
       data-testid="binance-stub"
@@ -434,7 +434,7 @@ export default function ExchangePage() {
       <div
         style={{
           display: "flex",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "1px solid var(--line)",
           marginBottom: 24,
           gap: 4,
         }}
@@ -457,7 +457,7 @@ export default function ExchangePage() {
                 borderBottom: isActive
                   ? "2px solid var(--accent, #FF6A33)"
                   : "2px solid transparent",
-                color: isActive ? "var(--accent, #FF6A33)" : "var(--text-faint)",
+                color: isActive ? "var(--accent, #FF6A33)" : "var(--tx-2)",
                 cursor: "pointer",
                 fontFamily: "var(--font-sans, inherit)",
                 fontSize: 14,
