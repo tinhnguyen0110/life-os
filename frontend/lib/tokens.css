@@ -382,6 +382,12 @@ select.finput { cursor:pointer; }
 .rem-row.overdue .rem-due { color:var(--red); font-weight:600; }
 .rem-row.done { opacity:.5; border-left-color:var(--green); }
 .rem-row.done .rem-title { text-decoration:line-through; color:var(--tx-1); }
+/* #153-R2 — subtle row-scan hover (NEW rule on the existing .rem- namespace; does NOT
+   modify the .rem-row/.overdue/.done state rules above). A reading aid — rows don't
+   navigate — so it's faint, like .exch-bal-row. SCOPED with :not(.overdue):not(.done)
+   so it never overrides the honest overdue RED tint / done de-emphasis on hover. */
+.rem-row { transition:background .12s ease; }
+.rem-row:not(.overdue):not(.done):hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 
 /* usage bar row (S9 per-model/project) — ported from mock screens.css .usebar-row */
 .usebar-row { display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:12px; padding:8px 0; }

@@ -318,8 +318,38 @@ export default function RemindersPage() {
           )}
 
           {visible.length === 0 ? (
-            <div className="hint" style={{ padding: "22px 16px" }} data-testid="reminders-empty">
-              {tab === "done" ? "Chưa có nhắc nhở nào hoàn thành." : "Không có nhắc nhở nào ở đây."}
+            // #153-R1 — inviting empty-state (replaces the bare 1-line stub) so a 0/few
+            // page reads intentional, not barren. Keeps the `reminders-empty` testid + the
+            // EXISTING tab-aware copy (done-tab vs other-tab) verbatim. The "Đã xong" tab
+            // (a review view) gets NO create-CTA — you don't "create a done reminder"; the
+            // other tabs get the "+ Nhắc nhở" CTA that opens the create form.
+            <div
+              data-testid="reminders-empty"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+                gap: 9, padding: "40px 24px 44px", maxWidth: 440, margin: "0 auto",
+              }}
+            >
+              <div aria-hidden="true" style={{ fontSize: 32, lineHeight: 1, opacity: 0.55 }}>🔔</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--tx-1)" }}>
+                {tab === "done" ? "Chưa có nhắc nhở nào hoàn thành." : "Không có nhắc nhở nào ở đây."}
+              </div>
+              {tab !== "done" && (
+                <>
+                  <div className="hint" style={{ lineHeight: 1.55 }}>
+                    Thêm một nhắc nhở + thời điểm tới hạn; khi tới hạn nó sẽ báo (và hiện ở đây).
+                  </div>
+                  <button
+                    className="btn accent"
+                    type="button"
+                    style={{ marginTop: 5 }}
+                    onClick={() => { setCreating({ ...EMPTY_CREATE }); setFormErr(""); }}
+                    data-testid="reminders-empty-cta"
+                  >
+                    + Nhắc nhở
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             visible.map((r) => {

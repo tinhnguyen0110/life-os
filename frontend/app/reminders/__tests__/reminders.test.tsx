@@ -83,11 +83,17 @@ describe("#31 Reminders — render + list", () => {
     await waitFor(() => expect(getReminders).toHaveBeenCalledWith("today"));
   });
 
-  it("empty list → honest empty state (no fabricated rows)", async () => {
+  it("empty list → inviting empty state (heading + copy + CTA opens form), no fabricated rows", async () => {
+    const user = userEvent.setup();
     getReminders.mockResolvedValue(LIST([]));
     render(<RemindersPage />);
     await waitFor(() => expect(screen.getByTestId("reminders-empty")).toBeInTheDocument());
+    // #153-R1: the bare stub is replaced by an inviting empty-state — keeps the tab-aware copy
     expect(screen.getByTestId("reminders-empty")).toHaveTextContent(/Không có nhắc nhở/);
+    // a non-done tab (default "undone") gets a CTA that opens the create form
+    expect(screen.queryByTestId("reminder-create-form")).toBeNull();
+    await user.click(screen.getByTestId("reminders-empty-cta"));
+    expect(screen.getByTestId("reminder-create-form")).toBeInTheDocument();
   });
 
   it("loading state shows while the fetch is pending", async () => {
