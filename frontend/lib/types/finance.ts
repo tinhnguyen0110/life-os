@@ -140,6 +140,11 @@ export interface OkxBalance {
   spotUpl?: number | null;
   /** spot unrealized P&L as a RATIO (e.g. -0.5786 = −57.86%); null when no basis. */
   spotUplRatio?: number | null;
+  /** true when this "·dust" row is a FOLD of N sub-$0.001 coins (a rollup, not a real
+   *  holding) — backend-set. The FE renders it distinctly so it never reads as a coin. */
+  isDust?: boolean;
+  /** number of dust coins folded into this rollup row (present only when isDust). */
+  count?: number;
 }
 /** One open position (margin/futures) — mirrors `OkxPosition`. */
 export interface OkxPosition {

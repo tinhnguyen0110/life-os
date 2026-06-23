@@ -937,6 +937,12 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .fin-alloc-row { border-radius:7px; margin:0 -8px; padding-left:8px; padding-right:8px; transition:background .12s ease; }
 .fin-alloc-row:hover { background:var(--bg-2); }
 
+/* #145-R2 — NEW exchange-scoped class (.exch- namespace). A faint row-scan highlight
+   on the balances table (a reading aid for a wide table — NOT a clickability signal;
+   these rows don't navigate, so it stays subtle, lighter than the clickable .fin-alloc-row). */
+.exch-bal-row { transition:background .12s ease; }
+.exch-bal-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
+
 /* ============================================================
    MarketOverview (FE-4) — compare table + correlation heatmap + rel-strength.
    ============================================================ */

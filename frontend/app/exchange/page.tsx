@@ -258,15 +258,39 @@ LIFEOS_OKX_API_PASSPHRASE=your_passphrase`}
             </thead>
             <tbody>
               {overview.balances.map((b: OkxBalance) => {
-                const isSmall = b.usdValue != null && b.usdValue < 1;
+                // #145-R1 — the "·dust" row is a backend FOLD of N sub-$0.001 coins (a
+                // rollup, not a holding). Detect via the honest `isDust` flag (not string-
+                // match) → render it distinctly so a user reads it as a summary, not a coin.
+                const isDust = b.isDust === true;
+                const isSmall = !isDust && b.usdValue != null && b.usdValue < 1;
                 const pnl = costPnl(b.spotUpl, b.spotUplRatio);
                 return (
                   <tr
                     key={b.symbol}
-                    style={{ borderTop: "1px solid var(--border)", opacity: isSmall ? 0.55 : 1 }}
+                    className="exch-bal-row"
+                    style={{
+                      // dust gets a stronger separator (it's a rollup boundary, not just
+                      // another coin) + a fully muted look; small coins stay dimmed.
+                      // NOTE: the surrounding rows use `var(--border)` which is UNDEFINED in
+                      // this token system (→ no border renders) — flagged separately. The
+                      // dust separator uses a REAL token (--line-2) so it actually shows.
+                      borderTop: isDust ? "1px solid var(--line-2)" : "1px solid var(--border)",
+                      opacity: isDust ? 0.7 : isSmall ? 0.55 : 1,
+                    }}
                     data-testid={`balance-row-${b.symbol}`}
                   >
-                    <td style={{ padding: "11px 16px", fontWeight: 600, fontSize: 14 }}>{b.symbol}</td>
+                    <td style={{ padding: "11px 16px", fontWeight: isDust ? 400 : 600, fontSize: 14 }}>
+                      {isDust ? (
+                        <span style={{ fontStyle: "italic", color: "var(--text-faint)" }} data-testid="balance-dust-label">
+                          {b.symbol}
+                          {b.count != null && (
+                            <span style={{ fontSize: 11, marginLeft: 6 }}>({b.count} coin gộp)</span>
+                          )}
+                        </span>
+                      ) : (
+                        b.symbol
+                      )}
+                    </td>
                     <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono, monospace)", color: "var(--text-secondary, var(--text-faint))" }}>
                       {b.available.toLocaleString("en", { maximumFractionDigits: 6 })}
                     </td>
