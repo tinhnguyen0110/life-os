@@ -75,6 +75,9 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
     await waitFor(() => expect(screen.getByTestId("connect-hint")).toBeInTheDocument());
+    // #160 — the connect body is collapsed (reference info); open it to see the endpoint/header.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("connect-toggle"));
     expect(screen.getByTestId("mcp-endpoint")).toHaveTextContent("/mcp/");
     // #87 chose the X-MCP-Key HEADER (not ?key=)
     expect(screen.getByTestId("key-header")).toHaveTextContent("X-MCP-Key");
@@ -86,6 +89,10 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     render(<McpKeysPage />);
     await waitFor(() => expect(screen.getByTestId("keys-empty")).toBeInTheDocument());
     expect(screen.getByTestId("keys-empty")).toHaveTextContent("Chưa có key");
+    // #160 — the inviting empty-state CTA opens the create form
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("keys-empty-cta"));
+    expect(screen.getByTestId("key-create-form")).toBeInTheDocument();
   });
 
   it("renders key rows with label + BE toolCount + scope summary (render-only)", async () => {
@@ -103,8 +110,11 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
   it("create requires a label (empty → inline error, no API call)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     const user = userEvent.setup();
+    // #160 — open the (collapsed) create form first
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle"));
+    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     await user.click(screen.getByTestId("key-create-btn"));
     expect(screen.getByTestId("create-error")).toHaveTextContent("Nhập nhãn");
     expect(createMcpKey).not.toHaveBeenCalled();
@@ -114,9 +124,12 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     createMcpKey.mockResolvedValue(CREATED({ key: "Knew_secret_TOKEN_999", label: "agent-x" }));
     render(<McpKeysPage />);
+    const user = userEvent.setup();
+    // #160 — open the (collapsed) create form first
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle"));
     await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
 
-    const user = userEvent.setup();
     await user.type(screen.getByTestId("key-label-input"), "agent-x");
     await user.click(screen.getByTestId("key-create-btn"));
 
@@ -139,8 +152,11 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     createMcpKey.mockResolvedValue(CREATED());
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     const user = userEvent.setup();
+    // #160 — open the (collapsed) create form first
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle"));
+    await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     await user.type(screen.getByTestId("key-label-input"), "fin-agent");
     // tick the whole "finance" domain
     await user.click(screen.getByTestId("domain-check-finance"));
@@ -155,8 +171,11 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     createMcpKey.mockResolvedValue(CREATED());
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     const user = userEvent.setup();
+    // #160 — open the (collapsed) create form first
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle"));
+    await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     await user.type(screen.getByTestId("key-label-input"), "mix");
     await user.click(screen.getByTestId("domain-check-finance"));   // whole finance
     await user.click(screen.getByTestId("tool-check-trc_a"));       // + one tracing tool
@@ -197,8 +216,11 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     createMcpKey.mockRejectedValue(new Error("label taken"));
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     const user = userEvent.setup();
+    // #160 — open the (collapsed) create form first
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle"));
+    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     await user.type(screen.getByTestId("key-label-input"), "dup");
     await user.click(screen.getByTestId("key-create-btn"));
     await waitFor(() => expect(screen.getByTestId("create-error")).toHaveTextContent("label taken"));
@@ -251,6 +273,9 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
   it("scope-editor renders in the create form with all catalog domains", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form
     await waitFor(() => expect(screen.getByTestId("scope-editor")).toBeInTheDocument());
     expect(screen.getByTestId("scope-domain-finance")).toBeInTheDocument();
     expect(screen.getByTestId("scope-domain-tracing")).toBeInTheDocument();
@@ -263,6 +288,9 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     getMcpKeys.mockResolvedValue(LIST([]));
     getMcpCatalog.mockRejectedValue(new Error("catalog 500"));
     render(<McpKeysPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form
     await waitFor(() => expect(screen.getByTestId("scope-cat-error")).toHaveTextContent("catalog 500"));
     // the create form itself still renders (label input present — create still possible)
     expect(screen.getByTestId("key-label-input")).toBeInTheDocument();
@@ -275,10 +303,12 @@ describe("#129 MCP Keys — tool-detail expand (fullDescription + params table)"
   it("a tool row EXPANDS → its fullDescription + a params TABLE (name/type/required/default)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form (scope editor)
     await waitFor(() => expect(screen.getByTestId("tool-row-fin_a")).toBeInTheDocument());
     // collapsed by default — no detail
     expect(screen.queryByTestId("tool-detail-fin_a")).toBeNull();
-    const user = userEvent.setup();
     await user.click(screen.getByTestId("tool-expand-fin_a"));
     // expanded: full description + the params table
     expect(screen.getByTestId("tool-fulldesc-fin_a")).toHaveTextContent("the full docstring with details");
@@ -293,8 +323,10 @@ describe("#129 MCP Keys — tool-detail expand (fullDescription + params table)"
   it("🔴 a NO-ARG tool → 'không tham số' (honest-empty, not a fabricated row)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("tool-row-fin_b")).toBeInTheDocument());
     const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form (scope editor)
+    await waitFor(() => expect(screen.getByTestId("tool-row-fin_b")).toBeInTheDocument());
     await user.click(screen.getByTestId("tool-expand-fin_b"));
     expect(screen.getByTestId("tool-noparams-fin_b")).toHaveTextContent("không tham số");
     expect(screen.queryByTestId("tool-params-fin_b")).toBeNull(); // no params table
@@ -303,10 +335,13 @@ describe("#129 MCP Keys — tool-detail expand (fullDescription + params table)"
   it("expanding a tool does NOT toggle its scope checkbox (the ⓘ stops propagation)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form (scope editor)
     await waitFor(() => expect(screen.getByTestId("tool-check-fin_a")).toBeInTheDocument());
     const check = screen.getByTestId("tool-check-fin_a") as HTMLInputElement;
     expect(check.checked).toBe(false);
-    await userEvent.setup().click(screen.getByTestId("tool-expand-fin_a"));
+    await user.click(screen.getByTestId("tool-expand-fin_a"));
     expect(check.checked).toBe(false); // still unchecked — expand ≠ tick
     expect(screen.getByTestId("tool-detail-fin_a")).toBeInTheDocument();
   });
@@ -319,8 +354,10 @@ describe("#128 MCP Keys — polish: key value masked (reveal-on-demand)", () => 
     getMcpKeys.mockResolvedValue(LIST([]));
     createMcpKey.mockResolvedValue(CREATED({ key: "Ksecret_LONG_value_42", label: "z" }));
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByTestId("key-new-toggle")).toBeInTheDocument());
+    await user.click(screen.getByTestId("key-new-toggle")); // #160 open the create form
+    await waitFor(() => expect(screen.getByTestId("key-create-btn")).toBeInTheDocument());
     await user.type(screen.getByTestId("key-label-input"), "z");
     await user.click(screen.getByTestId("key-create-btn"));
     const token = await screen.findByTestId("key-once-token");

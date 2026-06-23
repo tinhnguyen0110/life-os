@@ -53,6 +53,11 @@ export default function McpKeysPage() {
 
   // the catalog-audit panel toggle
   const [showAudit, setShowAudit] = useState(false);
+  // #160 redesign — KEYS-FIRST: the create form (label + the 98-tool scope picker) is
+  // COLLAPSED by default (open via "+ Key mới") so the daily task (manage keys) sits at
+  // the top, not buried below the picker. The connect block is reference info → collapsed.
+  const [showCreate, setShowCreate] = useState(false);
+  const [showConnect, setShowConnect] = useState(false);
 
   // #128 — mask the just-created key VALUE (reveal-on-demand security hygiene). Default
   // masked; the user reveals to copy by eye, or just clicks Copy (no reveal needed).
@@ -69,6 +74,7 @@ export default function McpKeysPage() {
       setKeyRevealed(false); // #128 — a fresh key starts MASKED
       setLabel("");
       setCreateScope(EMPTY_SCOPE);
+      setShowCreate(false); // #160 — collapse the form on success so the key-once reveal is the focus
     } catch (err) {
       setCreateErr(err instanceof ApiError ? (err.hint ? `${err.message} (${err.hint})` : err.message) : (err as Error).message);
     } finally {
@@ -115,103 +121,17 @@ export default function McpKeysPage() {
         <h1>MCP Keys</h1>
         <span className="sub">cấp key cho agent · mỗi key chỉ thấy các tool trong phạm vi của nó</span>
         <span className="sp" />
+        {/* #160 — primary action: open the (collapsed) create form. */}
+        <button className="btn accent" type="button" onClick={() => { setShowCreate((s) => !s); setCreateErr(""); }} data-testid="key-new-toggle">
+          {showCreate ? "Đóng" : "+ Key mới"}
+        </button>
         <button className="btn" type="button" onClick={() => setShowAudit((s) => !s)} data-testid="audit-toggle">
           {showAudit ? "Ẩn danh mục tool" : "Xem danh mục tool"}
         </button>
         <button className="btn" type="button" onClick={reload} data-testid="keys-reload">↻ Tải lại</button>
       </div>
 
-      {/* connect-hint: endpoint + X-MCP-Key header (the #87 mechanism). */}
-      <div className="panel" style={{ padding: "12px 14px" }} data-testid="connect-hint">
-        <div className="kicker" style={{ marginBottom: 6 }}>Kết nối</div>
-        <div className="hint" style={{ lineHeight: 1.6 }}>
-          Endpoint MCP: <span className="acc" style={{ fontFamily: "var(--mono)" }} data-testid="mcp-endpoint">{MCP_BASE}/&lt;server&gt;/mcp</span>
-          <br />
-          Truyền key qua header <span className="acc" style={{ fontFamily: "var(--mono)" }} data-testid="key-header">X-MCP-Key</span> trên endpoint đó.
-        </div>
-        <pre className="key-once-token" style={{ marginTop: 8, color: "var(--tx-1)", borderColor: "var(--line-2)" }} data-testid="mcp-json-snippet">{`{
-  "mcpServers": {
-    "lifeos-read": {
-      "url": "${MCP_BASE}/read/mcp",
-      "headers": { "X-MCP-Key": "<your-key>" }
-    }
-  }
-}`}</pre>
-      </div>
-
-      {/* catalog-audit (the user's 2nd reason: eyeball which tools exist/are useful). */}
-      {showAudit && (
-        <div className="panel" style={{ padding: "12px 14px", marginTop: 12 }} data-testid="audit-panel">
-          <div className="kicker" style={{ marginBottom: 6 }}>Danh mục tool</div>
-          {catStatus === "loading" && <div className="hint faint" data-testid="audit-loading">Đang tải danh mục…</div>}
-          {catStatus === "error" && (
-            <div className="hint neg" data-testid="audit-error">Không tải được danh mục: {catErr}.
-              <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={catReload}>Thử lại</button>
-            </div>
-          )}
-          {catStatus === "ready" && catalog && <McpCatalogAudit catalog={catalog} />}
-        </div>
-      )}
-
-      {/* create form (label + scope editor) */}
-      <form className="panel" style={{ padding: "12px 14px", marginTop: 12 }} onSubmit={onCreate} data-testid="key-create-form">
-        <div className="kicker" style={{ marginBottom: 6 }}>Tạo key mới</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            type="text"
-            placeholder="Nhãn (vd: finance-agent)"
-            value={label}
-            maxLength={80}
-            onChange={(e) => setLabel(e.target.value)}
-            data-testid="key-label-input"
-            style={{ flex: 1, minWidth: 200 }}
-          />
-          <button className="btn acc" type="submit" disabled={creating} data-testid="key-create-btn">
-            {creating ? "Đang tạo…" : "Tạo key"}
-          </button>
-        </div>
-
-        {/* scope editor — tick domains + tools (part-2). honest about the catalog state. */}
-        <div style={{ marginTop: 10 }} data-testid="scope-seam">
-          <div className="kicker" style={{ marginBottom: 4 }}>Phạm vi (chọn tool key được thấy)</div>
-          {catStatus === "loading" && <div className="hint faint" data-testid="scope-cat-loading">Đang tải danh mục tool…</div>}
-          {catStatus === "error" && (
-            <div className="hint neg" data-testid="scope-cat-error">Không tải được danh mục: {catErr}.
-              <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={catReload}>Thử lại</button>
-            </div>
-          )}
-          {catStatus === "ready" && catalog && (
-            <McpScopeEditor catalog={catalog} scope={createScope} onChange={setCreateScope} />
-          )}
-        </div>
-
-        {createErr && <div className="hint neg" style={{ marginTop: 6 }} data-testid="create-error">⚠ {createErr}</div>}
-      </form>
-
-      {/* key shown ONCE after create */}
-      {justCreated && (
-        <div className="panel" style={{ padding: "12px 14px", marginTop: 12, borderColor: "var(--accent)" }} data-testid="key-once">
-          <div className="kicker pos" style={{ marginBottom: 6 }}>✓ Đã tạo · sao chép key NGAY (chỉ hiện một lần)</div>
-          {/* #128 — the key value is MASKED by default; reveal-on-demand (security hygiene).
-              Copy works without revealing (clipboard, never on-screen). */}
-          <code className="key-once-token" data-testid="key-once-token" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>
-            {keyRevealed ? justCreated.key : maskKey(justCreated.key)}
-          </code>
-          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button className="btn sm" type="button" data-testid="key-once-reveal"
-              onClick={() => setKeyRevealed((r) => !r)} aria-pressed={keyRevealed}>
-              {keyRevealed ? "🙈 Ẩn" : "👁 Hiện"}
-            </button>
-            <button className="btn sm" type="button" data-testid="key-once-copy"
-              onClick={() => navigator.clipboard?.writeText(justCreated.key)}>Sao chép</button>
-            <button className="btn sm" type="button" data-testid="key-once-dismiss"
-              onClick={() => setJustCreated(null)}>Đã lưu, ẩn đi</button>
-          </div>
-          <div className="hint faint" style={{ marginTop: 6 }}>Sau khi ẩn, key không hiện lại — chỉ còn nhãn + phạm vi trong danh sách.</div>
-        </div>
-      )}
-
-      {/* list */}
+      {/* ───────── KEYS-FIRST (#160): the list is the top, daily-task content ───────── */}
       {status === "loading" && (
         <div data-testid="keys-loading" aria-busy="true" style={{ marginTop: 12 }}>
           {Array.from({ length: 2 }).map((_, i) => (
@@ -231,8 +151,28 @@ export default function McpKeysPage() {
       )}
 
       {status === "ready" && keys.length === 0 && (
-        <div className="panel" style={{ padding: "20px", marginTop: 12 }} data-testid="keys-empty">
-          <div className="hint faint">Chưa có key nào. Tạo một key ở trên để cấp cho agent.</div>
+        // #160 — inviting empty-state (mirrors dj/reminders/notes), CTA opens the create form.
+        <div
+          data-testid="keys-empty"
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+            gap: 9, padding: "40px 24px 44px", maxWidth: 460, margin: "12px auto 0",
+          }}
+        >
+          <div aria-hidden="true" style={{ fontSize: 32, lineHeight: 1, opacity: 0.55 }}>🔑</div>
+          <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--tx-1)" }}>Chưa có key nào.</div>
+          <div className="hint" style={{ lineHeight: 1.55 }}>
+            Cấp một key cho agent — mỗi key chỉ thấy các tool trong phạm vi bạn chọn.
+          </div>
+          <button
+            className="btn accent"
+            type="button"
+            style={{ marginTop: 5 }}
+            onClick={() => { setShowCreate(true); setCreateErr(""); }}
+            data-testid="keys-empty-cta"
+          >
+            + Key mới
+          </button>
         </div>
       )}
 
@@ -291,6 +231,109 @@ export default function McpKeysPage() {
               {deleteErr && confirmDel === k.key && <div className="hint neg" style={{ marginTop: 4 }} data-testid={`del-error-${k.key}`}>⚠ {deleteErr}</div>}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* key shown ONCE after create — directly under the list so it's seen immediately */}
+      {justCreated && (
+        <div className="panel" style={{ padding: "12px 14px", marginTop: 12, borderColor: "var(--accent)" }} data-testid="key-once">
+          <div className="kicker pos" style={{ marginBottom: 6 }}>✓ Đã tạo · sao chép key NGAY (chỉ hiện một lần)</div>
+          {/* #128 — the key value is MASKED by default; reveal-on-demand (security hygiene).
+              Copy works without revealing (clipboard, never on-screen). */}
+          <code className="key-once-token" data-testid="key-once-token" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>
+            {keyRevealed ? justCreated.key : maskKey(justCreated.key)}
+          </code>
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn sm" type="button" data-testid="key-once-reveal"
+              onClick={() => setKeyRevealed((r) => !r)} aria-pressed={keyRevealed}>
+              {keyRevealed ? "🙈 Ẩn" : "👁 Hiện"}
+            </button>
+            <button className="btn sm" type="button" data-testid="key-once-copy"
+              onClick={() => navigator.clipboard?.writeText(justCreated.key)}>Sao chép</button>
+            <button className="btn sm" type="button" data-testid="key-once-dismiss"
+              onClick={() => setJustCreated(null)}>Đã lưu, ẩn đi</button>
+          </div>
+          <div className="hint faint" style={{ marginTop: 6 }}>Sau khi ẩn, key không hiện lại — chỉ còn nhãn + phạm vi trong danh sách.</div>
+        </div>
+      )}
+
+      {/* ───────── CREATE FORM — collapsed (#160); opens via "+ Key mới" ───────── */}
+      {showCreate && (
+        <form className="panel" style={{ padding: "12px 14px", marginTop: 12 }} onSubmit={onCreate} data-testid="key-create-form">
+          <div className="kicker" style={{ marginBottom: 6 }}>Tạo key mới</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="Nhãn (vd: finance-agent)"
+              value={label}
+              maxLength={80}
+              onChange={(e) => setLabel(e.target.value)}
+              data-testid="key-label-input"
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <button className="btn acc" type="submit" disabled={creating} data-testid="key-create-btn">
+              {creating ? "Đang tạo…" : "Tạo key"}
+            </button>
+          </div>
+
+          {/* scope editor — tick domains + tools (part-2). honest about the catalog state. */}
+          <div style={{ marginTop: 10 }} data-testid="scope-seam">
+            <div className="kicker" style={{ marginBottom: 4 }}>Phạm vi (chọn tool key được thấy)</div>
+            {catStatus === "loading" && <div className="hint faint" data-testid="scope-cat-loading">Đang tải danh mục tool…</div>}
+            {catStatus === "error" && (
+              <div className="hint neg" data-testid="scope-cat-error">Không tải được danh mục: {catErr}.
+                <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={catReload}>Thử lại</button>
+              </div>
+            )}
+            {catStatus === "ready" && catalog && (
+              <McpScopeEditor catalog={catalog} scope={createScope} onChange={setCreateScope} />
+            )}
+          </div>
+
+          {createErr && <div className="hint neg" style={{ marginTop: 6 }} data-testid="create-error">⚠ {createErr}</div>}
+        </form>
+      )}
+
+      {/* ───────── CONNECT — reference info, collapsed (#160) ───────── */}
+      <div className="panel" style={{ padding: "10px 14px", marginTop: 12 }} data-testid="connect-hint">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="kicker">Kết nối</div>
+          <span className="hint faint" style={{ fontSize: 11 }}>endpoint + header để agent kết nối</span>
+          <span className="sp" style={{ flex: 1 }} />
+          <button className="btn sm" type="button" onClick={() => setShowConnect((s) => !s)} data-testid="connect-toggle">
+            {showConnect ? "Ẩn" : "Xem"}
+          </button>
+        </div>
+        {showConnect && (
+          <div style={{ marginTop: 8 }} data-testid="connect-body">
+            <div className="hint" style={{ lineHeight: 1.6 }}>
+              Endpoint MCP: <span className="acc" style={{ fontFamily: "var(--mono)" }} data-testid="mcp-endpoint">{MCP_BASE}/&lt;server&gt;/mcp</span>
+              <br />
+              Truyền key qua header <span className="acc" style={{ fontFamily: "var(--mono)" }} data-testid="key-header">X-MCP-Key</span> trên endpoint đó.
+            </div>
+            <pre className="key-once-token" style={{ marginTop: 8, color: "var(--tx-1)", borderColor: "var(--line-2)" }} data-testid="mcp-json-snippet">{`{
+  "mcpServers": {
+    "lifeos-read": {
+      "url": "${MCP_BASE}/read/mcp",
+      "headers": { "X-MCP-Key": "<your-key>" }
+    }
+  }
+}`}</pre>
+          </div>
+        )}
+      </div>
+
+      {/* catalog-audit (the user's 2nd reason: eyeball which tools exist/are useful). */}
+      {showAudit && (
+        <div className="panel" style={{ padding: "12px 14px", marginTop: 12 }} data-testid="audit-panel">
+          <div className="kicker" style={{ marginBottom: 6 }}>Danh mục tool</div>
+          {catStatus === "loading" && <div className="hint faint" data-testid="audit-loading">Đang tải danh mục…</div>}
+          {catStatus === "error" && (
+            <div className="hint neg" data-testid="audit-error">Không tải được danh mục: {catErr}.
+              <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={catReload}>Thử lại</button>
+            </div>
+          )}
+          {catStatus === "ready" && catalog && <McpCatalogAudit catalog={catalog} />}
         </div>
       )}
     </section>
