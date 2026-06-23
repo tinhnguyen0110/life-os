@@ -971,17 +971,39 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 /* ============================================================
    FE-5 — Macro context + News feed views (APPEND-only)
    ============================================================ */
-/* macro cards */
-.macro-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
-.macro-card { background:var(--bg-1); border:1px solid var(--line); border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+/* macro cards
+   #147-PartB layout redesign: even 4+3 grid (was auto-fit → uneven 6+1/5+2 wrap),
+   uniform card height, a LARGER sparkline that fills the card's lower half (was a
+   thin 30px strip). Behavior-preserving — no data/logic change. The 7 indicators
+   lay out 4 on the top row + 3 on the bottom via a 12-col track (top cards span 3,
+   bottom cards span 4 = 12 each → both rows fill evenly). nth-child keeps the page
+   markup clean of layout logic. Narrow viewports degrade to 2-col then 1-col. */
+.macro-grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; align-items:stretch; }
+/* top row: 4 cards × 3 cols = 12 */
+.macro-grid > .macro-card:nth-child(-n+4) { grid-column:span 3; }
+/* bottom row: remaining 3 cards × 4 cols = 12 */
+.macro-grid > .macro-card:nth-child(n+5) { grid-column:span 4; }
+.macro-card { background:var(--bg-1); border:1px solid var(--line); border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; min-height:170px; transition:border-color .14s ease, background .14s ease; }
+.macro-card:hover { border-color:var(--line-2); background:var(--bg-2); }
 .macro-card-head { display:flex; align-items:center; gap:8px; }
 .macro-card-label { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tx-2); }
 .macro-badge-mock { margin-left:auto; font-family:var(--mono); font-size:9px; font-weight:700; text-transform:uppercase; color:var(--amber); background:var(--amber-dim); padding:2px 7px; border-radius:5px; letter-spacing:.06em; }
 .macro-card-val { font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--tx-0); }
 .macro-card-trend { font-family:var(--mono); font-size:12px; }
-.macro-spark { display:block; margin-top:2px; }
-.macro-spark-empty { font-family:var(--mono); font-size:11px; height:30px; display:flex; align-items:center; }
-.macro-card-foot { font-family:var(--mono); font-size:10px; }
+/* sparkline fills the card's lower half — pushed to the bottom (margin-top:auto),
+   full card width, ~56px tall (was a 30px strip glued under the trend line). */
+.macro-spark { display:block; margin-top:auto; width:100%; height:56px; }
+.macro-spark-empty { font-family:var(--mono); font-size:11px; height:56px; margin-top:auto; display:flex; align-items:flex-end; }
+.macro-card-foot { font-family:var(--mono); font-size:10px; margin-top:8px; }
+@media (max-width:880px) {
+  .macro-grid { grid-template-columns:repeat(2,1fr); }
+  .macro-grid > .macro-card:nth-child(-n+4),
+  .macro-grid > .macro-card:nth-child(n+5) { grid-column:span 1; }
+}
+@media (max-width:520px) {
+  .macro-grid { grid-template-columns:1fr; }
+  .macro-grid > .macro-card { grid-column:span 1; }
+}
 
 /* news feed */
 .news-filter { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }

@@ -22,13 +22,16 @@ const TREND_META: Record<MacroTrend, { arrow: string; cls: string; label: string
 
 function Sparkline({ values }: { values: number[] }) {
   if (values.length < 2) return <div className="macro-spark-empty faint" data-testid="macro-spark-empty">—</div>;
-  const W = 120, H = 30;
+  // #147-PartB: the SVG now FILLS the card's lower half (CSS sizes it to 100%×56px).
+  // The viewBox is just the path's coordinate space; preserveAspectRatio="none" lets
+  // it stretch to the CSS box, and vectorEffect keeps the stroke crisp at any size.
+  const W = 240, H = 56;
   const scale = buildScale(values, W, H);
   const pts = linePoints(values, scale);
   const rising = values[values.length - 1] >= values[0];
   return (
-    <svg className="macro-spark" viewBox={`0 0 ${W} ${H}`} width={W} height={H} data-testid="macro-spark" aria-hidden="true">
-      <polyline points={pts} fill="none" stroke={rising ? "var(--green)" : "var(--red)"} strokeWidth={1.5} />
+    <svg className="macro-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-testid="macro-spark" aria-hidden="true">
+      <polyline points={pts} fill="none" stroke={rising ? "var(--green)" : "var(--red)"} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
@@ -92,12 +95,15 @@ export default function MacroPage() {
         // #71: a skeleton grid (placeholder cards) instead of a blank "loading"
         // line, so the layout appears immediately while the macro fetch (~1-2s,
         // slower cold from FRED) resolves — no blank-hang.
+        // #147-PartB: 7 skeletons carrying `.macro-card` so the 4+3 grid span rules
+        // (`.macro-grid > .macro-card:nth-child(...)`) apply → the loading layout
+        // matches the loaded layout (no reflow when data arrives).
         <div className="macro-grid" data-testid="macro-loading" aria-busy="true">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div className="card macro-skeleton" key={i} style={{ padding: "14px 16px", minHeight: 96 }} aria-hidden="true">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div className="macro-card macro-skeleton" key={i} aria-hidden="true">
               <div className="sk-line" style={{ width: "55%" }} />
               <div className="sk-line" style={{ width: "40%", height: 22, marginTop: 10 }} />
-              <div className="sk-line" style={{ width: "70%", marginTop: 12 }} />
+              <div className="sk-line" style={{ width: "100%", height: 40, marginTop: "auto" }} />
             </div>
           ))}
         </div>
