@@ -428,6 +428,14 @@ select.finput { cursor:pointer; }
 /* routine card + trigger pill (S13) — ported from mock screens.css */
 .routine-card { background:var(--bg-1); border:1px solid var(--line); border-radius:var(--r); padding:15px 16px; display:flex; flex-direction:column; gap:11px; position:relative; overflow:hidden; }
 .routine-card.off { opacity:.6; }
+/* #158-R1 — subtle card hover for lane-consistency with .fin-alloc-row / .exch-bal-row /
+   .rem-row / .set-row (affordance aid). GUARDED :not(.off) so it NEVER overrides the
+   honest disabled-routine de-emphasis (opacity:.6) on hover — same discipline as the
+   #154 settings [data-enabled="0"] + #153 reminders :not(.overdue):not(.done) guards.
+   ADDITIVE: the `.routine-card { transition }` here composes with (does NOT redefine)
+   the base rule above; the base/.off rules are untouched. */
+.routine-card { transition:border-color .12s ease, background .12s ease; }
+.routine-card:not(.off):hover { border-color:var(--line-2); background:var(--bg-2); }
 .routine-card .rc-top { display:flex; align-items:flex-start; gap:11px; }
 .routine-card .rc-ic { width:32px; height:32px; border-radius:8px; display:grid; place-items:center; flex-shrink:0; color:var(--accent); background:var(--accent-dim); }
 .routine-card .rc-ic svg { width:17px; height:17px; }
