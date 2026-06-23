@@ -1304,3 +1304,20 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .mcpk-toast .ok { color:var(--green); }
 @keyframes mcpk-toast-in { from { opacity:0; transform:translate(-50%,12px); } to { opacity:1; transform:translate(-50%,0); } }
 @media (prefers-reduced-motion:reduce) { .mcpk-toast { animation:none; } .mcpk-bar .seg { transition:none; } }
+
+/* #164 — create-panel COPIED from template #createPanel (L281-299) → dark. The template's
+   .panel/.ph/.pb/.field/.editor-actions structure, mapped to app dark tokens (paper→bg,
+   ink→tx, line→line). Scoped .mcpk-* (NOT global). The input reuses the app's .finput. */
+.mcpk-create-panel { margin-top:12px; overflow:hidden; }
+.mcpk-ph { display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--line); }
+.mcpk-ph .t { font-family:var(--sans); font-weight:600; font-size:14px; letter-spacing:.01em; color:var(--tx-0); }
+.mcpk-ph-close { margin-left:auto; color:var(--tx-2); font-family:var(--mono); font-size:11px; cursor:pointer; transition:color .12s; }
+.mcpk-ph-close:hover { color:var(--tx-0); }
+.mcpk-pb { padding:18px; }
+.mcpk-field { margin-bottom:16px; }
+.mcpk-flabel { display:block; font-size:12.5px; font-weight:600; margin-bottom:6px; color:var(--tx-0); }
+.mcpk-fhint { font-weight:400; color:var(--tx-2); }
+.mcpk-editor-actions { display:flex; gap:9px; margin-top:14px; }
+/* keylist eyebrow header (template L302-305) */
+.mcpk-keylist-head { display:flex; align-items:baseline; justify-content:space-between; margin:24px 0 12px; }
+.mcpk-keylist-head .mcpk-eyebrow { font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--tx-2); font-weight:500; }
