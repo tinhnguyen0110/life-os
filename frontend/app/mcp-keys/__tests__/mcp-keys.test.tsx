@@ -107,6 +107,20 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     expect(within(row).getByTestId("key-scope-Kkey_abc123def456")).toHaveTextContent("reminders_list");
   });
 
+  it("#162 aperture bar — granted count computed FE-side from the REAL catalog scope", async () => {
+    // ROW scope = {domains:["finance"], tools:["reminders_list"]} over the CATALOG (fin_a,
+    // fin_b in finance; trc_a tracing; wri_a write). resolvedTools = fin_a+fin_b (finance
+    // domain) + reminders_list (loose) = 3 granted; catalog total = 4 tools.
+    getMcpKeys.mockResolvedValue(LIST([ROW()]));
+    render(<McpKeysPage />);
+    await waitFor(() => expect(screen.getByTestId("keys-list")).toBeInTheDocument());
+    const ap = await screen.findByTestId("key-aperture-Kkey_abc123def456");
+    expect(within(ap).getByTestId("aperture-granted-Kkey_abc123def456")).toHaveTextContent("3");
+    expect(ap).toHaveTextContent("/ 4 tool"); // total from catalog.tools.length
+    // the bar has segments (signature) — finance(on) + tracing/write(off)
+    expect(ap.querySelectorAll(".seg").length).toBeGreaterThan(0);
+  });
+
   it("create requires a label (empty → inline error, no API call)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);

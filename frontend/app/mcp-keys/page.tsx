@@ -9,17 +9,27 @@
    store + computes toolCount; the FE displays + lets the user tick a scope. The scope
    math is pure (lib/mcpScope). The catalog comes from GET /mcp_keys/catalog (#87).
    ============================================================ */
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useMcpKeys } from "@/lib/useMcpKeys";
 import { useMcpCatalog } from "@/lib/useMcpCatalog";
 import { apiBase, ApiError } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { McpScopeEditor, McpCatalogAudit } from "@/components/McpScopeEditor";
-import { EMPTY_SCOPE } from "@/lib/mcpScope";
-import type { McpKey, McpScope } from "@/lib/types";
+import { EMPTY_SCOPE, resolvedTools, groupByDomain } from "@/lib/mcpScope";
+import type { McpKey, McpScope, McpCatalog } from "@/lib/types";
 
 /** the MCP endpoint base (mounts live at <base>/mcp/<server>/mcp). */
 const MCP_BASE = `${apiBase}/mcp`;
+
+/** the connect-config snippet (one source for the <pre> + the copy button). */
+const CONFIG_SNIPPET = `{
+  "mcpServers": {
+    "lifeos-read": {
+      "url": "${MCP_BASE}/read/mcp",
+      "headers": { "X-MCP-Key": "<your-key>" }
+    }
+  }
+}`;
 
 /** #128 — mask a key value for display: show a short prefix + a dotted tail (never the
  *  full secret on screen unless the user reveals). Short keys → all dots. */
@@ -27,6 +37,24 @@ function maskKey(key: string): string {
   if (!key) return "";
   if (key.length <= 8) return "•".repeat(key.length);
   return `${key.slice(0, 6)}${"•".repeat(Math.max(8, key.length - 6))}`;
+}
+
+/** #162 — APERTURE coverage, computed FE-side from the REAL catalog (template:596-612).
+ *  Per domain: granted = the key's resolved tools in that domain; total = byMount[domain].
+ *  The segmented bar shows on(granted)/off(remaining) widths across all domains, and the
+ *  headline "N / TOTAL tool trong tầm nhìn". Honest: empty catalog → empty segs + 0/0. */
+type ApertureSeg = { domain: string; on: number; off: number };
+function computeAperture(scope: McpScope, catalog: McpCatalog): { segs: ApertureSeg[]; granted: number; total: number } {
+  const grantedNames = new Set(resolvedTools(scope, catalog.tools));
+  // Per domain: total = the domain's actual tool count in the catalog (groupByDomain — the
+  // SAME source granted is counted from, so on+off always equals the domain total exactly);
+  // granted = how many of those the key's resolved scope grants. (byMount is the BE display
+  // count; using the group's own length keeps the segment widths internally consistent.)
+  const segs: ApertureSeg[] = groupByDomain(catalog.tools).map(({ domain, tools }) => {
+    const on = tools.filter((t) => grantedNames.has(t.name)).length;
+    return { domain, on, off: tools.length - on };
+  });
+  return { segs, granted: grantedNames.size, total: catalog.tools.length };
 }
 
 export default function McpKeysPage() {
@@ -63,6 +91,19 @@ export default function McpKeysPage() {
   // masked; the user reveals to copy by eye, or just clicks Copy (no reveal needed).
   const [keyRevealed, setKeyRevealed] = useState(false);
 
+  // #162 — toast (fixed bottom-center pill) for copy / update / delete feedback.
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 1800);
+  }, []);
+  async function copyText(text: string, okMsg: string) {
+    try { await navigator.clipboard?.writeText(text); toast(okMsg); }
+    catch { toast("Không sao chép được"); }
+  }
+
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = label.trim();
@@ -94,6 +135,7 @@ export default function McpKeysPage() {
     try {
       await update(editKey, { scope: editScope });
       setEditKey(null);
+      toast("Đã cập nhật phạm vi"); // #162
     } catch (err) {
       setEditErr(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
@@ -108,6 +150,7 @@ export default function McpKeysPage() {
       setConfirmDel(null);
       if (justCreated?.key === key) setJustCreated(null);
       if (editKey === key) setEditKey(null);
+      toast("Đã xoá key"); // #162
     } catch (err) {
       setDeleteErr(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
@@ -117,18 +160,33 @@ export default function McpKeysPage() {
 
   return (
     <section className="view" data-screen="MCPKEYS" data-testid="mcp-keys-screen">
-      <div className="vtitle">
-        <h1>MCP Keys</h1>
-        <span className="sub">cấp key cho agent · mỗi key chỉ thấy các tool trong phạm vi của nó</span>
-        <span className="sp" />
+      {/* #162 — MASTHEAD (template:246-256, adapted to DARK): accent top-rule + display h1
+          + sub + right meta (tool/domain · localhost). Replaces the plain vtitle. */}
+      <div className="mcpk-toprule" aria-hidden="true" />
+      <header className="mcpk-mast">
+        <div>
+          <h1 className="mcpk-h1">MCP <span className="dim">Keys</span></h1>
+          <p className="mcpk-sub">Cấp key cho agent. Mỗi key chỉ thấy các tool nằm trong phạm vi của nó — để giới hạn tool cho từng agent, không phải để chống tấn công.</p>
+        </div>
+        <div className="mcpk-meta" data-testid="mcpk-meta">
+          {/* #162 note#1: use catalog.tools.length (per-mount tool slots) — the SAME total the
+              aperture bar shows ("N / TOTAL"), so masthead + aperture agree (no 53-vs-98 confusion). */}
+          <div><b>{catalog ? catalog.tools.length : "—"}</b> tool · <b>{catalog ? groupByDomain(catalog.tools).length : "—"}</b> domain</div>
+          <div>localhost · 1 người dùng</div>
+        </div>
+      </header>
+
+      {/* #162 — TOOLBAR (template:258-263): primary create + spacer + catalog toggle + reload. */}
+      <div className="mcpk-toolbar">
         {/* #160 — primary action: open the (collapsed) create form. */}
         <button className="btn accent" type="button" onClick={() => { setShowCreate((s) => !s); setCreateErr(""); }} data-testid="key-new-toggle">
-          {showCreate ? "Đóng" : "+ Key mới"}
+          {showCreate ? "✕ Đóng" : "+ Tạo key mới"}
         </button>
-        <button className="btn" type="button" onClick={() => setShowAudit((s) => !s)} data-testid="audit-toggle">
+        <span className="mcpk-spacer" />
+        <button className="btn" type="button" aria-pressed={showAudit} onClick={() => setShowAudit((s) => !s)} data-testid="audit-toggle">
           {showAudit ? "Ẩn danh mục tool" : "Xem danh mục tool"}
         </button>
-        <button className="btn" type="button" onClick={reload} data-testid="keys-reload">↻ Tải lại</button>
+        <button className="btn ghost" type="button" onClick={reload} data-testid="keys-reload">↻ Tải lại</button>
       </div>
 
       {/* ───────── KEYS-FIRST (#160): the list is the top, daily-task content ───────── */}
@@ -181,7 +239,9 @@ export default function McpKeysPage() {
           {keys.map((k) => (
             <div className="panel" key={k.key} style={{ padding: "12px 14px" }} data-testid={`key-row-${k.key}`}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 600 }} data-testid={`key-label-${k.key}`}>{k.label}</span>
+                <span className="mcpk-keylabel" data-testid={`key-label-${k.key}`}>
+                  <span className="mcpk-keyglyph" aria-hidden="true">⚷</span>{k.label}
+                </span>
                 <span className="tagchip" data-testid={`key-toolcount-${k.key}`} title="số tool key này thấy (BE tính)">
                   {k.toolCount} tool
                 </span>
@@ -205,10 +265,39 @@ export default function McpKeysPage() {
                   <button className="btn sm" type="button" onClick={() => { setConfirmDel(k.key); setDeleteErr(""); }} data-testid={`key-del-${k.key}`}>Xoá</button>
                 )}
               </div>
-              {/* scope summary (render-only) */}
-              <div className="hint faint" style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11 }} data-testid={`key-scope-${k.key}`}>
-                domain: {k.scope.domains.length ? k.scope.domains.join(", ") : "—"} · tool: {k.scope.tools.length ? k.scope.tools.join(", ") : "—"}
+              {/* scope summary (render-only) — #162: domains/loose-tools as TAG-CHIPS. */}
+              <div className="mcpk-scope-sum" data-testid={`key-scope-${k.key}`}>
+                <span className="k">domain:</span>{" "}
+                {k.scope.domains.length
+                  ? k.scope.domains.map((d) => <span className="mcpk-tag" key={d}>{d}</span>)
+                  : <span className="k">—</span>}
+                {" · "}
+                <span className="k">tool lẻ:</span>{" "}
+                {k.scope.tools.length
+                  ? k.scope.tools.map((t) => <span className="mcpk-tag" key={t}>{t}</span>)
+                  : <span className="k">—</span>}
               </div>
+
+              {/* #162 — APERTURE bar (signature): per-domain on/off coverage, REAL catalog. */}
+              {catStatus === "ready" && catalog && (() => {
+                const ap = computeAperture(k.scope, catalog);
+                return (
+                  <div className="mcpk-aperture" data-testid={`key-aperture-${k.key}`}>
+                    <div className="mcpk-meterline">
+                      <span className="num"><b data-testid={`aperture-granted-${k.key}`}>{ap.granted}</b> / {ap.total} tool trong tầm nhìn của key</span>
+                      <span className="legend">▨ trong phạm vi</span>
+                    </div>
+                    <div className="mcpk-bar" role="img" aria-label={`${ap.granted} trên ${ap.total} tool trong phạm vi`}>
+                      {ap.segs.map((s) => (
+                        <span key={s.domain} style={{ display: "contents" }}>
+                          {s.on > 0 && <i className="seg on" style={{ flex: s.on }} title={`${s.domain}: ${s.on} tool`} />}
+                          {s.off > 0 && <i className="seg off" style={{ flex: s.off }} title={`${s.domain}: ${s.off} tool ngoài phạm vi`} />}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* inline scope EDIT (part-2) */}
               {editKey === k.key && (
@@ -249,7 +338,7 @@ export default function McpKeysPage() {
               {keyRevealed ? "🙈 Ẩn" : "👁 Hiện"}
             </button>
             <button className="btn sm" type="button" data-testid="key-once-copy"
-              onClick={() => navigator.clipboard?.writeText(justCreated.key)}>Sao chép</button>
+              onClick={() => copyText(justCreated.key, "Đã sao chép key vào clipboard")}>Sao chép</button>
             <button className="btn sm" type="button" data-testid="key-once-dismiss"
               onClick={() => setJustCreated(null)}>Đã lưu, ẩn đi</button>
           </div>
@@ -311,14 +400,18 @@ export default function McpKeysPage() {
               <br />
               Truyền key qua header <span className="acc" style={{ fontFamily: "var(--mono)" }} data-testid="key-header">X-MCP-Key</span> trên endpoint đó.
             </div>
-            <pre className="key-once-token" style={{ marginTop: 8, color: "var(--tx-1)", borderColor: "var(--line-2)" }} data-testid="mcp-json-snippet">{`{
-  "mcpServers": {
-    "lifeos-read": {
-      "url": "${MCP_BASE}/read/mcp",
-      "headers": { "X-MCP-Key": "<your-key>" }
-    }
-  }
-}`}</pre>
+            <div style={{ position: "relative", marginTop: 8 }}>
+              <button
+                className="btn sm"
+                type="button"
+                style={{ position: "absolute", top: 6, right: 6 }}
+                onClick={() => copyText(CONFIG_SNIPPET, "Đã sao chép cấu hình")}
+                data-testid="connect-copy"
+              >
+                Sao chép
+              </button>
+              <pre className="key-once-token" style={{ margin: 0, color: "var(--tx-1)", borderColor: "var(--line-2)" }} data-testid="mcp-json-snippet">{CONFIG_SNIPPET}</pre>
+            </div>
           </div>
         )}
       </div>
@@ -334,6 +427,13 @@ export default function McpKeysPage() {
             </div>
           )}
           {catStatus === "ready" && catalog && <McpCatalogAudit catalog={catalog} />}
+        </div>
+      )}
+
+      {/* #162 — TOAST: fixed bottom-center pill for copy / update / delete feedback. */}
+      {toastMsg && (
+        <div className="mcpk-toast show" role="status" aria-live="polite" data-testid="mcpk-toast">
+          <span className="ok" aria-hidden="true">✓</span>{toastMsg}
         </div>
       )}
     </section>

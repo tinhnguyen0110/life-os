@@ -1247,3 +1247,45 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .tool-params tr:last-child td { border-bottom:0; }
 .tool-params .tp-name { color:var(--tx-0); font-weight:600; }
 .tool-params .tp-type { color:var(--violet, var(--accent)); }
+
+/* ============================================================
+   #162 — mcp-keys v2 (ADAPTED from template/mcp-key.html → DARK).
+   Light/brass template mapped to dark app tokens (paper→bg-0/1/2, ink→tx-0/1/2,
+   brass→accent, brass-tint→accent-dim, danger→red). Template shadow/paper-texture/
+   google-fonts DROPPED (app tokens/fonts). New scoped `.mcpk-*` — NO global mod. */
+/* masthead */
+.mcpk-toprule { height:3px; background:var(--accent); width:46px; margin-bottom:16px; border-radius:2px; }
+.mcpk-mast { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap; }
+.mcpk-h1 { font-family:var(--sans); font-weight:700; font-size:32px; letter-spacing:-.02em; margin:0; line-height:1; color:var(--tx-0); }
+.mcpk-h1 .dim { color:var(--tx-2); font-weight:500; }
+.mcpk-sub { color:var(--tx-1); margin:9px 0 0; max-width:52ch; font-size:13px; line-height:1.5; }
+.mcpk-meta { font-family:var(--mono); font-size:11px; color:var(--tx-2); text-align:right; white-space:nowrap; }
+.mcpk-meta b { color:var(--tx-1); font-weight:500; }
+/* toolbar */
+.mcpk-toolbar { display:flex; align-items:center; gap:10px; margin:22px 0 14px; flex-wrap:wrap; }
+.mcpk-spacer { flex:1; }
+/* eyebrow */
+.mcpk-eyebrow { font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--tx-2); font-weight:500; }
+/* key card bits */
+.mcpk-keylabel { font-family:var(--sans); font-weight:600; font-size:15px; display:inline-flex; align-items:center; gap:9px; color:var(--tx-0); }
+.mcpk-keyglyph { color:var(--accent); transform:rotate(-45deg); font-size:14px; display:inline-block; }
+/* scope summary as tag-chips */
+.mcpk-scope-sum { font-family:var(--mono); font-size:12px; color:var(--tx-1); margin-top:7px; word-break:break-word; line-height:1.9; }
+.mcpk-scope-sum .k { color:var(--tx-2); }
+.mcpk-tag { color:var(--tx-0); background:var(--bg-2); border:1px solid var(--line); border-radius:4px; padding:1px 6px; margin:0 2px 2px 0; display:inline-block; }
+/* aperture bar (signature) */
+.mcpk-aperture { margin-top:12px; }
+.mcpk-meterline { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; gap:10px; flex-wrap:wrap; }
+.mcpk-meterline .num { font-family:var(--mono); font-size:12px; color:var(--tx-1); }
+.mcpk-meterline .num b { color:var(--tx-0); font-weight:600; }
+.mcpk-meterline .legend { font-family:var(--mono); font-size:10.5px; color:var(--tx-2); }
+.mcpk-bar { display:flex; height:9px; border-radius:5px; overflow:hidden; background:var(--bg-2); border:1px solid var(--line); }
+.mcpk-bar .seg { transition:flex .2s ease; min-width:0; }
+.mcpk-bar .seg.on { background:repeating-linear-gradient(135deg, var(--accent), var(--accent) 3px, var(--accent-soft) 3px, var(--accent-soft) 4px); }
+.mcpk-bar .seg.off { background:transparent; }
+.mcpk-bar .seg + .seg { border-left:1px solid var(--bg-1); }
+/* toast */
+.mcpk-toast { position:fixed; left:50%; bottom:26px; transform:translate(-50%,0); background:var(--bg-3); color:var(--tx-0); font-size:13px; padding:10px 18px; border-radius:30px; z-index:600; display:flex; align-items:center; gap:8px; border:1px solid var(--line-2); box-shadow:0 10px 30px -8px rgba(0,0,0,.5); animation:mcpk-toast-in .22s ease; }
+.mcpk-toast .ok { color:var(--green); }
+@keyframes mcpk-toast-in { from { opacity:0; transform:translate(-50%,12px); } to { opacity:1; transform:translate(-50%,0); } }
+@media (prefers-reduced-motion:reduce) { .mcpk-toast { animation:none; } .mcpk-bar .seg { transition:none; } }
