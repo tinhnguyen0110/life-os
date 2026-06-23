@@ -163,16 +163,11 @@ export default function McpKeysPage() {
       {/* #162 — MASTHEAD (template:246-256, adapted to DARK): accent top-rule + display h1
           + sub + right meta (tool/domain · localhost). Replaces the plain vtitle. */}
       <div className="mcpk-toprule" aria-hidden="true" />
+      {/* #164c — masthead meta (98 tool · 7 domain / localhost) removed per user. */}
       <header className="mcpk-mast">
         <div>
           <h1 className="mcpk-h1">MCP <span className="dim">Keys</span></h1>
           <p className="mcpk-sub">Cấp key cho agent. Mỗi key chỉ thấy các tool nằm trong phạm vi của nó — để giới hạn tool cho từng agent, không phải để chống tấn công.</p>
-        </div>
-        <div className="mcpk-meta" data-testid="mcpk-meta">
-          {/* #162 note#1: use catalog.tools.length (per-mount tool slots) — the SAME total the
-              aperture bar shows ("N / TOTAL"), so masthead + aperture agree (no 53-vs-98 confusion). */}
-          <div><b>{catalog ? catalog.tools.length : "—"}</b> tool · <b>{catalog ? groupByDomain(catalog.tools).length : "—"}</b> domain</div>
-          <div>localhost · 1 người dùng</div>
         </div>
       </header>
 

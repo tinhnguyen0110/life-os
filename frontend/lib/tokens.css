@@ -1274,8 +1274,6 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .mcpk-h1 { font-family:var(--sans); font-weight:700; font-size:32px; letter-spacing:-.02em; margin:0; line-height:1; color:var(--tx-0); }
 .mcpk-h1 .dim { color:var(--tx-2); font-weight:500; }
 .mcpk-sub { color:var(--tx-1); margin:9px 0 0; max-width:52ch; font-size:13px; line-height:1.5; }
-.mcpk-meta { font-family:var(--mono); font-size:11px; color:var(--tx-2); text-align:right; white-space:nowrap; }
-.mcpk-meta b { color:var(--tx-1); font-weight:500; }
 /* toolbar */
 .mcpk-toolbar { display:flex; align-items:center; gap:10px; margin:22px 0 14px; flex-wrap:wrap; }
 .mcpk-spacer { flex:1; }
