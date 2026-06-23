@@ -145,7 +145,12 @@ export function CvTab({ career }: { career: ReturnType<typeof useCareer> }) {
           {cv.sections.map((s) => (
             <div className="panel" key={s.id} data-testid={`cv-section-${s.id}`}>
               <div className="phead"><span className="kicker">{s.heading}</span></div>
-              <div style={{ padding: "12px 16px" }}>
+              {/* #156-R1: constrain the CV prose to a comfortable reading line-length
+                  (~75ch ≈ 800px) — at 1920px the full-panel prose runs far past the
+                  readable 65-75ch. Left-aligned (a CV reads from the left margin, NOT
+                  centered). INLINE on career's instance only — the shared global `.wmd`
+                  rule (wiki/notes also use it) is NOT modified. */}
+              <div style={{ padding: "12px 16px", maxWidth: "75ch" }}>
                 {s.body ? <WikiMarkdown content={s.body} testId={`cv-body-${s.id}`} /> : <span className="hint faint">(trống)</span>}
                 {s.proof.length > 0 && (
                   <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 10 }} data-testid={`cv-proof-${s.id}`}>
