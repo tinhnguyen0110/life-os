@@ -172,7 +172,14 @@ export default function HomePage() {
             <HomeClaudeTile />
           </div>
 
-          {/* mid: projects table (projects) + Brief stub */}
+          {/* #155 — lower body re-flow: ONE 2-col grid (was two stacked rows that left a
+              ~558px void in the right column under the short Brief, beside the tall 14-row
+              projects table). Left = full-height projects panel; RIGHT = a flex column
+              stacking Brief → activity → alerts, flowing continuously beside the table so
+              the void is gone (same pattern as the market `.mov` #146 reflow).
+              align-items:start so when the LEFT table is SHORT (few projects), the right
+              column doesn't stretch/overlap — the grid row grows to the taller column and
+              each stays top-aligned. Tile CONTENTS unchanged; only their placement moves. */}
           <div className="grid" style={{ gridTemplateColumns: "1.7fr 1fr", alignItems: "start" }}>
             <div className="panel" style={{ overflow: "hidden" }}>
               <div className="phead">
@@ -202,36 +209,39 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Brief — LIVE (S11 built; top-N severity-ordered priorities, per-tile fail-open) */}
-            <HomeBriefTile />
-          </div>
+            {/* RIGHT column — Brief → activity → alerts stacked, fills the column beside
+                the full-height projects table (was: Brief here, alerts+activity in a
+                separate row below → the void). gap matches the .grid row gap (14px). */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+              {/* Brief — LIVE (S11 built; top-N severity-ordered priorities, per-tile fail-open) */}
+              <HomeBriefTile />
 
-          {/* bottom: alerts (market) + ticker note */}
-          <div className="grid g-2" style={{ alignItems: "start" }}>
-            <div className="panel" data-testid="home-alerts">
-              <div className="phead">
-                <span className="kicker">Cảnh báo</span>
-                <span className="dot r" />
-                <span className="link" style={{ marginLeft: "auto" }} onClick={() => router.push("/market")}>xem tất cả →</span>
-              </div>
-              <div style={{ padding: "8px 16px 14px" }}>
-                {market.status === "error" ? (
-                  <TileError label="Thị trường" msg={market.errMsg} />
-                ) : alertHistory.length > 0 ? (
-                  alertHistory.slice(0, 4).map((a, i) => (
-                    <div className="mrow" key={`${a.symbol}-${a.ts}-${i}`}>
-                      <span className="k">{a.symbol} {a.op === "above" ? "≥" : "≤"} {fmtUSD(a.threshold)}</span>
-                      <span className="v mut" style={{ fontSize: 11 }}>@ {fmtUSD(a.price)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <span className="hint">Chưa có cảnh báo nào kích hoạt.</span>
-                )}
+              {/* Activity Feed — LIVE (S14 built; recent runs, per-tile fail-open) */}
+              <HomeActivityTile />
+
+              {/* alerts (market) */}
+              <div className="panel" data-testid="home-alerts">
+                <div className="phead">
+                  <span className="kicker">Cảnh báo</span>
+                  <span className="dot r" />
+                  <span className="link" style={{ marginLeft: "auto" }} onClick={() => router.push("/market")}>xem tất cả →</span>
+                </div>
+                <div style={{ padding: "8px 16px 14px" }}>
+                  {market.status === "error" ? (
+                    <TileError label="Thị trường" msg={market.errMsg} />
+                  ) : alertHistory.length > 0 ? (
+                    alertHistory.slice(0, 4).map((a, i) => (
+                      <div className="mrow" key={`${a.symbol}-${a.ts}-${i}`}>
+                        <span className="k">{a.symbol} {a.op === "above" ? "≥" : "≤"} {fmtUSD(a.threshold)}</span>
+                        <span className="v mut" style={{ fontSize: 11 }}>@ {fmtUSD(a.price)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="hint">Chưa có cảnh báo nào kích hoạt.</span>
+                  )}
+                </div>
               </div>
             </div>
-
-            {/* Activity Feed — LIVE (S14 built; recent runs, per-tile fail-open) */}
-            <HomeActivityTile />
           </div>
         </>
       )}
