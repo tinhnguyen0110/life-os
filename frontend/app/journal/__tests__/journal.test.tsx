@@ -95,6 +95,41 @@ describe("S7 Journal — render + filter", () => {
     expect(screen.getByTestId("journal-stats")).not.toHaveTextContent(/theo đúng kế hoạch/);
   });
 
+  it("truly-empty (all-tab, 0 rows) → inviting empty-state with CTA", async () => {
+    getJournal.mockResolvedValueOnce(STATS({ entries: [], count: 0 }));
+    render(<JournalPage />);
+    await waitFor(() => expect(screen.getByTestId("journal-empty")).toBeInTheDocument());
+    expect(screen.getByTestId("journal-empty")).toHaveTextContent("Chưa có lệnh nào");
+    expect(screen.getByTestId("journal-empty-cta")).toBeInTheDocument();
+  });
+
+  it("filtered-empty (non-all tab, 0 match) → neutral label, NO CTA", async () => {
+    getJournal.mockResolvedValueOnce(STATS({ entries: [ENTRY({ action: "BUY", tag: "value" })], count: 1 }));
+    const user = userEvent.setup();
+    render(<JournalPage />);
+    await waitFor(() => expect(screen.getByText("BTC")).toBeInTheDocument());
+    await user.click(screen.getByTestId("tab-ladder")); // no ladder-tagged rows
+    await waitFor(() => expect(screen.getByText("Không có lệnh khớp bộ lọc.")).toBeInTheDocument());
+    expect(screen.queryByTestId("journal-empty")).toBeNull();
+    expect(screen.queryByTestId("journal-empty-cta")).toBeNull();
+  });
+
+  it("empty-CTA click → opens create form (same path as top-right)", async () => {
+    getJournal.mockResolvedValueOnce(STATS({ entries: [], count: 0 }));
+    const user = userEvent.setup();
+    render(<JournalPage />);
+    await waitFor(() => expect(screen.getByTestId("journal-empty-cta")).toBeInTheDocument());
+    await user.click(screen.getByTestId("journal-empty-cta"));
+    expect(screen.getByTestId("journal-create-form")).toBeInTheDocument();
+  });
+
+  it("has-rows → table renders, no empty-state", async () => {
+    getJournal.mockResolvedValueOnce(STATS());
+    render(<JournalPage />);
+    await waitFor(() => expect(screen.getByText("BTC")).toBeInTheDocument());
+    expect(screen.queryByTestId("journal-empty")).toBeNull();
+  });
+
   it("GET error → friendly error", async () => {
     const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
     getJournal.mockRejectedValueOnce(new (ApiError as any)(0, "down"));

@@ -205,7 +205,37 @@ export default function JournalPage() {
         <>
           <div className="panel" style={{ overflow: "hidden" }}>
             <div className="phead"><span className="kicker">Mọi lệnh</span><span className="hint" style={{ marginLeft: "auto" }}>mới nhất trước</span></div>
-            <DataTable columns={columns} rows={filtered} rowKey={(j) => j.id} emptyLabel={filter === "all" ? "Chưa có lệnh nào." : "Không có lệnh khớp bộ lọc."} />
+            {filter === "all" && entries.length === 0 ? (
+              // #167-R1 — inviting empty-state (mirrors dj #149 / reminders #153 / notes #157).
+              // Truly-empty (all-tab, 0 rows) reads intentional, not barren: centered glyph +
+              // heading + copy + a CTA that opens the SAME create form as top-right "+ Ghi lệnh".
+              // A FILTER mismatch (non-all tab, 0 match) is NOT truly-empty → falls through to
+              // DataTable's neutral emptyLabel with NO CTA (creating a trade won't fix a filter).
+              <div
+                data-testid="journal-empty"
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+                  gap: 9, padding: "40px 24px 44px", maxWidth: 440, margin: "0 auto",
+                }}
+              >
+                <div aria-hidden="true" style={{ fontSize: 32, lineHeight: 1, opacity: 0.55 }}>📓</div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--tx-1)" }}>Chưa có lệnh nào</div>
+                <div className="hint" style={{ lineHeight: 1.55 }}>
+                  Ghi một lệnh + lý do quyết định (thesis · confidence); khi đóng lệnh, nhật ký sẽ đo win-rate &amp; hiệu chuẩn.
+                </div>
+                <button
+                  className="btn accent"
+                  type="button"
+                  style={{ marginTop: 5 }}
+                  onClick={() => { setCreating({ ...EMPTY_CREATE }); setFormErr(""); }}
+                  data-testid="journal-empty-cta"
+                >
+                  + Ghi lệnh
+                </button>
+              </div>
+            ) : (
+              <DataTable columns={columns} rows={filtered} rowKey={(j) => j.id} emptyLabel={filter === "all" ? "Chưa có lệnh nào." : "Không có lệnh khớp bộ lọc."} />
+            )}
           </div>
 
           {/* Calibration panel — thesis accuracy (outcome-based), DISTINCT from
