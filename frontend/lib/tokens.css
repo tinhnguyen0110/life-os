@@ -1285,12 +1285,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
    Light/brass template mapped to dark app tokens (paper→bg-0/1/2, ink→tx-0/1/2,
    brass→accent, brass-tint→accent-dim, danger→red). Template shadow/paper-texture/
    google-fonts DROPPED (app tokens/fonts). New scoped `.mcpk-*` — NO global mod. */
-/* masthead */
-.mcpk-toprule { height:3px; background:var(--accent); width:46px; margin-bottom:16px; border-radius:2px; }
-.mcpk-mast { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap; }
-.mcpk-h1 { font-family:var(--sans); font-weight:700; font-size:32px; letter-spacing:-.02em; margin:0; line-height:1; color:var(--tx-0); }
-.mcpk-h1 .dim { color:var(--tx-2); font-weight:500; }
-.mcpk-sub { color:var(--tx-1); margin:9px 0 0; max-width:52ch; font-size:13px; line-height:1.5; }
+/* masthead removed #164e (top-rule + h1 + sub) — breadcrumb names the screen; page starts at toolbar */
 /* toolbar */
 .mcpk-toolbar { display:flex; align-items:center; gap:10px; margin:22px 0 14px; flex-wrap:wrap; }
 .mcpk-spacer { flex:1; }

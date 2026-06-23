@@ -160,16 +160,8 @@ export default function McpKeysPage() {
 
   return (
     <section className="view" data-screen="MCPKEYS" data-testid="mcp-keys-screen">
-      {/* #162 — MASTHEAD (template:246-256, adapted to DARK): accent top-rule + display h1
-          + sub + right meta (tool/domain · localhost). Replaces the plain vtitle. */}
-      <div className="mcpk-toprule" aria-hidden="true" />
-      {/* #164c — masthead meta (98 tool · 7 domain / localhost) removed per user. */}
-      <header className="mcpk-mast">
-        <div>
-          <h1 className="mcpk-h1">MCP <span className="dim">Keys</span></h1>
-          <p className="mcpk-sub">Cấp key cho agent. Mỗi key chỉ thấy các tool nằm trong phạm vi của nó — để giới hạn tool cho từng agent, không phải để chống tấn công.</p>
-        </div>
-      </header>
+      {/* #164e — masthead (top-rule + "MCP Keys" h1) removed per user; the breadcrumb
+          "Life OS / MCP Keys" already names the screen. Page starts at the toolbar. */}
 
       {/* #162 — TOOLBAR (template:258-263): primary create + spacer + catalog toggle + reload. */}
       <div className="mcpk-toolbar">
