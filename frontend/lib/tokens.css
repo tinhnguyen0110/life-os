@@ -929,6 +929,14 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .ecurve-empty { padding:26px 16px 22px; text-align:center; }
 .ecurve-empty-t { font-size:13px; font-weight:600; color:var(--tx-1); margin-bottom:5px; }
 
+/* #150-R3 — NEW finance-scoped class (the .fin- namespace; does NOT modify the
+   semi-shared .mrow used on other screens). The allocation rows are clickable
+   (role=button → /portfolio/<channel>) but had NO hover affordance. This adds a
+   subtle row-highlight + negative-margin/padding so the hover bg spans the panel
+   edge-to-edge without shifting content. Composed alongside .mrow on the row. */
+.fin-alloc-row { border-radius:7px; margin:0 -8px; padding-left:8px; padding-right:8px; transition:background .12s ease; }
+.fin-alloc-row:hover { background:var(--bg-2); }
+
 /* ============================================================
    MarketOverview (FE-4) — compare table + correlation heatmap + rel-strength.
    ============================================================ */

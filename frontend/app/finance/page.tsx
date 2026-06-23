@@ -269,7 +269,14 @@ export default function FinancePage() {
       </div>
 
       {warning && (
-        <div className="panel" style={{ padding: "10px 14px" }} data-testid="finance-warning">
+        // #150-R4: a subtle left-accent (amber) marks this as an honest INFO note, not
+        // an alarm — inline only (no class-rule change). The copy already uses .hint mid
+        // (muted), so it never reads as a red error.
+        <div
+          className="panel"
+          style={{ padding: "10px 14px", borderLeft: "2px solid var(--amber)" }}
+          data-testid="finance-warning"
+        >
           <span className="hint mid">⚠ {warning}</span>
         </div>
       )}
@@ -323,7 +330,7 @@ export default function FinancePage() {
               return (
                 <div key={a.channel}>
                   <div
-                    className="mrow"
+                    className="mrow fin-alloc-row"
                     style={{ alignItems: "center", gap: 10, cursor: "pointer" }}
                     onClick={() => router.push(`/portfolio/${encodeURIComponent(a.channel)}`)}
                     role="button"
