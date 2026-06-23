@@ -37,7 +37,12 @@ function IndicatorCard({ ind, loadHistory }: { ind: MacroIndicator; loadHistory:
   const [series, setSeries] = useState<number[]>([]);
   useEffect(() => {
     let alive = true;
-    loadHistory(ind.indicator, 30).then((s) => { if (alive) setSeries(s); });
+    // #147: 365-day window so MONTHLY FRED series (Fed Funds/CPI/Unemployment/M2/
+    // Industrial) return ≥2 points and pass Sparkline's `values.length < 2` gate.
+    // Their latest data point is 1-2 months old → a 30-day window returned 0 points
+    // → "—". Daily series (DXY/10Y-2Y) are bounded by their own data, so 365 doesn't
+    // flood them. Uniform 365 for all indicators (no per-indicator logic).
+    loadHistory(ind.indicator, 365).then((s) => { if (alive) setSeries(s); });
     return () => { alive = false; };
   }, [ind.indicator, loadHistory]);
 
