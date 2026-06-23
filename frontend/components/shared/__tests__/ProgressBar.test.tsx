@@ -12,13 +12,14 @@ describe("ProgressBar", () => {
     expect(fill.style.width).toBe("41%");
   });
 
-  it("renders em-dash and 0 width for null progress (backend omitted it)", () => {
+  it("renders ONLY an em-dash and NO track for null progress (honest unknown, not fake 0%)", () => {
     render(<ProgressBar value={null} />);
     const bar = screen.getByTestId("progress-bar");
     expect(bar).toHaveAttribute("data-value", "none");
     expect(bar).toHaveTextContent("—");
-    const fill = bar.querySelector("i") as HTMLElement;
-    expect(fill.style.width).toBe("0%");
+    // unknown must NOT render an empty bar track — that would masquerade as a real 0%
+    expect(bar.querySelector("i")).toBeNull();
+    expect(bar.querySelector(".bar, .barc")).toBeNull();
   });
 
   it("clamps out-of-range values to [0,100]", () => {
@@ -27,11 +28,12 @@ describe("ProgressBar", () => {
     expect(fill.style.width).toBe("100%");
   });
 
-  it("treats NaN as unknown (no NaN width, em-dash label)", () => {
+  it("treats NaN as unknown (no track, em-dash label)", () => {
     render(<ProgressBar value={NaN} />);
     const bar = screen.getByTestId("progress-bar");
     expect(bar).toHaveTextContent("—");
-    expect((bar.querySelector("i") as HTMLElement).style.width).toBe("0%");
+    expect(bar).toHaveAttribute("data-value", "none");
+    expect(bar.querySelector("i")).toBeNull();
   });
 
   it("uses health-driven fill color", () => {
