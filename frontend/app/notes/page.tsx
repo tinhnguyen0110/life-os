@@ -264,8 +264,37 @@ export default function NotesPage() {
       {status === "ready" && (
         <>
           {filtered.length === 0 && (
-            <div className="hint" style={{ padding: "24px 4px" }} data-testid="notes-empty">
-              {notes.length === 0 ? "Chưa có ghi chú nào." : "Không có note khớp bộ lọc."}
+            // #157-R1 — inviting tab-aware empty-state (mirrors dj #149 / reminders #153).
+            // Keeps the `notes-empty` testid + BOTH copy messages verbatim (truly-empty vs
+            // no-filter-match). The CTA shows ONLY when truly empty (notes.length===0) —
+            // a no-filter-match isn't "create a note", it's "clear/change the filter".
+            <div
+              data-testid="notes-empty"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+                gap: 9, padding: "40px 24px 44px", maxWidth: 440, margin: "0 auto",
+              }}
+            >
+              <div aria-hidden="true" style={{ fontSize: 32, lineHeight: 1, opacity: 0.55 }}>🗒</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--tx-1)" }}>
+                {notes.length === 0 ? "Chưa có ghi chú nào." : "Không có note khớp bộ lọc."}
+              </div>
+              {notes.length === 0 && (
+                <>
+                  <div className="hint" style={{ lineHeight: 1.55 }}>
+                    Ghi nhanh một ý tưởng, đoạn code, hay link — gắn tag để tìm lại sau.
+                  </div>
+                  <button
+                    className="btn accent"
+                    type="button"
+                    style={{ marginTop: 5 }}
+                    onClick={openNew}
+                    data-testid="notes-empty-cta"
+                  >
+                    + Note mới
+                  </button>
+                </>
+              )}
             </div>
           )}
 

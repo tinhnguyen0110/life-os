@@ -71,10 +71,15 @@ describe("S10 Notes — render + filter", () => {
     expect(screen.getByText("HasFin")).toBeInTheDocument();
   });
 
-  it("empty list → empty state, no crash", async () => {
+  it("empty list → inviting empty state (copy + CTA opens create form), no crash", async () => {
+    const user = userEvent.setup();
     apiGet.mockResolvedValue(LIST([]));
     render(<NotesPage />);
     await waitFor(() => expect(screen.getByTestId("notes-empty")).toHaveTextContent(/Chưa có ghi chú/));
+    // #157-R1: truly-empty (notes.length===0) → a CTA that opens the create form
+    expect(screen.queryByTestId("note-form")).toBeNull();
+    await user.click(screen.getByTestId("notes-empty-cta"));
+    expect(screen.getByTestId("note-form")).toBeInTheDocument();
   });
 
   it("GET error → error state with retry", async () => {
