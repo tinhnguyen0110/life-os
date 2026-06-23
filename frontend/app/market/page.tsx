@@ -208,7 +208,9 @@ export default function MarketPage() {
           relative-strength, over all tracked symbols. */}
       {quotes.length > 0 && <MarketOverview symbols={quotes.map((q) => q.symbol)} />}
 
-      <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
+      {/* #146-R3: 1.5fr/1fr matches the MarketOverview row above → the left/right
+          seam is a straight vertical line down the whole lower page (was 1.4fr/1fr). */}
+      <div className="grid" style={{ gridTemplateColumns: "1.5fr 1fr", alignItems: "start" }}>
         {/* Quotes (price table) */}
         <div className="panel" style={{ overflow: "hidden" }}>
           <div className="phead">

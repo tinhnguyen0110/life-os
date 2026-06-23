@@ -88,7 +88,7 @@ export function MarketOverview({ symbols }: { symbols: string[] }) {
   return (
     <div className="mov" data-testid="market-overview">
       {/* ── COMPARE TABLE ─────────────────────────────────────────────── */}
-      <div className="panel mov-panel" data-testid="mov-compare">
+      <div className="panel mov-panel mov-compare" data-testid="mov-compare">
         <div className="phead">
           <span className="kicker">So sánh đa mã</span>
           {compare?.comparison && <span className="hint" style={{ marginLeft: "auto" }}>{compare.comparison.length} mã · {Math.round((compare.window_hours ?? 0) / 24)}N</span>}
@@ -143,7 +143,7 @@ export function MarketOverview({ symbols }: { symbols: string[] }) {
       </div>
 
       {/* ── CORRELATION HEATMAP ───────────────────────────────────────── */}
-      <div className="panel mov-panel" data-testid="mov-correlation">
+      <div className="panel mov-panel mov-correlation" data-testid="mov-correlation">
         <div className="phead"><span className="kicker">Tương quan (Pearson)</span></div>
         {corrNeedsMore && (
           <div className="hint" style={{ padding: "16px" }} data-testid="mov-corr-needmore">
@@ -194,7 +194,7 @@ export function MarketOverview({ symbols }: { symbols: string[] }) {
       </div>
 
       {/* ── RELATIVE STRENGTH vs BTC ──────────────────────────────────── */}
-      <div className="panel mov-panel" data-testid="mov-relstrength">
+      <div className="panel mov-panel mov-relstrength" data-testid="mov-relstrength">
         <div className="phead"><span className="kicker">Sức mạnh tương đối vs {BENCHMARK}</span></div>
         {compareStatus !== "ready" ? (
           <div className="hint" style={{ padding: "16px" }} data-testid="mov-rs-pending">{compareStatus === "error" ? "—" : "Đang tải…"}</div>
