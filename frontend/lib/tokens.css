@@ -572,6 +572,13 @@ select.finput { cursor:pointer; }
 .mod-move { display:flex; flex-direction:column; gap:1px; flex-shrink:0; }
 .set-row[data-enabled="0"] { opacity:.55; }
 .set-row[data-enabled="0"] .sr-t { text-decoration:line-through; }
+/* #154-R1 — subtle row-scan hover for lane-consistency with .fin-alloc-row /
+   .exch-bal-row / .rem-row (reading aid; most settings rows don't navigate). GUARDED
+   :not([data-enabled="0"]) so it NEVER overrides the honest disabled-module de-emphasis
+   (opacity .55 + strikethrough) on hover — same discipline as the #153 .rem-row guard.
+   Additive: does NOT modify the .set-row base/disabled rules above. */
+.set-row { transition:background .12s ease; }
+.set-row:not([data-enabled="0"]):hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 
 /* ============================================================
    WIKI (W1–W5) — PORTED from template/Life Command/app/wiki.css.
