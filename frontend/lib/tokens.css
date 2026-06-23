@@ -289,6 +289,21 @@ select.finput { cursor:pointer; }
 /* #76: a keyboard-visible focus ring so a keyboard user sees the focused tab
    (mouse-click keeps no ring via :focus-visible). */
 .tab:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+/* #163-C1a — extend the SAME keyboard focus-ring convention to the other already-focusable
+   interactive elements (buttons / icon-buttons / app inputs / sortable header / the
+   role=button|tabIndex list-rows). :focus-visible only → a mouse-click shows NO ring.
+   CSS-only on elements that ARE already focusable (no tabIndex/role added here — that's C1b).
+   Scoped to app classes (NOT a bare global input) so nothing leaks. */
+.btn:focus-visible,
+.btn.accent:focus-visible,
+.icbtn:focus-visible,
+.finput:focus-visible,
+.mov-th:focus-visible,
+.feed-row:focus-visible,
+.wsearch-row:focus-visible,
+.wlist-row:focus-visible,
+.fin-alloc-row:focus-visible,
+.clickable:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .seg { display:inline-flex; border:1px solid var(--line-2); border-radius:8px; overflow:hidden; }
 .seg button { font-family:var(--mono); font-size:11px; padding:6px 12px; background:var(--bg-0); color:var(--tx-1); border:0; border-right:1px solid var(--line-2); cursor:pointer; }
 .seg button:last-child { border-right:0; }
@@ -414,7 +429,7 @@ select.finput { cursor:pointer; }
 /* activity feed row (S14) — ported from mock screens.css .feed-row */
 .feed { display:flex; flex-direction:column; }
 .feed-row { display:flex; gap:13px; padding:13px 16px; border-bottom:1px solid color-mix(in oklch, var(--line) 60%, transparent); cursor:pointer; align-items:flex-start; }
-.feed-row:hover { background:var(--bg-2); }
+.feed-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .feed-row .fr-ic { margin-top:1px; }
 .feed-row .fr-body { flex:1; min-width:0; }
 .feed-row .fr-t { font-size:13px; color:var(--tx-0); line-height:1.4; }
@@ -558,7 +573,7 @@ select.finput { cursor:pointer; }
 #sbcust .sbc-intro { font-size:11px; color:var(--tx-2); line-height:1.5; margin-bottom:8px; }
 #sbcust .sbc-sec { font-family:var(--mono); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--tx-2); padding:11px 2px 4px; }
 #sbcust .sbc-row { display:flex; align-items:center; gap:9px; padding:5px 6px; border-radius:8px; }
-#sbcust .sbc-row:hover { background:var(--bg-2); }
+#sbcust .sbc-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 #sbcust .sbc-row.off { opacity:.5; }
 #sbcust .sbc-ic { display:grid; place-items:center; color:var(--tx-1); flex-shrink:0; }
 #sbcust .sbc-ic svg { width:16px; height:16px; }
@@ -636,7 +651,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .woutlist { padding:8px; display:flex; flex-direction:column; gap:3px; }
 .woutlink { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:8px; font-size:12.5px; color:var(--tx-0); text-decoration:none; }
 .woutlink svg { width:14px; height:14px; color:var(--accent); flex-shrink:0; }
-.woutlink.clickable { cursor:pointer; } .woutlink.clickable:hover { background:var(--bg-2); }
+.woutlink.clickable { cursor:pointer; } .woutlink.clickable:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .woutlink .faint { font-family:var(--mono); font-size:10.5px; }
 .woutlink.ghost { color:var(--amber); border:1px dashed color-mix(in oklch,var(--amber) 30%,transparent); }
 .woutlink.ghost svg { color:var(--amber); }
@@ -650,7 +665,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wbl-sec-lbl .faint { text-transform:none; letter-spacing:0; }
 .wbl-list { padding:0 8px 6px; display:flex; flex-direction:column; gap:2px; }
 .wbl-row { padding:9px 11px; border-radius:8px; min-width:0; text-decoration:none; display:block; }
-.wbl-row.clickable { cursor:pointer; } .wbl-row.clickable:hover { background:var(--bg-2); }
+.wbl-row.clickable { cursor:pointer; } .wbl-row.clickable:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .wbl-head { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; flex-wrap:nowrap; }
 .wbl-head b { font-size:12px; color:var(--tx-0); line-height:1.35; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .wbl-head .faint { flex-shrink:0; font-family:var(--mono); font-size:10px; }
@@ -673,7 +688,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .winbox-progress { font-family:var(--mono); font-size:14px; color:var(--tx-2); }
 .winbox-list { flex:1; overflow-y:auto; padding:7px; display:flex; flex-direction:column; gap:2px; }
 .winbox-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:9px; cursor:pointer; border:1px solid transparent; }
-.winbox-row:hover { background:var(--bg-2); }
+.winbox-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .winbox-row.on { background:var(--bg-2); border-color:color-mix(in oklch,var(--accent) 40%,transparent); }
 .wcap-src { font-family:var(--mono); font-size:9px; font-weight:600; padding:2px 6px; border-radius:5px; background:var(--bg-3); color:var(--tx-1); white-space:nowrap; flex-shrink:0; }
 .wcap-src.command_bar { color:var(--green); } .wcap-src.mcp_agent { color:var(--amber); }
@@ -712,7 +727,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 /* FTS results dropdown (not in mock — minimal, token-aligned) */
 .wsearch-res { display:flex; flex-direction:column; gap:1px; margin-top:-4px; padding:6px; border:1px solid var(--line-2); border-top:0; border-radius:0 0 11px 11px; background:var(--bg-1); }
 .wsearch-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; cursor:pointer; }
-.wsearch-row:hover { background:var(--bg-2); }
+.wsearch-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .wsearch-row .wlr-s { color:var(--tx-2); }
 .wsearch-empty { padding:10px 12px; font-size:11.5px; color:var(--tx-2); }
 
@@ -728,7 +743,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wlist { padding:7px; display:flex; flex-direction:column; gap:1px; }
 .wlist-row { display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px; text-decoration:none; }
 .wlist-row.clickable { cursor:pointer; }
-.wlist-row.clickable:hover { background:var(--bg-2); }
+.wlist-row.clickable:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .wlist-empty { padding:14px 12px; font-size:11.5px; color:var(--tx-2); }
 .worphan-deg { width:24px; height:24px; border-radius:6px; flex-shrink:0; display:grid; place-items:center;
   font-family:var(--mono); font-size:11px; font-weight:700; color:var(--red); background:var(--red-dim); }
@@ -831,7 +846,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 /* #127-W3 — folder head row holds the toggle + the ⋯ ops menu (ops shows on hover) */
 .wex-folder-head-row { display:flex; align-items:center; gap:2px; position:relative; }
 .wex-folder-head { display:flex; align-items:center; gap:6px; flex:1; min-width:0; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; border-radius:6px; text-align:left; font-size:12.5px; }
-.wex-folder-head:hover { background:var(--bg-2); }
+.wex-folder-head:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .wex-folder-ops { position:relative; flex-shrink:0; }
 .wex-ops-btn { background:none; border:0; color:var(--tx-2); cursor:pointer; padding:2px 6px; border-radius:5px; font-size:13px; line-height:1; opacity:0; transition:opacity .12s; }
 .wex-folder-head-row:hover .wex-ops-btn, .wex-ops-btn[aria-expanded="true"] { opacity:1; }
@@ -849,7 +864,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wex-count { margin-left:auto; font-family:var(--mono); font-size:10px; }
 .wex-file { display:flex; align-items:center; gap:2px; border-radius:6px; }
 .wex-file.on { background:color-mix(in oklch,var(--accent) 14%,transparent); }
-.wex-file:hover { background:var(--bg-2); }
+.wex-file:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .wex-file-open { flex:1; min-width:0; display:flex; align-items:center; gap:7px; background:none; border:0; color:var(--tx-1); cursor:pointer; padding:5px 6px; text-align:left; }
 .wex-file.on .wex-file-open { color:var(--accent); }
 .wex-file-open svg { width:13px; height:13px; flex-shrink:0; color:var(--tx-2); }
@@ -956,7 +971,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
    subtle row-highlight + negative-margin/padding so the hover bg spans the panel
    edge-to-edge without shifting content. Composed alongside .mrow on the row. */
 .fin-alloc-row { border-radius:7px; margin:0 -8px; padding-left:8px; padding-right:8px; transition:background .12s ease; }
-.fin-alloc-row:hover { background:var(--bg-2); }
+.fin-alloc-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 
 /* #145-R2 — NEW exchange-scoped class (.exch- namespace). A faint row-scan highlight
    on the balances table (a reading aid for a wide table — NOT a clickability signal;
@@ -1063,7 +1078,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .news-digest-list { display:flex; flex-direction:column; }
 .news-digest-row { display:block; padding:10px 14px; border-bottom:1px solid color-mix(in oklch,var(--line) 50%,transparent); text-decoration:none; }
 .news-digest-row:last-child { border-bottom:0; }
-.news-digest-row:hover { background:var(--bg-2); }
+.news-digest-row:hover { background:color-mix(in oklch, var(--bg-2) 55%, transparent); }
 .news-digest-title { font-size:12.5px; color:var(--tx-0); line-height:1.4; }
 .news-digest-meta { font-family:var(--mono); font-size:10px; margin-top:3px; }
 .news-digest-foot { font-family:var(--mono); font-size:10px; padding:10px 14px; }
