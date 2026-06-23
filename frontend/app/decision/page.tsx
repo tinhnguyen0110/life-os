@@ -170,14 +170,19 @@ export default function DecisionPage() {
                         </span>
                         <span className="num faint" style={{ width: 52, textAlign: "right" }}>{b.q.toFixed(3)}</span>
                       </div>
-                      <div className="faint" style={{ fontSize: 10.5, paddingLeft: 2, lineHeight: 1.4 }} data-testid={`layer-note-${b.layer}`}>
+                      <div className="faint" style={{ fontSize: 10.5, paddingLeft: 2, lineHeight: 1.4, color: "var(--tx-1)" }} data-testid={`layer-note-${b.layer}`}>
+                        {/* #148-R2: bump these small (10.5px) load-bearing explanatory lines
+                            from .faint's --tx-2 (contrast 3.23 — fails WCAG AA) to --tx-1
+                            (6.63 — passes) INLINE, so the q-layer reasoning is readable.
+                            Inline-only: the shared .faint class rule is NOT modified. */}
                         {b.note}
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="hint faint" style={{ fontSize: 10.5, lineHeight: 1.5, borderTop: "1px solid var(--line)", paddingTop: 8 }} data-testid="weight-explanation">
+              <div className="hint faint" style={{ fontSize: 10.5, lineHeight: 1.5, borderTop: "1px solid var(--line)", paddingTop: 8, color: "var(--tx-1)" }} data-testid="weight-explanation">
+                {/* #148-R2: same contrast bump (--tx-1) for the W=∏q explanation line. */}
                 {w.explanation}
               </div>
             </div>
@@ -208,7 +213,7 @@ export default function DecisionPage() {
                   <span className="num" style={{ fontSize: 15, fontWeight: 600 }}>
                     {ax.direction === "up" ? "▲" : ax.direction === "down" ? "▼" : "▬"} {ax.direction}
                   </span>
-                  <span className="faint" style={{ fontSize: 10.5, lineHeight: 1.4 }}>{ax.detail}</span>
+                  <span className="faint" style={{ fontSize: 10.5, lineHeight: 1.4, color: "var(--tx-1)" }}>{ax.detail}</span>
                   {!ax.present && <span className="tagchip" style={{ fontSize: 9, alignSelf: "flex-start" }} data-testid={`axis-missing-${ax.axis}`}>mock / thiếu dữ liệu</span>}
                 </div>
               ))}
@@ -286,7 +291,7 @@ export default function DecisionPage() {
                       {delta.text}
                     </span>
                   </div>
-                  {why && <div className="faint" style={{ fontSize: 10.5, paddingLeft: 137, lineHeight: 1.4, marginTop: 2 }} data-testid={`alloc-why-${ch}`}>{why}</div>}
+                  {why && <div className="faint" style={{ fontSize: 10.5, paddingLeft: 137, lineHeight: 1.4, marginTop: 2, color: "var(--tx-1)" }} data-testid={`alloc-why-${ch}`}>{why}</div>}
                 </div>
               );
             })}
