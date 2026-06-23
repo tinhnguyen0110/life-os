@@ -84,14 +84,15 @@ describe("S MCPKEYS — MCP Keys manager (#88 full: CRUD + scope-editor)", () =>
     expect(screen.getByTestId("mcp-json-snippet")).toHaveTextContent("X-MCP-Key");
   });
 
-  it("no keys → honest empty-state (not a blank hang)", async () => {
+  it("no keys → no key rows + toolbar create-toggle opens the form (#164b: empty-state block removed)", async () => {
     getMcpKeys.mockResolvedValue(LIST([]));
     render(<McpKeysPage />);
-    await waitFor(() => expect(screen.getByTestId("keys-empty")).toBeInTheDocument());
-    expect(screen.getByTestId("keys-empty")).toHaveTextContent("Chưa có key");
-    // #160 — the inviting empty-state CTA opens the create form
+    // empty-state block removed per user; 0 keys = the keys-list isn't rendered + no key rows
+    await waitFor(() => expect(screen.queryByTestId("keys-list")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("keys-empty")).not.toBeInTheDocument();
+    // the toolbar "+ Tạo key mới" toggle opens the create form (the path to create at 0 keys)
     const user = userEvent.setup();
-    await user.click(screen.getByTestId("keys-empty-cta"));
+    await user.click(screen.getByTestId("key-new-toggle"));
     expect(screen.getByTestId("key-create-form")).toBeInTheDocument();
   });
 

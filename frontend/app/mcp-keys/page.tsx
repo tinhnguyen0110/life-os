@@ -289,31 +289,8 @@ export default function McpKeysPage() {
         </div>
       )}
 
-      {status === "ready" && keys.length === 0 && (
-        // #160 — inviting empty-state (mirrors dj/reminders/notes), CTA opens the create form.
-        <div
-          data-testid="keys-empty"
-          style={{
-            display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
-            gap: 9, padding: "40px 24px 44px", maxWidth: 460, margin: "12px auto 0",
-          }}
-        >
-          <div aria-hidden="true" style={{ fontSize: 32, lineHeight: 1, opacity: 0.55 }}>🔑</div>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--tx-1)" }}>Chưa có key nào.</div>
-          <div className="hint" style={{ lineHeight: 1.55 }}>
-            Cấp một key cho agent — mỗi key chỉ thấy các tool trong phạm vi bạn chọn.
-          </div>
-          <button
-            className="btn accent"
-            type="button"
-            style={{ marginTop: 5 }}
-            onClick={() => { setShowCreate(true); setCreateErr(""); }}
-            data-testid="keys-empty-cta"
-          >
-            + Key mới
-          </button>
-        </div>
-      )}
+      {/* #164b — empty-state block removed per user ("bỏ luôn phần này đi"): when 0 keys,
+          the eyebrow "Keys đang có · 0 key" + the toolbar "+ Tạo key mới" are signal enough. */}
 
       {status === "ready" && keys.length > 0 && (
         <div data-testid="keys-list" style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
