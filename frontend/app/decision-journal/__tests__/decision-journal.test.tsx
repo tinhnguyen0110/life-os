@@ -186,11 +186,18 @@ describe("Decision Journal (F1-H1)", () => {
     await waitFor(() => expect(updateDecision).toHaveBeenCalledWith("d1", expect.objectContaining({ status: "resolved", outcome: "wrong" })));
   });
 
-  it("empty journal → honest empty state (DataTable empty), no fabricated rows", async () => {
+  it("empty journal → inviting empty state (heading + copy + CTA), no fabricated rows", async () => {
     getDecisionJournal.mockResolvedValueOnce(ok(DATA({ entries: [], count: 0 })));
     render(<DecisionJournalPage />);
     await waitFor(() => expect(screen.getByTestId("dj-list")).toBeInTheDocument());
-    expect(screen.getByTestId("datatable-empty")).toBeInTheDocument();
+    // #149-R1: the bare DataTable empty-row is replaced by an inviting empty-state.
+    expect(screen.getByTestId("dj-empty-state")).toBeInTheDocument();
+    expect(screen.getByTestId("dj-empty-state")).toHaveTextContent("Chưa có quyết định nào");
+    expect(screen.queryByTestId("datatable-empty")).toBeNull(); // no bare stub when empty
+    // CTA opens the create form (was collapsed)
+    expect(screen.queryByTestId("dj-decision")).toBeNull();
+    fireEvent.click(screen.getByTestId("dj-empty-cta"));
+    expect(screen.getByTestId("dj-decision")).toBeInTheDocument();
   });
 
   it("loading then error surfaces", async () => {

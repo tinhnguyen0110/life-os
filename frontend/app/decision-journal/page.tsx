@@ -266,12 +266,39 @@ export default function DecisionJournalPage() {
       {/* list */}
       <div className="panel" data-testid="dj-list">
         <div className="phead"><span className="kicker">Quyết định · mới nhất</span></div>
-        <DataTable
-          columns={columns}
-          rows={entries}
-          rowKey={(d) => d.id}
-          emptyLabel="Chưa có quyết định nào — ghi một quyết định + dự đoán confidence; khi biết kết quả, resolve để đo hiệu chuẩn."
-        />
+        {entries.length === 0 ? (
+          // #149-R1 — inviting empty-state (replaces the bare one-line emptyLabel stub)
+          // so an empty journal feels intentional, not barren. Centered glyph + heading
+          // + the same explanatory copy + a prominent CTA that opens the create form.
+          <div
+            data-testid="dj-empty-state"
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+              gap: 10, padding: "44px 24px 48px", maxWidth: 460, margin: "0 auto",
+            }}
+          >
+            <div aria-hidden="true" style={{ fontSize: 34, lineHeight: 1, opacity: 0.55 }}>🧭</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--tx-1)" }}>Chưa có quyết định nào</div>
+            <div className="hint" style={{ lineHeight: 1.55 }}>
+              Ghi một quyết định + dự đoán confidence; khi biết kết quả, resolve để đo hiệu chuẩn (Brier · bands · bias).
+            </div>
+            <button
+              className="btn accent"
+              type="button"
+              style={{ marginTop: 6 }}
+              onClick={() => { setCreating(true); setFormErr(""); }}
+              data-testid="dj-empty-cta"
+            >
+              + Ghi quyết định đầu tiên
+            </button>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={entries}
+            rowKey={(d) => d.id}
+          />
+        )}
       </div>
     </section>
   );
