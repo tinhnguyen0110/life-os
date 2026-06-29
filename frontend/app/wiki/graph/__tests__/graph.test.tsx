@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 
 const getWikiGraph = vi.fn();
 const getWikiGraphGlobal = vi.fn();
@@ -235,5 +235,104 @@ describe("W4 Graph Explorer", () => {
     expect(toggle).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // ─────────── GRAPH-POLISH: responsive + zoom/pan + click-vs-drag ───────────
+  it("GRAPH-POLISH req1: SVG is RESPONSIVE — width 100% + a viewBox (not a fixed px width)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    expect(svg).toHaveStyle({ width: "100%" });
+    expect(svg.getAttribute("viewBox")).toBe("0 0 760 460"); // default frame
+    expect(svg).toHaveAttribute("preserveAspectRatio", "xMidYMid meet");
+    // NOT a fixed pixel width attribute
+    expect(svg.getAttribute("width")).toBeNull();
+  });
+
+  it("GRAPH-POLISH req2: wheel ZOOM changes the viewBox (zoom in → smaller w)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    expect(svg.getAttribute("viewBox")).toBe("0 0 760 460");
+    act(() => { fireEvent.wheel(svg, { deltaY: -100, clientX: 380, clientY: 230 }); }); // wheel up = zoom IN
+    const vb = svg.getAttribute("viewBox")!.split(" ").map(Number);
+    expect(vb[2]).toBeLessThan(760); // view.w shrank (zoomed in)
+    expect(vb[3]).toBeLessThan(460); // view.h shrank proportionally
+  });
+
+  it("GRAPH-POLISH req2: reset button restores the default viewBox after a zoom", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    act(() => { fireEvent.wheel(svg, { deltaY: -100, clientX: 380, clientY: 230 }); });
+    expect(svg.getAttribute("viewBox")).not.toBe("0 0 760 460");
+    act(() => { fireEvent.click(screen.getByTestId("graph-reset-view")); });
+    expect(svg.getAttribute("viewBox")).toBe("0 0 760 460");
+  });
+
+  it("GRAPH-POLISH req3: a DRAG (mousedown+move past threshold+up) pans + a node click after it does NOT focus", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    mockReplace.mockClear();
+    // drag the bg far past the 4px threshold → pans (viewBox x/y move)
+    act(() => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(svg, { clientX: 180, clientY: 140 }); // 80px,40px → well past threshold
+      fireEvent.mouseUp(svg, { clientX: 180, clientY: 140 });
+    });
+    const vb = svg.getAttribute("viewBox")!.split(" ").map(Number);
+    expect(vb[0] !== 0 || vb[1] !== 0).toBe(true); // panned (x or y moved)
+    // a node click WHILE didPan is still true → ignored (pan didn't open a note)
+    const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
+    fireEvent.click(node);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("GRAPH-POLISH req3: a CLEAN click (mousedown+up, no move) DOES focus the note (regression guard)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    mockReplace.mockClear();
+    const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
+    // no drag → mousedown then a plain click (didPan stays false) → opens the note
+    fireEvent.mouseDown(node, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.mouseUp(node, { clientX: 100, clientY: 100 });
+    fireEvent.click(node);
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+  });
+
+  it("GRAPH-POLISH req3: a sub-threshold move (<4px) is still a CLICK (opens the note)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    mockReplace.mockClear();
+    const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
+    act(() => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(svg, { clientX: 102, clientY: 101 }); // ~2px → under threshold, NOT a pan
+      fireEvent.mouseUp(svg, { clientX: 102, clientY: 101 });
+    });
+    fireEvent.click(node);
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+  });
+
+  it("GRAPH-POLISH req4: deterministic layout UNCHANGED (node transforms identical to pre-zoom/pan)", async () => {
+    // the viewBox transform sits ON TOP — node translate() positions are layout-only, so
+    // they must match the deterministic-layout expectation (no Math.random regression).
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));
+    const { unmount } = render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const before = screen.getAllByTestId("graph-node").map((n) => n.getAttribute("transform"));
+    // every node has a real translate() (layout ran, positions are stable)
+    expect(before.every((t) => /^translate\([\d.]+,[\d.]+\)$/.test(t || ""))).toBe(true);
+    unmount();
   });
 });

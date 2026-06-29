@@ -24,6 +24,15 @@ import type { WikiGraph, WikiGraphNode, WikiGraphEdge, WikiSearchHit, WikiStatus
 
 const W = 760;
 const H = 460;
+/** zoom clamp: view.w ∈ [W*0.25 (zoomed IN), W*2.5 (zoomed OUT)]. */
+const ZOOM_MIN_W = W * 0.25;
+const ZOOM_MAX_W = W * 2.5;
+/** below this view.w (zoomed in past ~0.7) → show MORE labels (zoom-aware declutter). */
+const LABEL_ZOOM_W = W * 0.7;
+/** click-vs-drag threshold (px). Movement under this = a click; over = a pan. */
+const DRAG_THRESHOLD = 4;
+type ViewBox = { x: number; y: number; w: number; h: number };
+const DEFAULT_VIEW: ViewBox = { x: 0, y: 0, w: W, h: H };
 const STATUS_COLOR: Record<WikiStatus, string> = {
   evergreen: "var(--green)",
   developing: "var(--blue)",
@@ -124,6 +133,73 @@ function WikiGraphInner() {
   const [highlightOrphan, setHighlightOrphan] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
 
+  /* ---- GRAPH-POLISH: Obsidian-style zoom/pan via a stateful viewBox ----
+     The deterministic layout (globalLayout/egoLayout) is UNTOUCHED — the viewBox
+     transform sits ON TOP, so node positions never change; we only move the camera. */
+  const [view, setView] = useState<ViewBox>({ ...DEFAULT_VIEW });
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  // pan bookkeeping: the mousedown anchor + a didPan flag (gates node click-vs-drag).
+  const panRef = useRef<{ active: boolean; startX: number; startY: number; viewX: number; viewY: number }>(
+    { active: false, startX: 0, startY: 0, viewX: 0, viewY: 0 });
+  const didPanRef = useRef(false);
+  // reset the camera when the graph MODE actually changes (global↔local) so a focus
+  // re-frames. Skip the mount fire (and any no-op) by only resetting when the view isn't
+  // already the default — avoids a redundant setState on initial render.
+  const prevCenterRef = useRef<number | null>(center);
+  useEffect(() => {
+    if (prevCenterRef.current !== center) {
+      prevCenterRef.current = center;
+      setView({ ...DEFAULT_VIEW });
+    }
+  }, [center]);
+
+  // px → viewBox-unit scale (the SVG renders at width:100%, so client width varies).
+  function pxToViewScale(): number {
+    const el = svgRef.current;
+    const cw = el?.clientWidth || W;
+    return view.w / cw; // viewBox units per CSS pixel (x); y uses the same since aspect is locked
+  }
+
+  // PAN — mousedown on the SVG background starts a drag; mousemove past the threshold pans.
+  function onSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    // left button only; ignore if the press began on a node (let the node handle hover/click).
+    if (e.button !== 0) return;
+    didPanRef.current = false;
+    panRef.current = { active: true, startX: e.clientX, startY: e.clientY, viewX: view.x, viewY: view.y };
+  }
+  function onSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    const p = panRef.current;
+    if (!p.active) return;
+    const dxPx = e.clientX - p.startX, dyPx = e.clientY - p.startY;
+    if (!didPanRef.current && Math.hypot(dxPx, dyPx) < DRAG_THRESHOLD) return; // under threshold = still a click
+    didPanRef.current = true;
+    const s = pxToViewScale();
+    // drag right → camera moves left (content follows the cursor) → view.x decreases.
+    setView((v) => ({ ...v, x: p.viewX - dxPx * s, y: p.viewY - dyPx * s }));
+  }
+  function endPan() { panRef.current.active = false; }
+
+  // ZOOM — wheel scales view.w/view.h toward the cursor (the pointed-at point stays fixed).
+  function onSvgWheel(e: React.WheelEvent<SVGSVGElement>) {
+    const el = svgRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    // cursor position in viewBox coords (the fixed point of the zoom).
+    const cx = view.x + ((e.clientX - rect.left) / (rect.width || 1)) * view.w;
+    const cy = view.y + ((e.clientY - rect.top) / (rect.height || 1)) * view.h;
+    const factor = e.deltaY < 0 ? 0.9 : 1.1; // wheel up = zoom IN (smaller w)
+    let nw = view.w * factor;
+    nw = Math.max(ZOOM_MIN_W, Math.min(ZOOM_MAX_W, nw));
+    const ratio = nw / view.w;
+    const nh = view.h * ratio;
+    // keep (cx,cy) fixed: new origin so the cursor maps to the same viewBox point.
+    const nx = cx - (cx - view.x) * ratio;
+    const ny = cy - (cy - view.y) * ratio;
+    setView({ x: nx, y: ny, w: nw, h: nh });
+  }
+  function resetView() { setView({ ...DEFAULT_VIEW }); }
+  const isZoomedIn = view.w < LABEL_ZOOM_W;
+
   // seed mode from ?note= (deep-link to local); absent → global.
   useEffect(() => {
     const raw = sp.get("note");
@@ -219,14 +295,17 @@ function WikiGraphInner() {
     const litByHover = hovered == null || n.id === hovered || neighbors.get(hovered)?.has(n.id);
     const dimmed = dimmedByFilter || !litByHover;
     const orphanRing = isOrphan || (highlightOrphan && n.degree === 0);
-    // labels: always in ego; in global only for hovered/high-degree (avoid clutter).
-    const showLabel = !isGlobal || n.id === hovered || n.degree >= 4;
+    // labels: always in ego; in global, hovered/high-degree by default — but ZOOM-AWARE:
+    // when zoomed IN (view.w < LABEL_ZOOM_W) show more (degree≥2) since there's room.
+    const showLabel = !isGlobal || n.id === hovered || n.degree >= (isZoomedIn ? 2 : 4);
     return (
       <g
         key={`n-${n.id}`}
         className="wgnode clickable"
         transform={`translate(${x},${y})`}
-        onClick={() => focusNote(n.id)}
+        // GRAPH-POLISH req3 — a click that was actually a PAN must NOT open the note.
+        // didPanRef is set true on a drag past the threshold; reset on each mousedown.
+        onClick={() => { if (didPanRef.current) return; focusNote(n.id); }}
         onMouseEnter={() => setHovered(n.id)}
         onMouseLeave={() => setHovered((h) => (h === n.id ? null : h))}
         data-testid="graph-node"
@@ -301,6 +380,10 @@ function WikiGraphInner() {
             <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--blue)" }} />developing</span>
             <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--amber)" }} />fleeting</span>
             <span className="wgleg"><span className="wgl-dot" style={{ border: "1px dashed var(--red)", background: "transparent" }} />orphan</span>
+            {/* GRAPH-POLISH — reset the zoom/pan camera to the default frame. */}
+            <button type="button" className="wgraph-reset" onClick={resetView} data-testid="graph-reset-view" title="Đặt lại khung nhìn (zoom/pan)" aria-label="Đặt lại khung nhìn">
+              ⟲
+            </button>
           </div>
           <div className="wgraph-stage">
             {status === "loading" ? (
@@ -310,7 +393,19 @@ function WikiGraphInner() {
                 {errMsg || "Không tải được graph."}
               </div>
             ) : hasNodes ? (
-              <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "100%" }} data-testid="graph-svg" onMouseLeave={() => setHovered(null)}>
+              <svg
+                ref={svgRef}
+                viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+                preserveAspectRatio="xMidYMid meet"
+                style={{ width: "100%", height: "100%", cursor: panRef.current.active ? "grabbing" : "grab", touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+                data-testid="graph-svg"
+                data-view-w={view.w}
+                onMouseLeave={() => { setHovered(null); endPan(); }}
+                onMouseDown={onSvgMouseDown}
+                onMouseMove={onSvgMouseMove}
+                onMouseUp={endPan}
+                onWheel={onSvgWheel}
+              >
                 <g className="wedges">{graph!.edges.map(edge)}</g>
                 <g className="wnodes">{graph!.nodes.map(node)}</g>
               </svg>

@@ -768,6 +768,10 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wgraph-canvas { overflow:hidden; }
 .wgraph-stage { height:460px; background:radial-gradient(circle at 50% 45%, var(--bg-2), var(--bg-0) 80%); position:relative; }
 .wgleg { font-family:var(--mono); font-size:10px; color:var(--tx-1); display:inline-flex; align-items:center; gap:5px; margin-left:10px; }
+/* GRAPH-POLISH — the ⟲ reset-view button (zoom/pan camera back to default). */
+.wgraph-reset { margin-left:10px; width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center;
+  font-size:14px; line-height:1; color:var(--tx-1); background:var(--bg-1); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+.wgraph-reset:hover { color:var(--accent); border-color:var(--accent); }
 .wgl-dot { width:9px; height:9px; border-radius:50%; }
 .wedge-lbl { font-family:var(--mono); font-size:8px; fill:var(--tx-2); text-anchor:middle; }
 .wgnode { cursor:pointer; }
