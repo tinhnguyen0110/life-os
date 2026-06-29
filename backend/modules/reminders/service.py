@@ -28,6 +28,32 @@ logger = logging.getLogger("life-os.reminders.service")
 _DEFAULT_MAX_TIMES = 3
 NOTIFY_ROUTINE_ID = "reminders-notify"
 
+# TRACING-ALARM (#172): the weekday-mask plumbing. VN_TZ so the weekday is computed in VN time, NOT
+# UTC (the reminders-tz lesson: a near-midnight reminder can be a DIFFERENT UTC weekday → masking on
+# the UTC day would skip/fire on the wrong day). Mon0..Sun6 matches date.weekday() + vn_today.
+_VN_TZ = timezone(timedelta(hours=7))
+
+
+def _parse_days(raw: str | None) -> set[int]:
+    """Parse a CSV weekday mask "0,1,2,3,4" → a set of ints (Mon0..Sun6). NULL/empty/malformed →
+    empty set (= NO mask → fire every day). Fail-soft: a bad token is skipped (never crashes the scan)."""
+    if not raw or not str(raw).strip():
+        return set()
+    out: set[int] = set()
+    for tok in str(raw).split(","):
+        tok = tok.strip()
+        if tok.isdigit() and 0 <= int(tok) <= 6:
+            out.add(int(tok))
+    return out
+
+
+def _vn_weekday(now: datetime) -> int:
+    """The Mon0..Sun6 weekday of ``now`` in VN time (the mask is a VN-local concept). ``now`` may be
+    UTC-aware or naive (assumed UTC) — convert to VN tz before reading weekday()."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(_VN_TZ).weekday()
+
 
 # --------------------------------------------------------------------------- #
 # TRACING-UX T3 (#111) — delivery channels (REUSE the alerts engine's detection) #
@@ -108,23 +134,25 @@ def delete(reminder_id: int) -> bool:
 # the SAME wire + the reminders.activity_id column as the generic linked-entity id. #
 # --------------------------------------------------------------------------- #
 def upsert_for_activity(*, activity_id: str, title: str, due_at: str, repeat: str,
-                        channel: str = "in_app", source: str = "tracing") -> Reminder:
+                        channel: str = "in_app", source: str = "tracing",
+                        days: str | None = None) -> Reminder:
     """Create-or-update the reminder linked to ``activity_id`` (the linked-entity id) for ``source``
     (default 'tracing'; '#121: tracing-note' for a day-note, where activity_id holds the note id).
-    find-by (activity_id, source): none → create, else → update title/due_at/repeat/channel.
+    find-by (activity_id, source): none → create, else → update title/due_at/repeat/channel/days.
     Idempotent — a re-sync UPDATES, never duplicates. Returns the linked Reminder. ``due_at`` is
-    already a UTC ISO. ``channel`` (#111) = the linked entity's remindChannel (default in_app)."""
+    already a UTC ISO. ``channel`` (#111) = the linked entity's remindChannel (default in_app).
+    ``days`` (#172) = CSV weekday mask "0,1,2,3,4" (Mon0..Sun6) or None (fire every day)."""
     existing = store.find_by_activity(activity_id, source=source)
     if existing is None:
         rid = store.create_reminder(
             title=title, note=None, due_at=due_at, repeat=repeat,
             re_notify_every=None, max_times=None, created=now_iso(),
-            source=source, activity_id=activity_id, channel=channel,
+            source=source, activity_id=activity_id, channel=channel, days=days,
         )
         row = store.get_reminder(rid)
     else:
         row = store.update_reminder(int(existing["id"]), title=title, due_at=due_at,
-                                    repeat=repeat, channel=channel)
+                                    repeat=repeat, channel=channel, days=days)
     assert row is not None
     return row_to_reminder(row)
 
@@ -215,7 +243,15 @@ def _should_fire(row, now_iso_str: str, now: datetime) -> bool:
       - re-notify: count>=1 AND re_notify_every set AND count < (max_times or 3) AND the cadence
         has elapsed since last_notified ((now - last_notified) >= re_notify_every minutes).
       - cap: count >= (max_times or 3) → no Discord (returns False).
-    The count + last_notified gating makes the 1-min scan IDEMPOTENT (no double-fire within a window)."""
+    The count + last_notified gating makes the 1-min scan IDEMPOTENT (no double-fire within a window).
+
+    TRACING-ALARM (#172): a weekday MASK gates the day FIRST — if ``days`` is set (non-empty) AND
+    today's VN weekday ∉ the mask → skip (return False), no fire today. days=NULL/empty → no mask
+    (every day, the pre-#172 behavior — old reminders are unaffected). The VN weekday is computed in
+    VN time (the tz lesson: a near-midnight reminder is a different UTC weekday)."""
+    days = _parse_days(row["days"] if "days" in row.keys() else None)  # pre-migration tolerant
+    if days and _vn_weekday(now) not in days:
+        return False  # masked-out day → do NOT fire today (the next allowed day fires)
     if row["due_at"] > now_iso_str:
         return False  # not yet due
     count = int(row["notified_count"])

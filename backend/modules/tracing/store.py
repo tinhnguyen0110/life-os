@@ -30,9 +30,10 @@ CREATE TABLE IF NOT EXISTS tracing_activities (
     created   TEXT    NOT NULL,
     archived  INTEGER NOT NULL DEFAULT 0,
     remind_at     TEXT,                          -- TRACING-REMINDERS (#75): HH:MM VN, or NULL
-    remind_repeat TEXT NOT NULL DEFAULT 'off',   -- (#75) daily | weekdays | off
+    remind_repeat TEXT NOT NULL DEFAULT 'off',   -- (#75/#172) daily | weekdays | off | custom
     remind_channel TEXT NOT NULL DEFAULT 'in_app', -- TRACING-UX T3 (#111): in_app | email | discord
-    sched_time    TEXT                           -- #136 G3-(ii): HH:MM VN scheduled time, INDEPENDENT of the reminder, or NULL
+    sched_time    TEXT,                          -- #136 G3-(ii): HH:MM VN scheduled time, INDEPENDENT of the reminder, or NULL
+    remind_days   TEXT                           -- TRACING-ALARM (#172): CSV weekday mask "0,1,2,3,4" (Mon0..Sun6) when remind_repeat='custom', else NULL
 );
 CREATE TABLE IF NOT EXISTS tracing_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +72,8 @@ CREATE TABLE IF NOT EXISTS tracing_template_set (
 """
 
 _ACT_COLS = ("id, name, emoji, icon, unit, goal, color, created, archived, "
-             "remind_at, remind_repeat, remind_channel, sched_time AS time")  # #75 remind_*; #111 channel; #136 time (col sched_time to avoid the SQL `time` keyword)
+             "remind_at, remind_repeat, remind_channel, sched_time AS time, "
+             "remind_days")  # #75 remind_*; #111 channel; #136 time (col sched_time to avoid the SQL `time` keyword); #172 remind_days (CSV mask)
 _LOG_COLS = "id, activity_id, date, ts, val, dur_min, note"
 _TPL_COLS = "id, name, emoji, icon, unit, goal, color, hidden"  # #109 template override row
 _NOTE_COLS = "id, text, remind_at, remind_date, remind_repeat, remind_channel, created"  # #121/#125 day-note row
@@ -94,6 +96,8 @@ def init_tracing_tables() -> sqlite3.Connection:
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_channel TEXT NOT NULL DEFAULT 'in_app'")
         if "sched_time" not in cols:  # #136 G3-(ii): per-activity scheduled time (NULL default = none)
             conn.execute("ALTER TABLE tracing_activities ADD COLUMN sched_time TEXT")
+        if "remind_days" not in cols:  # TRACING-ALARM (#172): CSV weekday mask (NULL = every day / non-custom)
+            conn.execute("ALTER TABLE tracing_activities ADD COLUMN remind_days TEXT")
         # #125 migration: add remind_date to a pre-#125 tracing_note table (idempotent). NULL default
         # = no one-shot for existing notes (backward-compat).
         note_cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracing_note)").fetchall()}
@@ -130,18 +134,20 @@ def list_activities(include_archived: bool = False) -> list[sqlite3.Row]:
 def create_activity(*, id: str, name: str, emoji: str, icon: str, unit: str, goal: float,
                     color: str, created: str, remind_at: str | None = None,
                     remind_repeat: str = "off", remind_channel: str = "in_app",
-                    sched_time: str | None = None) -> None:
+                    sched_time: str | None = None, remind_days: str | None = None) -> None:
     """Insert an activity def. Raises sqlite3.IntegrityError on a duplicate id (caller maps → 409).
     ``remind_channel`` (#111) = the linked reminder's delivery channel (default in_app). ``sched_time``
-    (#136 G3-(ii)) = a per-activity scheduled time, INDEPENDENT of the reminder (NULL = none)."""
+    (#136 G3-(ii)) = a per-activity scheduled time, INDEPENDENT of the reminder (NULL = none).
+    ``remind_days`` (#172) = CSV weekday mask "0,1,2,3,4" when remind_repeat='custom', else NULL."""
     init_tracing_tables()
     conn = db.get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO tracing_activities(id, name, emoji, icon, unit, goal, color, created, "
-            "archived, remind_at, remind_repeat, remind_channel, sched_time) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)",
+            "archived, remind_at, remind_repeat, remind_channel, sched_time, remind_days) "
+            "VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?)",
             (id, name, emoji, icon, unit, goal, color, created, remind_at, remind_repeat,
-             remind_channel, sched_time),
+             remind_channel, sched_time, remind_days),
         )
         conn.commit()
 

@@ -39,6 +39,9 @@ export interface ActivityView {
   remindAt?: string | null;
   /** #75: the nudge cadence. "off" / absent ⇒ no reminder. */
   remindRepeat?: RemindRepeat;
+  /** TRACING-ALARM: when remindRepeat="custom", the chosen weekdays as ints
+   *  (Mon=0…Sun=6). null/absent for daily/weekdays/off. */
+  remindDays?: number[] | null;
   /** #111 / #136: the reminder delivery channel (in_app/email/discord). The BE
    *  ActivityView carries it; the per-card reminder editor reads/writes it. */
   remindChannel?: RemindChannel;
@@ -47,7 +50,10 @@ export interface ActivityView {
   time?: string | null;
 }
 /** #75 — a habit's reminder-nudge cadence. */
-export type RemindRepeat = "daily" | "weekdays" | "off";
+/** TRACING-ALARM — "custom" = fire on a chosen set of weekdays (remindDays int[]).
+ *  🔒 Day convention LOCKED (matches backend Python date.weekday()): Mon=0…Sun=6
+ *  (FE labels T2=0,T3=1,T4=2,T5=3,T6=4,T7=5,CN=6). */
+export type RemindRepeat = "daily" | "weekdays" | "off" | "custom";
 /** The day's score panel (backend-computed roll-up). */
 export interface TracingScore {
   /** number of active (non-archived) activities. */
@@ -167,6 +173,9 @@ export interface ActivityInput {
   remindAt?: string | null;
   /** "off"/absent = no reminder. [#75] */
   remindRepeat?: RemindRepeat;
+  /** TRACING-ALARM — when remindRepeat="custom", the selected weekday ints (Mon=0…Sun=6,
+   *  non-empty). null/omitted for daily/weekdays/off. */
+  remindDays?: number[] | null;
   /** #111 — which channel the linked reminder fires on (default in_app). CAMEL wire,
    *  like remindAt. Only relevant when remindAt is set. */
   remindChannel?: RemindChannel;
@@ -198,6 +207,9 @@ export interface ActivityPatch {
   /** #75 — set/clear the habit's reminder (CAMEL wire). null clears it. */
   remindAt?: string | null;
   remindRepeat?: RemindRepeat;
+  /** TRACING-ALARM — custom weekday ints (Mon=0…Sun=6) when remindRepeat="custom";
+   *  null/omitted otherwise. */
+  remindDays?: number[] | null;
   /** #111 / #136 — the reminder delivery channel (in_app/email/discord). The BE
    *  ActivityUpdate accepts it; the FE per-card reminder picker sends it. */
   remindChannel?: RemindChannel;

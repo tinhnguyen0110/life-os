@@ -288,6 +288,91 @@ describe("TRACING-UX3 — req1 giờ bắt buộc · req2 nhắc default=giờ-v
   });
 });
 
+describe("TRACING-ALARM — custom-weekday reminder (🔒 Mon0..Sun6: T2=0…CN=6)", () => {
+  it("repeat='custom' → 7 day toggles (T2…CN) appear; clicking toggles the right int", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("todo-remind-toggle")); // remind on
+    // pick "Tùy chọn" in the repeat select
+    fireEvent.change(screen.getByTestId("todo-remind-repeat"), { target: { value: "custom" } });
+    // all 7 day buttons present (0..6), labels T2..CN
+    const container = screen.getByTestId("todo-custom-days");
+    for (let n = 0; n <= 6; n++) expect(within(container).getByTestId(`todo-day-${n}`)).toBeInTheDocument();
+    expect(screen.getByTestId("todo-day-0")).toHaveTextContent("T2"); // Mon=0
+    expect(screen.getByTestId("todo-day-6")).toHaveTextContent("CN"); // Sun=6
+    // toggling T2 (0) selects it (aria-pressed), toggling again deselects
+    fireEvent.click(screen.getByTestId("todo-day-0"));
+    expect(screen.getByTestId("todo-day-0")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("todo-day-0"));
+    expect(screen.getByTestId("todo-day-0")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("add with custom + T2-T6 (days [0,1,2,3,4]) → createActivity(remindRepeat='custom', remindDays=[0,1,2,3,4])", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "x" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Tập gym" } });
+    fireEvent.click(screen.getByTestId("todo-remind-toggle"));
+    fireEvent.change(screen.getByTestId("todo-remind-repeat"), { target: { value: "custom" } });
+    [0, 1, 2, 3, 4].forEach((n) => fireEvent.click(screen.getByTestId(`todo-day-${n}`))); // T2-T6
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.remindRepeat).toBe("custom");
+    expect(body.remindDays).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("custom + 0 days → blocked (hint + addErr), createActivity NOT called", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Tập gym" } });
+    fireEvent.click(screen.getByTestId("todo-remind-toggle"));
+    fireEvent.change(screen.getByTestId("todo-remind-repeat"), { target: { value: "custom" } });
+    // the inline "chọn ít nhất 1 thứ" hint shows when no day is picked
+    expect(screen.getByTestId("todo-days-hint")).toHaveTextContent(/ít nhất 1 thứ/i);
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(screen.getByTestId("todo-add-error")).toHaveTextContent(/ít nhất 1 thứ/i));
+    expect(createActivity).not.toHaveBeenCalled();
+  });
+
+  it("chip renders custom days collapsing a contiguous run → 'T2-T6'", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "gym", name: "Gym", remindAt: "07:00", remindRepeat: "custom", remindDays: [0, 1, 2, 3, 4] }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-remind-gym")).toBeInTheDocument());
+    expect(screen.getByTestId("tl-remind-gym-days")).toHaveTextContent("T2-T6");
+  });
+
+  it("chip renders non-contiguous custom days as a comma list → 'T2, T4, T6'", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "med", name: "Thiền", remindAt: "06:00", remindRepeat: "custom", remindDays: [0, 2, 4] }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-remind-med")).toBeInTheDocument());
+    expect(screen.getByTestId("tl-remind-med-days")).toHaveTextContent("T2, T4, T6");
+  });
+
+  it("old daily/weekdays still work — add daily → remindRepeat='daily', remindDays null (no custom)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "y" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Uống nước" } });
+    fireEvent.click(screen.getByTestId("todo-remind-toggle")); // default repeat = daily
+    // NO custom-days row in daily mode
+    expect(screen.queryByTestId("todo-custom-days")).toBeNull();
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    const body = createActivity.mock.calls[0][0];
+    expect(body.remindRepeat).toBe("daily");
+    expect(body.remindDays).toBeNull();
+  });
+});
+
 describe("#136 Tracing — tick is a TOGGLE (un-complete), 1-click in read view", () => {
   it("tick an UNDONE row → log(val:1) [the complete half]", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "water", today: { done: false, val: 0, dur: "", durMin: 0, note: null, pct: 0, sessions: 0 } })]));

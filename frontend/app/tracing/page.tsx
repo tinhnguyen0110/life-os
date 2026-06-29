@@ -33,6 +33,27 @@ import type {
 
 const WEEK_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // Mon→Sun
 
+/** TRACING-ALARM — 🔒 LOCKED weekday ints: Mon=0,Tue=1,…,Sun=6 (= Python date.weekday(),
+ *  matches backend). FE labels by index: T2=0,T3=1,T4=2,T5=3,T6=4,T7=5,CN=6. */
+const DAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]; // index = weekday int (Mon0..Sun6)
+
+/** Format a remindDays int[] → compact VN labels, collapsing a CONTIGUOUS run to "T2-T6".
+ *  e.g. [0,1,2,3,4]→"T2-T6" · [0,2,4]→"T2, T4, T6" · []→"" (defensive). */
+function formatRemindDays(days: number[]): string {
+  const sorted = [...new Set(days)].filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b);
+  if (sorted.length === 0) return "";
+  const runs: string[] = [];
+  let start = sorted[0], prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const cur = sorted[i];
+    if (cur === prev + 1) { prev = cur; continue; }
+    // close the current run
+    runs.push(start === prev ? DAY_LABELS[start] : `${DAY_LABELS[start]}-${DAY_LABELS[prev]}`);
+    start = cur; prev = cur;
+  }
+  return runs.join(", ");
+}
+
 /** streak badge thresholds — ported EXACTLY from mock screens-active.js:80. */
 function streakBadge(streak: number): string {
   return streak >= 7 ? "🔥" : streak >= 3 ? "✦" : "";
@@ -59,8 +80,8 @@ function errText(err: unknown): string {
  *  - kind="once" (notes only): a future DATE + time → remindDate + remindAt (BE makes a
  *    repeat="once" reminder). */
 type RemindKind = "recurring" | "once";
-type RemindState = { on: boolean; kind: RemindKind; time: string; repeat: RemindRepeat; date: string; channel: RemindChannel };
-const EMPTY_REMIND: RemindState = { on: false, kind: "recurring", time: "07:00", repeat: "daily", date: "", channel: "in_app" };
+type RemindState = { on: boolean; kind: RemindKind; time: string; repeat: RemindRepeat; date: string; channel: RemindChannel; days: number[] };
+const EMPTY_REMIND: RemindState = { on: false, kind: "recurring", time: "07:00", repeat: "daily", date: "", channel: "in_app", days: [] };
 /** #139 — every newly-added activity gets a time (no bare "–"). The add-form's TIME input
  *  defaults to this; the user can edit it before adding. A fixed, sensible 08:00 (start of
  *  the working day) — least-friction, not a hard-required 422 (would block quick-add). */
@@ -113,10 +134,12 @@ function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false
             <input className="finput num" type="date" style={{ width: 150 }} value={value.date} min={todayVnDate()}
               onChange={(e) => onChange({ ...value, date: e.target.value })} data-testid={`${idPrefix}-remind-date`} aria-label="Ngày nhắc" />
           ) : (
-            <select className="finput" style={{ width: 140 }} value={value.repeat}
+            <select className="finput" style={{ width: 160 }} value={value.repeat}
               onChange={(e) => onChange({ ...value, repeat: e.target.value as RemindRepeat })} data-testid={`${idPrefix}-remind-repeat`} aria-label="Lặp lại">
               <option value="daily">Hằng ngày</option>
               <option value="weekdays">Ngày thường (T2–T6)</option>
+              {/* TRACING-ALARM — pick specific weekdays (alarm-style). */}
+              <option value="custom">Tùy chọn (chọn thứ)</option>
             </select>
           )}
           <input className="finput num" type="time" style={{ width: 110 }} value={value.time}
@@ -129,6 +152,26 @@ function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false
               </option>
             ))}
           </select>
+          {/* TRACING-ALARM — custom-weekday toggles (recurring branch only). 7 buttons
+              T2…CN → weekday ints 0..6 (🔒 Mon0..Sun6). Clicking toggles the int in days.
+              Empty → an inline "chọn ít nhất 1 thứ" hint (the parent add also guards). */}
+          {value.repeat === "custom" && !(allowOnce && value.kind === "once") && (
+            <div className="trk-day-row" data-testid={`${idPrefix}-custom-days`} role="group" aria-label="Chọn thứ trong tuần">
+              {DAY_LABELS.map((lbl, n) => {
+                const sel = value.days.includes(n);
+                return (
+                  <button type="button" key={n} className={`trk-day-btn${sel ? " on" : ""}`}
+                    aria-pressed={sel} data-testid={`${idPrefix}-day-${n}`} title={lbl}
+                    onClick={() => onChange({ ...value, days: sel ? value.days.filter((d) => d !== n) : [...value.days, n] })}>
+                    {lbl}
+                  </button>
+                );
+              })}
+              {value.days.length === 0 && (
+                <span className="hint neg" style={{ fontSize: 10.5 }} data-testid={`${idPrefix}-days-hint`}>Chọn ít nhất 1 thứ</span>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -139,7 +182,8 @@ function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false
 function channelLabel(c: RemindChannel | undefined): string {
   return c === "discord" ? "Discord" : c === "email" ? "Email" : "In-app";
 }
-/** human label for the recurring frequency. */
+/** human label for the recurring frequency. TRACING-ALARM: "custom" → "" (the chip shows
+ *  the day list instead via formatRemindDays). */
 function freqLabel(repeat: RemindRepeat): string {
   return repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : "";
 }
@@ -147,15 +191,20 @@ function freqLabel(repeat: RemindRepeat): string {
 /** a compact remind chip shown on a timed todo/note. #125: when `date` is set it's a
  *  ONE-SHOT (date @ time); otherwise the recurring (repeat) chip. #136 GAP-2: the SET
  *  frequency + channel are shown ON the card face (e.g. "🔔 07:00 · hằng ngày · Discord")
- *  so the user sees what they configured without opening the editor. */
-function RemindChip({ at, repeat, date, channel, testid }: { at: string; repeat: RemindRepeat; date?: string | null; channel?: RemindChannel; testid: string }) {
+ *  so the user sees what they configured without opening the editor.
+ *  TRACING-ALARM: a custom reminder renders its days compactly (e.g. "🔔 07:00 · T2-T6"). */
+function RemindChip({ at, repeat, date, channel, days, testid }: { at: string; repeat: RemindRepeat; date?: string | null; channel?: RemindChannel; days?: number[] | null; testid: string }) {
   const ch = channelLabel(channel);
+  // custom → compact day list ("T2-T6"); falls back to freqLabel for daily/weekdays.
+  const freq = repeat === "custom"
+    ? formatRemindDays(Array.isArray(days) ? days : [])
+    : freqLabel(repeat);
   return (
     <span className="tagchip acc" data-testid={testid} title={date ? "Nhắc một lần" : "Nhắc nhở"}>
       🔔 {date ? (
         <><span className="num">{date}</span> lúc <span className="num">{at}</span></>
       ) : (
-        <><span className="num">{at}</span> · {freqLabel(repeat)}</>
+        <><span className="num">{at}</span>{freq ? <> · <span data-testid={`${testid}-days`}>{freq}</span></> : null}</>
       )}
       {" · "}<span data-testid={`${testid}-channel`}>{ch}</span>
     </span>
@@ -256,12 +305,18 @@ export default function TracingPage() {
     // TRACING-UX3 req1 — giờ là BẮT BUỘC: block submit when the time is empty (the user
     // cleared the 08:00 prefill). No more silent fallback-to-null; every new activity is timed.
     if (!todoTime) { setAddErr("Chọn giờ cho việc — giờ là bắt buộc."); return; }
+    // TRACING-ALARM — a custom-weekday reminder needs ≥1 day picked before adding.
+    if (todoRemind.on && todoRemind.repeat === "custom" && todoRemind.days.length === 0) {
+      setAddErr("Chọn ít nhất 1 thứ cho nhắc nhở tùy chọn."); return;
+    }
     const body: ActivityInput = {
       id, name: text, goal: 1,
       // TRACING-UX3 req1 — always a real time (validation above guarantees todoTime is set).
       time: todoTime,
       remindAt: todoRemind.on ? todoRemind.time : null,
       remindRepeat: todoRemind.on ? todoRemind.repeat : "off",
+      // TRACING-ALARM — send the chosen weekday ints only for a custom reminder; null otherwise.
+      remindDays: todoRemind.on && todoRemind.repeat === "custom" ? todoRemind.days : null,
       remindChannel: todoRemind.on ? todoRemind.channel : undefined,
     };
     setAddBusy(true);
@@ -298,12 +353,18 @@ export default function TracingPage() {
   }
 
   // #136 — set/clear a todo's reminder (time + freq + channel) → PUT.
+  // TRACING-ALARM — custom repeat carries remindDays (Mon0..Sun6); guard ≥1 day.
   async function onSetReminder(id: string, r: RemindState) {
-    setRowErr(""); setBusyId(id);
+    setRowErr("");
+    if (r.on && r.repeat === "custom" && r.days.length === 0) {
+      setRowErr("Chọn ít nhất 1 thứ cho nhắc nhở tùy chọn."); return;
+    }
+    setBusyId(id);
     try {
       await edit(id, {
         remindAt: r.on ? r.time : null,
         remindRepeat: r.on ? r.repeat : "off",
+        remindDays: r.on && r.repeat === "custom" ? r.days : null,
         remindChannel: r.on ? r.channel : undefined,
       });
     } catch (err) { setRowErr(errText(err)); } finally { setBusyId(null); }
@@ -380,6 +441,8 @@ export default function TracingPage() {
       on: !!a.remindAt && a.remindRepeat !== "off",
       time: a.remindAt ?? "07:00",
       repeat: (a.remindRepeat && a.remindRepeat !== "off" ? a.remindRepeat : "daily"),
+      // TRACING-ALARM — seed the existing custom weekdays so editing shows them selected.
+      days: Array.isArray(a.remindDays) ? a.remindDays : [],
       channel: a.remindChannel ?? "in_app",
     });
 
@@ -460,7 +523,7 @@ export default function TracingPage() {
         <div className="row" style={{ gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", position: "relative" }}>
           {a.streak > 0 && <span className="num faint" data-testid={`tl-streak-${a.id}`} style={{ fontSize: 10.5 }}>{a.streak}d {streakBadge(a.streak)}</span>}
           {a.remindAt && a.remindRepeat && a.remindRepeat !== "off" && (
-            <RemindChip at={a.remindAt} repeat={a.remindRepeat} channel={a.remindChannel} testid={`tl-remind-${a.id}`} />
+            <RemindChip at={a.remindAt} repeat={a.remindRepeat} days={a.remindDays} channel={a.remindChannel} testid={`tl-remind-${a.id}`} />
           )}
           {/* #136 — the per-card ⋯ menu (rename / reminder / delete). #142-P1: portaled
               <Popover> (viewport-edge collision + outside-click/Escape close). */}

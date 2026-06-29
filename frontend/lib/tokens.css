@@ -1181,6 +1181,13 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .trk-hm .hc { width:15px; height:15px; border-radius:3px; }
 .trk-hm .hm-day { height:15px; font-size:9.5px; }
 
+/* ── TRACING-ALARM — custom-weekday toggle buttons (T2…CN → Mon0..Sun6) ── */
+.trk-day-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+.trk-day-btn { min-width:30px; padding:4px 7px; font-family:var(--mono); font-size:11px; line-height:1;
+  color:var(--tx-2); background:var(--bg-1); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+.trk-day-btn:hover { border-color:var(--line-2); color:var(--tx-1); }
+.trk-day-btn.on { color:var(--bg-0); background:var(--accent); border-color:var(--accent); font-weight:600; }
+
 /* ============================================================
    #64-P3 Repo Memory (REPOMEM) — code_insight + repo_memory browse.
    ============================================================ */

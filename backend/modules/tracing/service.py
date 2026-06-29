@@ -89,6 +89,7 @@ def _row_to_activity(row: sqlite3.Row) -> Activity:
         remindRepeat=row["remind_repeat"] if "remind_repeat" in keys else "off",
         remindChannel=row["remind_channel"] if "remind_channel" in keys else "in_app",  # #111
         time=row["time"] if "time" in keys else None,  # #136: _ACT_COLS aliases sched_time AS time
+        remindDays=_csv_to_days(row["remind_days"]) if "remind_days" in keys else None,  # #172: CSV → list[int]
     )
 
 
@@ -183,6 +184,7 @@ def _derive_activity_view(act: Activity) -> ActivityView:
         goal=act.goal, color=act.color,
         remindAt=act.remindAt, remindRepeat=act.remindRepeat,  # #75: surface the reminder link (camel)
         remindChannel=act.remindChannel,  # #117: the GET /tracing read-back was dropping this → in_app default masked the stored channel
+        remindDays=act.remindDays,  # #172: surface the custom weekday mask so the FE renders the day-chips (same #117 thread-through)
         time=act.time,  # #136 G3-(ii): surface the scheduled time (the FE timeline rails by it) — same thread-through lesson as #117
         today=today_stat, streak=streak, week=week, history12w=history,
     )
@@ -244,9 +246,10 @@ def get_activity(activity_id: str) -> Activity | None:
     return _row_to_activity(row) if row is not None else None
 
 
-# TRACING-REMINDERS (#75): map remind_repeat → the reminders engine's repeat. "daily"/"weekdays"
-# both fire daily (the #29 engine has no weekday-mask; weekdays is surfaced for the FE but fires
-# daily — documented honest limitation, refine in a later phase). "off" → no reminder.
+# TRACING-REMINDERS (#75): map remind_repeat → the reminders engine's repeat. The engine cadence is
+# always "daily"; the WEEKDAY MASK (#172, the `days` column) decides which days actually fire. This
+# map is now used ONLY by the day-NOTE sync path (#121, below); the ACTIVITY path (_sync_reminder)
+# computes its own mask. "off" → no reminder.
 _REPEAT_MAP = {"daily": "daily", "weekdays": "daily"}
 
 
@@ -263,10 +266,22 @@ def _sync_reminder(act: Activity) -> None:
             due_local = f"{vn_today()}T{act.remindAt}:00+07:00"
             due_at = _to_utc_iso(due_local)
             title = f"{act.emoji} {act.name}".strip()
+            # TRACING-ALARM (#172): map the repeat → a weekday-mask CSV the engine gates on (the
+            # engine repeat stays "daily" — it fires daily, the MASK decides which days actually fire):
+            #   daily    → None (every day, no mask — unchanged behavior)
+            #   weekdays → "0,1,2,3,4" (Mon–Fri) — FIXES the #75 lie (it used to fire daily)
+            #   custom   → the activity's remindDays CSV
+            if act.remindRepeat == "weekdays":
+                days_csv: str | None = "0,1,2,3,4"
+            elif act.remindRepeat == "custom":
+                days_csv = _days_to_csv(act.remindDays)
+            else:  # daily
+                days_csv = None
             rem.upsert_for_activity(
                 activity_id=act.id, title=title, due_at=due_at,
-                repeat=_REPEAT_MAP.get(act.remindRepeat, "daily"),
+                repeat="daily",  # the engine cadence; the day-mask (days_csv) gates which days fire
                 channel=act.remindChannel,  # #111: the linked reminder fires on the activity's channel
+                days=days_csv,  # #172: the weekday mask (None = every day)
             )
         else:
             rem.delete_for_activity(act.id)
@@ -274,15 +289,39 @@ def _sync_reminder(act: Activity) -> None:
         logger.error("dev: reminder sync failed for activity %s: %s", act.id, exc)
 
 
+# TRACING-ALARM (#172): the weekday-mask CSV <-> list[int] codec (Mon0..Sun6). The DB stores a CSV
+# ("0,1,2,3,4"); the model carries list[int]. NULL/"" ⇄ None (no mask). Kept tiny + in one place.
+def _days_to_csv(days: list[int] | None) -> str | None:
+    """list[int] → "0,1,2,3,4" CSV (sorted, deduped), or None for None/[]."""
+    if not days:
+        return None
+    return ",".join(str(d) for d in sorted(set(days)))
+
+
+def _csv_to_days(csv: str | None) -> list[int] | None:
+    """"0,1,2,3,4" CSV → sorted list[int], or None for NULL/empty. Tolerates stray spaces; a bad
+    token is skipped (fail-soft read — a malformed stored mask never crashes the read-back)."""
+    if not csv or not csv.strip():
+        return None
+    out: list[int] = []
+    for tok in csv.split(","):
+        tok = tok.strip()
+        if tok.isdigit() and 0 <= int(tok) <= 6:
+            out.append(int(tok))
+    return sorted(set(out)) or None
+
+
 def create_activity(inp: ActivityInput) -> Activity:
     """Create an activity def. Raises sqlite3.IntegrityError on a duplicate id (router → 409).
-    #75: syncs the linked reminder if remind_at + remind_repeat≠off."""
+    #75: syncs the linked reminder if remind_at + remind_repeat≠off. #172: persists the custom
+    weekday mask (remind_days CSV) so a 'custom' activity round-trips + drives the masked reminder."""
     store.create_activity(
         id=inp.id, name=inp.name, emoji=inp.emoji, icon=inp.icon, unit=inp.unit,
         goal=inp.goal, color=inp.color, created=vn_now_iso(),
         remind_at=inp.remindAt, remind_repeat=inp.remindRepeat,  # store col snake ← camel field
         remind_channel=inp.remindChannel,  # #111
         sched_time=inp.time,  # #136 G3-(ii): per-activity scheduled time (independent of the reminder)
+        remind_days=_days_to_csv(inp.remindDays),  # #172: CSV weekday mask (None for non-custom)
     )
     created = store.get_activity(inp.id)
     assert created is not None  # just inserted
@@ -295,6 +334,7 @@ def create_activity(inp: ActivityInput) -> Activity:
 # the rest share the same name in both field + column).
 _FIELD_TO_COL = {"remindAt": "remind_at", "remindRepeat": "remind_repeat",
                  "remindChannel": "remind_channel",  # #111
+                 "remindDays": "remind_days",  # #172: API field `remindDays` (list[int]) → DB col `remind_days` (CSV)
                  "time": "sched_time"}  # #136 G3-(ii): API field `time` → DB col `sched_time`
 
 
@@ -309,6 +349,13 @@ def update_activity(activity_id: str, upd: ActivityUpdate) -> Activity | None:
     # channel keep their "None = unchanged" semantics (remindAt clears via remindRepeat='off', not null).
     if "time" in upd.model_fields_set and upd.time is None:
         fields["sched_time"] = None
+    # #172: remindDays is list[int] on the wire but CSV in the store → convert. exclude_none already
+    # dropped a None remindDays (= unchanged). When the repeat is set to a NON-custom mode, CLEAR the
+    # stale mask (the days only apply to 'custom'); a 'custom' update must carry days (model-validated).
+    if "remind_days" in fields:
+        fields["remind_days"] = _days_to_csv(fields["remind_days"])
+    if upd.remindRepeat is not None and upd.remindRepeat != "custom":
+        fields["remind_days"] = None  # leaving custom → drop the mask (fire per the new repeat)
     if not store.update_activity(activity_id, fields):
         return None
     row = store.get_activity(activity_id)
@@ -747,6 +794,7 @@ def import_template_set(set_id: str) -> tuple[list[ActivityView], list[str]] | N
             id=aid, name=m.content, goal=1.0,            # #122/#124: binary todo
             time=m.time,                                  # #136: the scheduled time (independent)
             remindAt=remind_at, remindRepeat=m.remindRepeat, remindChannel=m.remindChannel,
+            remindDays=m.remindDays,                      # #172: carry the custom weekday mask
         )
         try:
             act = create_activity(inp)  # reuses the create + _sync_reminder path
@@ -822,3 +870,52 @@ def backfill_timeless_time(default_time: str = "08:00") -> dict[str, Any]:
                 before, after, chosen, default_time)
     return {"beforeTimeless": before, "afterTimeless": after,
             "set": chosen, "touched": list(chosen), "defaultTime": default_time}
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-ALARM T2 (#172): seed 3 daily check-in activities that USE the T1     #
+# custom-day reminder mode, so the user has them ready on /tracing.            #
+# --------------------------------------------------------------------------- #
+# The seed list — each is a daily binary check (goal=1) with a reminder. checkin-* fire Mon–Fri
+# (custom mask, skip weekend); report-toi fires every day (daily). Names are proper VN with diacritics.
+_CHECKIN_SEED: list[dict[str, Any]] = [
+    {"id": "checkin-sang", "name": "Check-in sáng", "time": "07:00",
+     "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4]},
+    {"id": "checkin-trua", "name": "Check-in trưa", "time": "12:00",
+     "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4]},
+    {"id": "report-toi", "name": "Báo cáo tối", "time": "21:00",
+     "remindRepeat": "daily", "remindDays": None},
+]
+
+
+def seed_checkin_activities() -> dict[str, Any]:
+    """Re-runnable maintenance helper (NOT a startup hook; the #171 backfill pattern). Creates the 3
+    check-in activities (Check-in sáng / Check-in trưa / Báo cáo tối) via the CANONICAL create path
+    (``create_activity`` → _sync_reminder fires the linked reminder with the right day-mask).
+
+    🔴 IDEMPOTENT + SCOPED: an id that ALREADY exists (incl. archived — get_activity covers it) is
+    SKIPPED — never overwritten (a re-run must not clobber a user's edits) and never duplicated. Only
+    the 3 seed ids are touched; the other activities are untouched. The reminder for each is set on
+    create: ``remindAt = time`` so the linked reminder fires at that time (custom → Mon–Fri mask,
+    daily → every day).
+
+    Returns ``{"created": [ids], "skipped": [ids], "createdCount": N, "skippedCount": M}``."""
+    created: list[str] = []
+    skipped: list[str] = []
+    for s in _CHECKIN_SEED:
+        sid = str(s["id"])
+        if get_activity(sid) is not None:  # already present (incl. archived) → SKIP, no overwrite
+            skipped.append(sid)
+            continue
+        inp = ActivityInput(
+            id=sid, name=str(s["name"]), goal=1.0,        # daily binary check
+            time=s["time"],                               # the scheduled time (independent of reminder)
+            remindAt=s["time"],                           # reminder fires AT the scheduled time
+            remindRepeat=s["remindRepeat"], remindChannel="in_app",
+            remindDays=s["remindDays"],                   # custom → Mon–Fri mask; daily → None
+        )
+        create_activity(inp)  # reuses create + _sync_reminder (the linked reminder gets the day-mask)
+        created.append(sid)
+    logger.info("tracing seed_checkin_activities: created=%s skipped=%s", created, skipped)
+    return {"created": created, "skipped": skipped,
+            "createdCount": len(created), "skippedCount": len(skipped)}

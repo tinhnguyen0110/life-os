@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # VN day = UTC+7 — ALL date bucketing in this module uses this (a 23:30-VN session is today-VN,
 # not tomorrow-UTC). Single offset, no DST in Vietnam — a fixed timedelta is correct + simplest.
@@ -44,7 +44,29 @@ def vn_day_of(ts: str) -> str:
 
 # TRACING-REMINDERS (#75): an activity can drive a daily reminder. remind_at = HH:MM VN time-of-day
 # (None = no reminder); remind_repeat = how it recurs (off = no reminder regardless of remind_at).
-RemindRepeat = Literal["daily", "weekdays", "off"]
+# TRACING-ALARM (#172): +"custom" — fire only on the days in remindDays (a Mon0..Sun6 weekday mask).
+# "weekdays" now genuinely fires Mon–Fri only (the #75 lie — it used to fire daily — is fixed).
+RemindRepeat = Literal["daily", "weekdays", "off", "custom"]
+
+
+def _validate_remind_days(v: list[int] | None) -> list[int] | None:
+    """TRACING-ALARM (#172): validate a weekday mask — each int in 0..6 (Mon0..Sun6, matching
+    date.weekday()), deduped + sorted. None/[] → None (no mask). A value outside 0..6 → 422.
+    (The 'required-non-empty when repeat=custom' rule is enforced per-model below, since it needs
+    the sibling remindRepeat.)"""
+    if v is None:
+        return None
+    cleaned = sorted({int(d) for d in v})
+    for d in cleaned:
+        if d < 0 or d > 6:
+            raise ValueError("remindDays must be ints 0..6 (Mon=0 … Sun=6)")
+    return cleaned or None
+
+
+def _require_days_for_custom(repeat: str | None, days: list[int] | None) -> None:
+    """TRACING-ALARM (#172): remindRepeat='custom' REQUIRES a non-empty remindDays (else 422)."""
+    if repeat == "custom" and not days:
+        raise ValueError("custom repeat needs remindDays (a non-empty list of weekdays 0..6)")
 # TRACING-UX T3 (#111): the delivery channel the activity's linked reminder fires on (mirrors the
 # reminders Channel; default in_app). Set on the linked reminder when the tracing service syncs it.
 RemindChannel = Literal["in_app", "email", "discord"]
@@ -89,8 +111,11 @@ class ActivityInput(BaseModel):
     color: str = Field(default="", max_length=32, description="display color (FE)")
     time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii); None = none)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (None = none) (#75)")
-    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off|custom (#75/#172)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+    remindDays: list[int] | None = Field(default=None, description="TRACING-ALARM (#172): weekday mask "
+                                         "Mon0..Sun6 — REQUIRED non-empty when remindRepeat='custom'; "
+                                         "ignored/None otherwise (e.g. [0,1,2,3,4] = Mon–Fri)")
 
     @field_validator("id", "name")
     @classmethod
@@ -104,6 +129,16 @@ class ActivityInput(BaseModel):
     @classmethod
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
+
+    @field_validator("remindDays")  # #172: each int 0..6, deduped + sorted; None/[] → None
+    @classmethod
+    def _remind_days_valid(cls, v: list[int] | None) -> list[int] | None:
+        return _validate_remind_days(v)
+
+    @model_validator(mode="after")
+    def _custom_needs_days(self) -> "ActivityInput":  # #172: custom repeat requires non-empty days
+        _require_days_for_custom(self.remindRepeat, self.remindDays)
+        return self
 
 
 class ActivityUpdate(BaseModel):
@@ -119,8 +154,11 @@ class ActivityUpdate(BaseModel):
     # pass remind_repeat="off" (or an explicit empty remind_at via the router's clear path).
     time: str | None = Field(default=None, description="HH:MM VN scheduled time (#136 G3-(ii); None = unchanged)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time (#75)")
-    remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off (#75)")
+    remindRepeat: RemindRepeat | None = Field(default=None, description="daily|weekdays|off|custom (#75/#172)")
     remindChannel: RemindChannel | None = Field(default=None, description="in_app|email|discord (#111)")
+    remindDays: list[int] | None = Field(default=None, description="TRACING-ALARM (#172): weekday mask "
+                                         "Mon0..Sun6 (None = unchanged); REQUIRED non-empty when this "
+                                         "update sets remindRepeat='custom'")
 
     @field_validator("name")
     @classmethod
@@ -136,6 +174,19 @@ class ActivityUpdate(BaseModel):
     @classmethod
     def _remind_at_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
+
+    @field_validator("remindDays")  # #172: each int 0..6, deduped + sorted; None/[] → None
+    @classmethod
+    def _remind_days_valid(cls, v: list[int] | None) -> list[int] | None:
+        return _validate_remind_days(v)
+
+    @model_validator(mode="after")
+    def _custom_needs_days(self) -> "ActivityUpdate":
+        # #172: if this update SETS remindRepeat='custom', it must also carry a non-empty remindDays
+        # (the FE sends both together). Other repeats ignore remindDays.
+        if self.remindRepeat == "custom":
+            _require_days_for_custom("custom", self.remindDays)
+        return self
 
 
 # --------------------------------------------------------------------------- #
@@ -230,8 +281,9 @@ class Activity(BaseModel):
     archived: bool = False
     time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii))")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
-    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off|custom (#75/#172)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+    remindDays: list[int] | None = Field(default=None, description="TRACING-ALARM (#172): weekday mask Mon0..Sun6 when remindRepeat='custom', else None")
 
 
 class TodayStat(BaseModel):
@@ -258,8 +310,9 @@ class ActivityView(BaseModel):
     color: str = ""
     time: str | None = Field(default=None, description="HH:MM VN scheduled time, INDEPENDENT of the reminder (#136 G3-(ii)) — the FE timeline rails by this (fallback remindAt)")
     remindAt: str | None = Field(default=None, description="HH:MM VN reminder time, or None (#75)")
-    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off (#75)")
+    remindRepeat: RemindRepeat = Field(default="off", description="daily|weekdays|off|custom (#75/#172)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+    remindDays: list[int] | None = Field(default=None, description="TRACING-ALARM (#172): weekday mask Mon0..Sun6 when remindRepeat='custom', else None — the FE renders the day-chips")
     today: TodayStat
     streak: int = Field(..., ge=0, description="consecutive goal-met VN-days (today-incomplete ≠ break)")
     week: list[float] = Field(..., description="Mon→Sun Σ(val)/day for the current week (7)")
@@ -378,8 +431,9 @@ class TemplateMember(BaseModel):
 
     content: str = Field(..., min_length=1, max_length=120, description="the activity name (binary todo)")
     time: str | None = Field(default=None, description="HH:MM VN scheduled time, or None (#136)")
-    remindRepeat: RemindRepeat = Field(default="off", description="off|daily|weekdays — off = no reminder")
+    remindRepeat: RemindRepeat = Field(default="off", description="off|daily|weekdays|custom — off = no reminder (#172)")
     remindChannel: RemindChannel = Field(default="in_app", description="in_app|email|discord (#111)")
+    remindDays: list[int] | None = Field(default=None, description="TRACING-ALARM (#172): weekday mask Mon0..Sun6 when remindRepeat='custom'")
 
     @field_validator("content")
     @classmethod
@@ -393,6 +447,16 @@ class TemplateMember(BaseModel):
     @classmethod
     def _time_hhmm(cls, v: str | None) -> str | None:
         return _validate_hhmm(v)
+
+    @field_validator("remindDays")  # #172: each int 0..6, deduped + sorted
+    @classmethod
+    def _remind_days_valid(cls, v: list[int] | None) -> list[int] | None:
+        return _validate_remind_days(v)
+
+    @model_validator(mode="after")
+    def _custom_needs_days(self) -> "TemplateMember":  # #172: custom requires non-empty days
+        _require_days_for_custom(self.remindRepeat, self.remindDays)
+        return self
 
 
 class TemplateSetInput(BaseModel):

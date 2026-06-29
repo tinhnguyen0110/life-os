@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     source           TEXT    NOT NULL DEFAULT 'manual', -- TRACING-REMINDERS (#75): manual | tracing
     activity_id      TEXT,                             -- (#75) the tracing activity id when source=tracing
     mail_escalated   INTEGER NOT NULL DEFAULT 0,       -- #51: 1 = overdue-past-cap high/mail fired once (spam-proof)
-    channel          TEXT    NOT NULL DEFAULT 'in_app' -- TRACING-UX T3 (#111): in_app | email | discord
+    channel          TEXT    NOT NULL DEFAULT 'in_app', -- TRACING-UX T3 (#111): in_app | email | discord
+    days             TEXT                              -- TRACING-ALARM (#172): CSV weekday mask "0,1,2,3,4" (Mon0..Sun6); NULL = fire every day
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
@@ -51,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done_at);
 # REMINDERS-3 (#29): +last_notified. TRACING-REMINDERS (#75): +source, +activity_id.
 _COLS = ("id, title, note, due_at, repeat, re_notify_every, max_times, "
          "notified_count, last_notified, done_at, created, source, activity_id, "
-         "mail_escalated, channel")  # #51 mail_escalated; #111 channel
+         "mail_escalated, channel, days")  # #51 mail_escalated; #111 channel; #172 days (weekday mask)
 
 
 def init_reminders_tables() -> sqlite3.Connection:
@@ -76,6 +77,8 @@ def init_reminders_tables() -> sqlite3.Connection:
             conn.execute("ALTER TABLE reminders ADD COLUMN mail_escalated INTEGER NOT NULL DEFAULT 0")
         if "channel" not in cols:  # TRACING-UX T3 (#111) — delivery channel (default in_app for old rows)
             conn.execute("ALTER TABLE reminders ADD COLUMN channel TEXT NOT NULL DEFAULT 'in_app'")
+        if "days" not in cols:  # TRACING-ALARM (#172) — weekday mask CSV (NULL = every day, old rows unchanged)
+            conn.execute("ALTER TABLE reminders ADD COLUMN days TEXT")
         # the activity_id index — AFTER the ALTER (the column now exists on both new + migrated tables).
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_activity ON reminders(activity_id, source)")
         conn.commit()
@@ -89,19 +92,21 @@ def _now() -> datetime:
 def create_reminder(*, title: str, note: str | None, due_at: str, repeat: str,
                     re_notify_every: int | None, max_times: int | None,
                     created: str, source: str = "manual",
-                    activity_id: str | None = None, channel: str = "in_app") -> int:
+                    activity_id: str | None = None, channel: str = "in_app",
+                    days: str | None = None) -> int:
     """Insert a reminder. Returns the new row id. notified_count starts 0, done_at NULL. ``source``
     defaults 'manual' (the user path); the tracing service passes source='tracing'+activity_id (#75).
-    ``channel`` defaults 'in_app' (#111 — the delivery channel the notify scan fires on)."""
+    ``channel`` defaults 'in_app' (#111 — the delivery channel the notify scan fires on). ``days``
+    (#172) = CSV weekday mask "0,1,2,3,4" (Mon0..Sun6); NULL = fire every day (no mask)."""
     init_reminders_tables()
     conn = db.get_conn()
     with _lock:
         cur = conn.execute(
             "INSERT INTO reminders(title, note, due_at, repeat, re_notify_every, max_times, "
-            "notified_count, done_at, created, source, activity_id, channel) "
-            "VALUES (?,?,?,?,?,?,0,NULL,?,?,?,?)",
+            "notified_count, done_at, created, source, activity_id, channel, days) "
+            "VALUES (?,?,?,?,?,?,0,NULL,?,?,?,?,?)",
             (title, note, due_at, repeat, re_notify_every, max_times, created, source,
-             activity_id, channel),
+             activity_id, channel, days),
         )
         conn.commit()
         rid = cur.lastrowid
@@ -122,17 +127,18 @@ def find_by_activity(activity_id: str, source: str = "tracing") -> sqlite3.Row |
 
 
 def update_reminder(reminder_id: int, *, title: str, due_at: str, repeat: str,
-                    channel: str = "in_app") -> sqlite3.Row | None:
+                    channel: str = "in_app", days: str | None = None) -> sqlite3.Row | None:
     """TRACING-REMINDERS (#75): update the tracing-linked reminder's title/due_at/repeat (+#111
-    channel — the fields the activity drives). Resets the notify counters (a re-synced time = a fresh
-    period). Returns the updated row, or None if absent."""
+    channel, +#172 days weekday-mask — the fields the activity drives). Resets the notify counters
+    (a re-synced time = a fresh period). ``days`` = CSV mask or None (every day). Returns the updated
+    row, or None if absent."""
     init_reminders_tables()
     conn = db.get_conn()
     with _lock:
         cur = conn.execute(
-            "UPDATE reminders SET title = ?, due_at = ?, repeat = ?, channel = ?, "
+            "UPDATE reminders SET title = ?, due_at = ?, repeat = ?, channel = ?, days = ?, "
             "notified_count = 0, last_notified = NULL WHERE id = ?",
-            (title, due_at, repeat, channel, int(reminder_id)),
+            (title, due_at, repeat, channel, days, int(reminder_id)),
         )
         conn.commit()
         if cur.rowcount == 0:
