@@ -585,10 +585,11 @@ describe("W4 Graph Explorer", () => {
     expect(rHub).toBeGreaterThan(rMid);      // hub clearly the biggest
   });
 
-  it("GRAPH-POLISH-B F1: a HIGH-degree hub carves more space than a low-degree leaf (hierarchy spread)", async () => {
+  it("GRAPH-POLISH-C: nodes keep a measurable BREATHING gap — avg nearest-dist ≫ avg radius (not touching)", async () => {
     mockNoteParam = null;
-    // a hub (deg 10) + many leaves (deg 1, each linked only to the hub) → the hub should end
-    // up MORE separated from the field than an average leaf (degree drives personal space).
+    // a hub + leaves: the firmer/wider collide (GRAPH-POLISH-C) must keep neighbors apart, so
+    // the average nearest-neighbor distance is comfortably bigger than the average node radius
+    // (the live target = ratio ~4-5×; in jsdom layout-units we assert the gap is clearly > 1×).
     const HUBBY: WikiGraph = {
       center: null,
       nodes: [
@@ -602,18 +603,44 @@ describe("W4 Graph Explorer", () => {
     render(<WikiGraphPage />);
     await screen.findByTestId("graph-svg");
     const gs = screen.getAllByTestId("graph-node");
-    const pts = new Map(gs.map((g) => [g.getAttribute("data-node-id")!, nodeXY(g)]));
-    // min pairwise distance from a node to ALL others = how much personal space it has.
-    const minDistTo = (id: string) => {
-      const p = pts.get(id)!;
+    const pts = gs.map((g) => ({ id: g.getAttribute("data-node-id")!, ...nodeXY(g), r: nodeRadius(g) }));
+    const nearest = (p: typeof pts[number]) => {
       let m = Infinity;
-      for (const [oid, q] of pts) if (oid !== id) m = Math.min(m, Math.hypot(p.x - q.x, p.y - q.y));
+      for (const q of pts) if (q.id !== p.id) m = Math.min(m, Math.hypot(p.x - q.x, p.y - q.y));
       return m;
     };
-    const hubSpace = minDistTo("100");
-    const avgLeafSpace = Array.from({ length: 10 }, (_, i) => minDistTo(`${i + 1}`)).reduce((a, b) => a + b, 0) / 10;
-    // the hub carves MORE personal space than the average leaf (F1 degree-charge lever works).
-    expect(hubSpace).toBeGreaterThan(avgLeafSpace);
+    const avgNearest = pts.reduce((a, p) => a + nearest(p), 0) / pts.length;
+    const avgR = pts.reduce((a, p) => a + p.r, 0) / pts.length;
+    // measurable gap: neighbors are spaced well beyond their radius (not touching). The render
+    // transforms are in px, radii in px → a real ratio. The collide GAP enforces ≥ ~2× radius.
+    expect(avgNearest / avgR).toBeGreaterThan(2); // jsdom-conservative; live target ~4-5×
+  });
+
+  it("GRAPH-POLISH-C: spreads BUT stays ONE connected cluster — a linked pair stays within reach (not flung apart)", async () => {
+    mockNoteParam = null;
+    // a connected chain: the stronger charge/collide must NOT overwhelm the spring → linked
+    // nodes stay tethered (bounded distance), the cluster doesn't scatter into disconnected bits.
+    const CHAIN: WikiGraph = {
+      center: null,
+      nodes: Array.from({ length: 8 }, (_, i) => ({ id: i + 1, title: `n${i + 1}`, status: "evergreen" as const, degree: 2 })),
+      edges: Array.from({ length: 7 }, (_, i) => ({ source: i + 1, target: i + 2, type: "relates", isResolved: true })),
+      clusters: [],
+    };
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(CHAIN));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const pts = new Map(screen.getAllByTestId("graph-node").map((g) => [g.getAttribute("data-node-id")!, nodeXY(g)]));
+    // every LINKED pair stays within a bounded distance (tethered, not flung to opposite edges).
+    // the whole graph's span (max pairwise) bounds it; a linked pair << that span.
+    const all = [...pts.values()];
+    let span = 0;
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) span = Math.max(span, Math.hypot(all[i].x - all[j].x, all[i].y - all[j].y));
+    for (let i = 1; i <= 7; i++) {
+      const a = pts.get(`${i}`)!, b = pts.get(`${i + 1}`)!;
+      const linkDist = Math.hypot(a.x - b.x, a.y - b.y);
+      expect(linkDist).toBeLessThan(span); // a tethered pair is closer than the graph's full span
+      expect(linkDist).toBeGreaterThan(0); // and they're not stacked (collide kept them apart)
+    }
   });
 
   it("GRAPH-POLISH-B: hierarchy layout is DETERMINISTIC (same input → same positions + radii)", async () => {

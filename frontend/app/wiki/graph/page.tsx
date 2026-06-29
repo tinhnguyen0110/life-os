@@ -79,7 +79,7 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
   });
   if (n === 1) return pos;
   // force relaxation — fixed iters, deterministic. Scale work down as n grows.
-  const iters = n > 200 ? 60 : n > 60 ? 90 : 120;
+  const iters = n > 200 ? 70 : n > 60 ? 110 : 150; // GRAPH-POLISH-C — more iters to settle the wider spread
   const adj = edges.filter((e) => pos.has(e.source) && pos.has(e.target));
   const ids = nodes.map((nd) => nd.id);
   // GRAPH-POLISH-A (B) — OBSIDIAN force formulas (lifted, NOT d3 — written by hand; our
@@ -90,21 +90,25 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
   //    organic clusters, hubs don't collapse). · link distance ~16.
   //  · center via easeStrength(0.52)≈0.1 → ~0.055 in our space (centers WITHOUT a box).
   //  · collide: soft push when two nodes overlap their layout radii (anti-stack).
-  const REPEL = 9.7;                          // "repelForce" slider equivalent (10-ish)
-  const CHARGE = Math.pow(REPEL, 3) / 1000;   // = −repel³ scaled (≈0.91) → pairwise f=CHARGE/d²
-  // GRAPH-POLISH-B F3 — more breathing room: gentler CENTER + longer SPRING_LEN so the graph
-  // spreads (hubs carve space) instead of piling; the #174 auto-fit viewBox re-frames it snug.
-  const LINK_FORCE = 0.9, SPRING_LEN = 22, CENTER = 0.035;
-  const COLLIDE_STR = 0.5;
+  // GRAPH-POLISH-C — force-param TUNE for a measurable gap (target nearest-dist/radius ~4-5×,
+  // up from 2.84×). Stronger charge + firmer/wider collide + longer springs → thoáng but still
+  // ONE connected cluster (adaptive link holds it; #174 auto-fit re-frames the wider spread).
+  const REPEL = 14;                           // 9.7→14 → CHARGE = repel³/1000 ≈ 2.7 (≈3× global pressure)
+  const CHARGE = Math.pow(REPEL, 3) / 1000;   // pairwise f = CHARGE/d²
+  const LINK_FORCE = 0.9, SPRING_LEN = 36, CENTER = 0.035; // SPRING_LEN 22→36 (connected nodes sit farther)
+  const COLLIDE_STR = 0.7;                     // 0.5→0.7 — a FIRM bubble push, not a nudge
+  const COLLIDE_GAP = 1.8;                     // keep ≥ ~1.5-2× a node's diameter between neighbors
   // per-node degree (for adaptive link strength + collide radius + the F1 charge lever). ≥1.
   const deg = new Map<number, number>(nodes.map((nd) => [nd.id, Math.max(1, nd.degree || 0)]));
   // GRAPH-POLISH-B F1 — degree-scaled charge multiplier: a HUB exerts MORE repulsion than a
   // leaf, so hubs carve personal space + leaves bunch near their hub (hierarchy). Applied as
   // the EXERTING node's multiplier on the OTHER's displacement (asymmetric from a symmetric loop).
   const chargeMul = (id: number) => 1 + 0.5 * Math.sqrt(deg.get(id) ?? 1);
-  // GRAPH-POLISH-B F2 — collide bubble tracks the WIDER render-radius hierarchy (bigger hubs →
-  // bigger personal bubble → they separate). layoutR spread widened vs #174.
-  const layoutR = (id: number) => 0.9 + 0.5 * Math.min(3 * Math.sqrt((deg.get(id) ?? 1) + 1), 34) / 3;
+  // GRAPH-POLISH-C — layoutR MIRRORS the render radius (px) in LAYOUT units (1 unit = W/100 px):
+  // render r = max(6, min(4+6√deg, 30)) px → /(W/100). So the collide bubble ≈ the VISUAL node
+  // size; minD = (layoutR_i+layoutR_j)×COLLIDE_GAP gives the measurable breathing gap.
+  const renderRpx = (id: number) => Math.max(6, Math.min(4 + 6 * Math.sqrt(deg.get(id) ?? 1), 30));
+  const layoutR = (id: number) => renderRpx(id) / (W / 100);
   for (let it = 0; it < iters; it++) {
     const disp = new Map<number, Pos>(ids.map((id) => [id, { x: 0, y: 0 }]));
     // pairwise repulsion (charge cube × degree-lever) + soft collide (O(n²) — fine at vault scale).
@@ -117,9 +121,10 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
         let d2 = dx * dx + dy * dy; if (d2 < 0.01) { dx = (hash01(ids[i] + it) - 0.5); dy = (hash01(ids[j] + it) - 0.5); d2 = 0.01; }
         const f = CHARGE / d2; // charge-cube repulsion (base)
         let fx = dx * f, fy = dy * f;
-        // soft collide: if closer than the sum of layout radii, push apart gently.
+        // GRAPH-POLISH-C collide: keep a GAP of ≥ COLLIDE_GAP × the summed radii between
+        // neighbors (the measurable breathing gap). Firmer COLLIDE_STR enforces it.
         const dist = Math.sqrt(d2);
-        const minD = layoutR(ids[i]) + layoutR(ids[j]);
+        const minD = (layoutR(ids[i]) + layoutR(ids[j])) * COLLIDE_GAP;
         if (dist < minD) {
           const push = COLLIDE_STR * (minD - dist) / dist;
           fx += dx * push; fy += dy * push;
