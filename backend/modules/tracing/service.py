@@ -394,9 +394,10 @@ def archive_activity(activity_id: str) -> bool:
 # (list_templates SEED⊕override) is UNCHANGED — only the seed CONTENTS change. (icon is a free-form
 # string the FE doesn't currently render — the emoji is what shows — so the keys are advisory.)
 _SEED_TEMPLATES: list[dict[str, Any]] = [
-    {"id": "checkin-sang", "name": "Check-in sáng", "emoji": "🌅", "icon": "sunrise", "unit": "lần", "goal": 1.0, "color": "#fbbf24"},
-    {"id": "checkin-trua", "name": "Check-in trưa", "emoji": "☀️", "icon": "sun",     "unit": "lần", "goal": 1.0, "color": "#f97316"},
-    {"id": "report-toi",   "name": "Báo cáo tối",   "emoji": "🌙", "icon": "moon",    "unit": "lần", "goal": 1.0, "color": "#818cf8"},
+    # #173 T3b: ids = _slug(name) so the seed-path + the import-path converge on ONE id-scheme.
+    {"id": "check-in-sang", "name": "Check-in sáng", "emoji": "🌅", "icon": "sunrise", "unit": "lần", "goal": 1.0, "color": "#fbbf24"},
+    {"id": "check-in-trua", "name": "Check-in trưa", "emoji": "☀️", "icon": "sun",     "unit": "lần", "goal": 1.0, "color": "#f97316"},
+    {"id": "bao-cao-toi",   "name": "Báo cáo tối",   "emoji": "🌙", "icon": "moon",    "unit": "lần", "goal": 1.0, "color": "#818cf8"},
 ]
 
 
@@ -769,40 +770,73 @@ def delete_template_set(set_id: str) -> bool:
     return store.delete_template_set(set_id)
 
 
-def import_template_set(set_id: str) -> tuple[list[ActivityView], list[str]] | None:
-    """#137: 1-click import — create today's activity for EACH member of the set. None if the set is
-    absent (router → 404). Each member → create_activity(name=content, goal=1.0 BINARY todo, time=
-    member.time, remindAt=member.time IF remindRepeat≠off else None, remindRepeat, remindChannel) →
-    _sync_reminder fires the reminder when remindRepeat≠off (the #75/#136 path). A UNIQUE activity id
-    per member (slug(content)+suffix avoiding existing ids) → NO 409 on re-import (decide-and-log).
-    Returns (createdViews, skipped) — skipped is honest-empty today (unique ids never collide)."""
+def import_template_set(set_id: str) -> tuple[list[ActivityView], list[str], int] | None:
+    """#137 / TRACING-TEMPLATE-UX (#173): 1-click import = the board becomes EXACTLY this template,
+    IDEMPOTENT-BY-ID. None if the set is absent (router → 404).
+
+    Each member gets a STABLE canonical id = ``_slug(content)`` (NOT slug+suffix) → re-importing the
+    same set REUSES the same ids (no ``-N`` garbage, /trash does NOT grow). Per member:
+      - absent     → CREATE it (create_activity + _sync_reminder → reminder + #172 day-mask carry);
+      - ARCHIVED   → UN-ARCHIVE (the #130 pattern) + UPDATE its fields to the member;
+      - ACTIVE     → UPDATE its fields to the member (same content = same activity).
+
+    Order (the ATOMIC guard, from T1): upsert/un-archive ALL members FIRST; THEN archive the old
+    active ids NOT in the new member-id set. Upsert-first → a mid-import failure never empties the
+    board (the old board stays until ≥1 member lands). If ALL members fail → the old board is KEPT.
+
+    🔴 SCOPED: archive ONLY old active ids that are NOT members of this import (never a just-upserted
+    member). Recoverable (soft-delete).
+
+    Returns (memberViews, skipped, archivedCount): memberViews = the imported members (created OR
+    re-activated/updated); archivedCount = old non-matching activities retired."""
     s = get_template_set(set_id)
     if s is None:
         return None
-    created: list[ActivityView] = []
+    # snapshot the OLD active ids BEFORE the upsert (the board this import replaces)
+    old_ids = [r["id"] for r in store.list_activities()]  # active only (excludes archived)
+    views: list[ActivityView] = []
     skipped: list[str] = []
+    member_ids: set[str] = set()
+    # (1) upsert every member by its STABLE canonical id (idempotent — no suffix)
     for m in s.activities:
-        # a unique id: slug(content) + numeric suffix avoiding any existing activity (incl. archived)
-        base = _slug(m.content)
-        aid = base
-        n = 2
-        while get_activity(aid) is not None:
-            aid = f"{base}-{n}"
-            n += 1
+        aid = _slug(m.content)  # STABLE id → re-import reuses it (the #173 idempotency fix)
         remind_at = m.time if m.remindRepeat != "off" else None  # reminder fires at the member's time
-        inp = ActivityInput(
-            id=aid, name=m.content, goal=1.0,            # #122/#124: binary todo
-            time=m.time,                                  # #136: the scheduled time (independent)
-            remindAt=remind_at, remindRepeat=m.remindRepeat, remindChannel=m.remindChannel,
-            remindDays=m.remindDays,                      # #172: carry the custom weekday mask
-        )
         try:
-            act = create_activity(inp)  # reuses the create + _sync_reminder path
-            created.append(_derive_activity_view(act))
+            existing = get_activity(aid)  # incl. archived
+            act: Activity
+            if existing is None:
+                act = create_activity(ActivityInput(
+                    id=aid, name=m.content, goal=1.0,            # #122/#124: binary todo
+                    time=m.time, remindAt=remind_at, remindRepeat=m.remindRepeat,
+                    remindChannel=m.remindChannel, remindDays=m.remindDays))  # #172 mask
+            else:
+                if existing.archived:
+                    store.unarchive_activity(aid)  # #130: re-surface the same row (logs preserved)
+                # UPDATE the member's fields (time/remind/remindDays/name) to match the template
+                updated = update_activity(aid, ActivityUpdate(
+                    name=m.content, time=m.time, remindAt=remind_at,
+                    remindRepeat=m.remindRepeat, remindChannel=m.remindChannel,
+                    remindDays=m.remindDays))
+                assert updated is not None  # the id exists (we just read/un-archived it)
+                act = updated
+            views.append(_derive_activity_view(act))
+            member_ids.add(aid)
         except Exception as exc:  # noqa: BLE001 — fail-soft per member; the rest still import
             logger.error("tracing: import member %r from set %s failed: %s", m.content, set_id, exc)
             skipped.append(m.content)
-    return created, skipped
+    # (2) archive the OLD active ids NOT in this import's member set — ONLY if ≥1 member landed (else
+    #     keep the old board). SCOPED: never a just-upserted member (member_ids). A re-import of the
+    #     SAME set → old_ids ⊆ member_ids → archives 0 (the idempotency: no trash growth).
+    archived_count = 0
+    if views:
+        for aid in old_ids:
+            if aid in member_ids:
+                continue
+            if archive_activity(aid):  # soft-delete (recoverable) + drops the linked reminder
+                archived_count += 1
+    logger.info("tracing import_template_set %s: members=%d skipped=%d archived=%d",
+                set_id, len(views), len(skipped), archived_count)
+    return views, skipped, archived_count
 
 
 # #137 / TRACING-DEFAULT T3 (#173): the default template-set re-seeded by reset. Now the 3 daily
@@ -881,12 +915,14 @@ def backfill_timeless_time(default_time: str = "08:00") -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # The seed list — each is a daily binary check (goal=1) with a reminder. checkin-* fire Mon–Fri
 # (custom mask, skip weekend); report-toi fires every day (daily). Names are proper VN with diacritics.
+# #173 T3b: ids = _slug(name) so seed_checkin_activities + import_template_set converge on ONE
+# id-scheme (check-in-sang / check-in-trua / bao-cao-toi).
 _CHECKIN_SEED: list[dict[str, Any]] = [
-    {"id": "checkin-sang", "name": "Check-in sáng", "time": "07:00",
+    {"id": "check-in-sang", "name": "Check-in sáng", "time": "07:00",
      "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4]},
-    {"id": "checkin-trua", "name": "Check-in trưa", "time": "12:00",
+    {"id": "check-in-trua", "name": "Check-in trưa", "time": "12:00",
      "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4]},
-    {"id": "report-toi", "name": "Báo cáo tối", "time": "21:00",
+    {"id": "bao-cao-toi", "name": "Báo cáo tối", "time": "21:00",
      "remindRepeat": "daily", "remindDays": None},
 ]
 
@@ -922,6 +958,51 @@ def seed_checkin_activities() -> dict[str, Any]:
     logger.info("tracing seed_checkin_activities: created=%s skipped=%s", created, skipped)
     return {"created": created, "skipped": skipped,
             "createdCount": len(created), "skippedCount": len(skipped)}
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-TEMPLATE-UX T3b (#173): migrate the live board from the OLD non-slug   #
+# check-in ids to the SLUG ids so seed-path + import-path share ONE id-scheme.   #
+# --------------------------------------------------------------------------- #
+# The pre-T3b ids that diverged from _slug(name) — archived on migration so the live board converges.
+_OLD_CHECKIN_IDS: list[str] = ["checkin-sang", "checkin-trua", "report-toi"]
+
+
+def migrate_checkin_ids_to_slug() -> dict[str, Any]:
+    """Re-runnable maintenance helper (NOT a startup hook; the #171 pattern). One-shot migration of
+    the LIVE board from the pre-T3b non-slug check-in ids (checkin-sang/checkin-trua/report-toi) to
+    the SLUG ids (check-in-sang/check-in-trua/bao-cao-toi = `_slug(name)`), so seed + import converge.
+
+    🔴 SCOPED + IDEMPOTENT (NOT via import — avoids the re-suffix hazard): (1) archive any ACTIVE
+    old-id activity (soft-delete, recoverable); (2) seed-or-update the 3 slug ids to the canonical
+    fields via `seed_checkin_activities` (which is itself idempotent: creates if absent, skips if
+    present) + ensure an archived slug id is un-archived. A re-run when the board is already on the
+    slug scheme → archives 0, seed skips 3 → 0 net change.
+
+    Returns ``{"archivedOld": [ids], "slugBoard": [ids], "archivedCount": N}``."""
+    archived: list[str] = []
+    for oid in _OLD_CHECKIN_IDS:
+        a = get_activity(oid)
+        if a is not None and not a.archived:
+            archive_activity(oid)  # soft-delete (recoverable) + drops the linked reminder
+            archived.append(oid)
+    # ensure the 3 slug ids exist + are active with the canonical fields + reminders
+    for s in _CHECKIN_SEED:
+        sid = str(s["id"])
+        existing = get_activity(sid)  # incl. archived
+        if existing is None:
+            create_activity(ActivityInput(
+                id=sid, name=str(s["name"]), goal=1.0, time=s["time"], remindAt=s["time"],
+                remindRepeat=s["remindRepeat"], remindChannel="in_app", remindDays=s["remindDays"]))
+        else:
+            if existing.archived:
+                store.unarchive_activity(sid)
+            update_activity(sid, ActivityUpdate(
+                name=str(s["name"]), time=s["time"], remindAt=s["time"],
+                remindRepeat=s["remindRepeat"], remindChannel="in_app", remindDays=s["remindDays"]))
+    slug_board = [str(s["id"]) for s in _CHECKIN_SEED]
+    logger.info("tracing migrate_checkin_ids_to_slug: archivedOld=%s slugBoard=%s", archived, slug_board)
+    return {"archivedOld": archived, "slugBoard": slug_board, "archivedCount": len(archived)}
 
 
 # --------------------------------------------------------------------------- #

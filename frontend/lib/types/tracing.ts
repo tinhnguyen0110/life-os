@@ -149,6 +149,10 @@ export interface TemplateSetInput {
 export interface TemplateImportResult {
   created: ActivityView[];
   skipped: string[];
+  /** TRACING-TEMPLATE-UX (T1, BE) — import is a REPLACE: how many old activities were
+   *  archived (soft-deleted, recoverable) to make room for the template. Additive; absent
+   *  on an older BE → treat as 0. */
+  archivedCount?: number;
 }
 /** POST /tracing/{id}/log body — one raw session. val<0 → 422. */
 export interface TracingLogInput {

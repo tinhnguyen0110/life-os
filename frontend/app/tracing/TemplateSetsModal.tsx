@@ -25,6 +25,29 @@ function errText(e: unknown): string {
 /** a blank member (the add-member default). */
 const BLANK_MEMBER: TemplateMember = { content: "", time: null, remindRepeat: "off", remindChannel: "in_app" };
 
+/** human label for a member's reminder cadence — mirrors the /tracing timeline. "custom" is
+ *  defensive (template members carry no day-list today) → a generic "tùy chọn". */
+function freqLabel(repeat: RemindRepeat): string {
+  return repeat === "daily" ? "hằng ngày" : repeat === "weekdays" ? "ngày thường" : repeat === "custom" ? "tùy chọn" : "";
+}
+function channelLabel(c: RemindChannel | undefined): string {
+  return c === "discord" ? "Discord" : c === "email" ? "Email" : "In-app";
+}
+
+/** a compact remind chip for ONE template member — mirrors the /tracing timeline RemindChip
+ *  (🔔 time · freq · channel) so the modal reads like the real daily board. Rendered only
+ *  when the member has a reminder (remindRepeat ≠ "off"). */
+function MemberRemindChip({ member, testid }: { member: TemplateMember; testid: string }) {
+  const freq = freqLabel(member.remindRepeat);
+  return (
+    <span className="tagchip acc" data-testid={testid} title="Nhắc nhở">
+      🔔 {member.time ? <span className="num">{member.time}</span> : "nhắc"}
+      {freq ? <> · {freq}</> : null}
+      {" · "}{channelLabel(member.remindChannel)}
+    </span>
+  );
+}
+
 type View = { kind: "list" } | { kind: "edit"; set: TemplateSet | null }; // set=null → create new
 
 export function TemplateSetsModal({
@@ -32,8 +55,10 @@ export function TemplateSetsModal({
 }: {
   channels: ReminderChannelOption[];
   onClose: () => void;
-  /** called after a successful import with the created-count → the page refetches + toasts. */
-  onImported: (created: number, skipped: string[]) => void;
+  /** called after a successful import → the page refetches + toasts. Carries created-count,
+   *  the skipped (already-present) member contents, and archivedCount (TRACING-TEMPLATE-UX:
+   *  import is a REPLACE — N old activities soft-deleted, recoverable). */
+  onImported: (created: number, skipped: string[], archivedCount: number) => void;
 }) {
   const [sets, setSets] = useState<TemplateSet[]>([]);
   const [status, setStatus] = useState<"loading" | "error" | "ready">("loading");
@@ -56,7 +81,8 @@ export function TemplateSetsModal({
     setOpErr(""); setBusy(s.id);
     try {
       const res = await importTemplateSet(s.id);
-      onImported(res.data.created.length, res.data.skipped); // page refetches /tracing + toasts
+      // archivedCount is additive (BE T1 lands in parallel) — default 0 if absent.
+      onImported(res.data.created.length, res.data.skipped, res.data.archivedCount ?? 0); // page refetches /tracing + toasts
     } catch (e) { setOpErr(errText(e)); } finally { setBusy(null); }
   }
 
@@ -151,10 +177,27 @@ function ListView({
                   <button className="btn sm" type="button" onClick={() => onEdit(s)} data-testid={`tpl-set-edit-${s.id}`}>Sửa</button>
                   <button className="btn sm ghost" type="button" disabled={busy === s.id} onClick={() => onDelete(s)} data-testid={`tpl-set-delete-${s.id}`} title="Xóa mẫu">✕</button>
                 </div>
-                {/* member preview (the rich list — content + time, honest) */}
-                <div className="hint faint" style={{ marginTop: 4, fontFamily: "var(--mono)", fontSize: 10.5 }} data-testid={`tpl-set-preview-${s.id}`}>
-                  {s.activities.length === 0 ? "(trống)" : s.activities.map((m) => `${m.time ? m.time + " " : ""}${m.content}`).join(" · ")}
-                </div>
+                {/* member LIST — each member is a ROW (time · content · remind-chip), mirroring
+                    the /tracing timeline so the modal reads like the real daily board. */}
+                {s.activities.length === 0 ? (
+                  <div className="hint faint" style={{ marginTop: 4 }} data-testid={`tpl-set-preview-${s.id}`}>(trống)</div>
+                ) : (
+                  <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }} data-testid={`tpl-set-members-${s.id}`}>
+                    {s.activities.map((m, i) => (
+                      <div className="row" key={i} style={{ alignItems: "center", gap: 8 }} data-testid={`tpl-set-member-${s.id}-${i}`}>
+                        <span className="num faint" style={{ width: 44, flex: "0 0 auto", textAlign: "right", fontSize: 11 }} data-testid={`tpl-set-member-time-${s.id}-${i}`}>
+                          {m.time ?? "–"}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} data-testid={`tpl-set-member-content-${s.id}-${i}`}>
+                          {m.content}
+                        </span>
+                        {m.remindRepeat !== "off" && (
+                          <MemberRemindChip member={m} testid={`tpl-set-member-remind-${s.id}-${i}`} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

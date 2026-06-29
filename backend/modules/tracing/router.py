@@ -273,15 +273,17 @@ def reset_template_sets():
 
 @router.post("/template-sets/{set_id}/import")
 def import_template_set(set_id: str):
-    """🔴 1-click import: create today's activity for EACH member (goal=1 binary todo + time/remind
-    preset). 200 + {created:[ActivityView], skipped:[content]}. 404 if the set is unknown. Unique
-    activity id per member → NO 409 on re-import. Reuses create_activity + _sync_reminder."""
+    """🔴 1-click import = the board becomes EXACTLY this template (ATOMIC REPLACE, #173): create
+    each member (goal=1 binary todo + time/remind preset) THEN archive the old activities (so a
+    re-import doesn't double the board). Create-first → never empties the board on a partial failure.
+    200 + {created:[ActivityView], skipped:[content], archivedCount:int}. 404 if the set is unknown."""
     result = service.import_template_set(set_id)
     if result is None:
         return agent_error_response("NOT_FOUND", f"template-set {set_id!r} not found",
                                     hint="GET /tracing/template-sets for valid ids")
-    created, skipped = result
-    return ok(data={"created": [v.model_dump() for v in created], "skipped": skipped})
+    created, skipped, archived_count = result
+    return ok(data={"created": [v.model_dump() for v in created], "skipped": skipped,
+                    "archivedCount": archived_count})
 
 
 @router.put("/template-sets/{set_id}")

@@ -283,9 +283,14 @@ export default function TracingPage() {
   const currentStreak = useMemo(() => Math.max(0, ...acts.map((a) => a.streak)), [acts]);
 
   // #137 — a template-set was imported → refetch the board + toast "đã thêm N việc".
-  function onTemplateImported(created: number, skipped: string[]) {
+  function onTemplateImported(created: number, skipped: string[], archivedCount: number) {
     reload();
-    setToast(`Đã thêm ${created} việc${skipped.length ? ` · ${skipped.length} đã có sẵn` : ""}.`);
+    // TRACING-TEMPLATE-UX — import is a REPLACE: surface created + archived (recoverable) +
+    // skipped (already-present, honest) counts in the toast.
+    const parts = [`✓ Đã nhập mẫu · ${created} việc`];
+    if (archivedCount > 0) parts.push(`${archivedCount} việc cũ vào thùng rác (khôi phục được)`);
+    if (skipped.length > 0) parts.push(`${skipped.length} đã có sẵn (bỏ qua)`);
+    setToast(parts.join(" · "));
     setTplModalOpen(false);
   }
   // auto-dismiss the toast.

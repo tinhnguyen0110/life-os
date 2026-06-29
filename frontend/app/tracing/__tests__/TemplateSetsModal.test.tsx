@@ -52,14 +52,24 @@ afterEach(() => {
 });
 
 describe("#137 TemplateSetsModal — list view", () => {
-  it("lists sets with name + member count + a rich preview (time + content, NOT 1-word chips)", async () => {
+  it("🔴 D2 — lists each set's members as ROWS (time · content · remind-chip), like the /tracing timeline", async () => {
     renderModal();
     await waitFor(() => expect(screen.getByTestId("tpl-set-buoi-sang")).toBeInTheDocument());
     expect(screen.getByTestId("tpl-set-name-buoi-sang")).toHaveTextContent("Buổi sáng");
     expect(screen.getByTestId("tpl-set-count-buoi-sang")).toHaveTextContent("2 việc");
-    // the preview shows the rich members (time + content), proving it's a LIST not a chip
-    expect(screen.getByTestId("tpl-set-preview-buoi-sang")).toHaveTextContent("07:00 Uống nước");
-    expect(screen.getByTestId("tpl-set-preview-buoi-sang")).toHaveTextContent("Đọc sách");
+    // each member is its OWN row (NOT a single joined string) — proving the list render
+    const m0 = screen.getByTestId("tpl-set-member-buoi-sang-0");
+    expect(within(m0).getByTestId("tpl-set-member-time-buoi-sang-0")).toHaveTextContent("07:00");
+    expect(within(m0).getByTestId("tpl-set-member-content-buoi-sang-0")).toHaveTextContent("Uống nước");
+    // member 0 has a daily reminder → a remind chip (🔔 time · freq · channel)
+    expect(within(m0).getByTestId("tpl-set-member-remind-buoi-sang-0")).toHaveTextContent("07:00");
+    expect(within(m0).getByTestId("tpl-set-member-remind-buoi-sang-0")).toHaveTextContent("hằng ngày");
+    expect(within(m0).getByTestId("tpl-set-member-remind-buoi-sang-0")).toHaveTextContent("Discord");
+    // member 1 (Đọc sách): no time, no reminder → its own row, no chip
+    const m1 = screen.getByTestId("tpl-set-member-buoi-sang-1");
+    expect(within(m1).getByTestId("tpl-set-member-content-buoi-sang-1")).toHaveTextContent("Đọc sách");
+    expect(within(m1).getByTestId("tpl-set-member-time-buoi-sang-1")).toHaveTextContent("–"); // no time
+    expect(within(m1).queryByTestId("tpl-set-member-remind-buoi-sang-1")).toBeNull(); // remindRepeat off → no chip
   });
 
   it("no sets → honest empty state", async () => {
@@ -76,21 +86,30 @@ describe("#137 TemplateSetsModal — list view", () => {
 });
 
 describe("#137 TemplateSetsModal — import (the headline 1-click)", () => {
-  it("🔴 Import a set → importTemplateSet(id) → onImported(createdCount, skipped)", async () => {
+  it("🔴 Import a set → importTemplateSet(id) → onImported(createdCount, skipped, archivedCount)", async () => {
     renderModal();
     await waitFor(() => expect(screen.getByTestId("tpl-set-import-buoi-sang")).toBeInTheDocument());
-    importTemplateSet.mockResolvedValue(ok({ created: [{ id: "uong-nuoc" }, { id: "doc-sach" }], skipped: [] }));
+    // D3 — import is a REPLACE: BE returns archivedCount (old activities soft-deleted, recoverable)
+    importTemplateSet.mockResolvedValue(ok({ created: [{ id: "uong-nuoc" }, { id: "doc-sach" }], skipped: [], archivedCount: 4 }));
     await userEvent.setup().click(screen.getByTestId("tpl-set-import-buoi-sang"));
     await waitFor(() => expect(importTemplateSet).toHaveBeenCalledWith("buoi-sang"));
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith(2, []));
+    await waitFor(() => expect(onImported).toHaveBeenCalledWith(2, [], 4));
   });
 
-  it("import surfaces skipped (already-present, honest)", async () => {
+  it("import surfaces skipped (already-present, honest) + archivedCount", async () => {
     renderModal();
     await waitFor(() => expect(screen.getByTestId("tpl-set-import-buoi-sang")).toBeInTheDocument());
-    importTemplateSet.mockResolvedValue(ok({ created: [{ id: "uong-nuoc" }], skipped: ["Đọc sách"] }));
+    importTemplateSet.mockResolvedValue(ok({ created: [{ id: "uong-nuoc" }], skipped: ["Đọc sách"], archivedCount: 2 }));
     await userEvent.setup().click(screen.getByTestId("tpl-set-import-buoi-sang"));
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith(1, ["Đọc sách"]));
+    await waitFor(() => expect(onImported).toHaveBeenCalledWith(1, ["Đọc sách"], 2));
+  });
+
+  it("D3 — archivedCount absent on an older BE → defaults to 0 (additive, no crash)", async () => {
+    renderModal();
+    await waitFor(() => expect(screen.getByTestId("tpl-set-import-buoi-sang")).toBeInTheDocument());
+    importTemplateSet.mockResolvedValue(ok({ created: [{ id: "uong-nuoc" }], skipped: [] })); // no archivedCount
+    await userEvent.setup().click(screen.getByTestId("tpl-set-import-buoi-sang"));
+    await waitFor(() => expect(onImported).toHaveBeenCalledWith(1, [], 0));
   });
 });
 

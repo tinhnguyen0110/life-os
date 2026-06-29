@@ -41,12 +41,12 @@ def test_seed_list_is_the_three_checkins_all_source_seed(db):
     tpls = svc.list_templates()
     assert len(tpls) == 3, f"expected 3 seed templates (the check-ins), got {len(tpls)}"
     assert all(t.source == "seed" for t in tpls)
-    assert {t.id for t in tpls} == {"checkin-sang", "checkin-trua", "report-toi"}
+    assert {t.id for t in tpls} == {"check-in-sang", "check-in-trua", "bao-cao-toi"}
     # each carries the lean prefill fields (no derived metrics)
     for t in tpls:
         assert t.id and t.name and isinstance(t.goal, float) and t.goal == 1.0 and t.unit == "lần"
     # the morning check-in has its sensible prefill (VN name + emoji)
-    sang = next((t for t in tpls if t.id == "checkin-sang"), None)
+    sang = next((t for t in tpls if t.id == "check-in-sang"), None)
     assert sang is not None and sang.name == "Check-in sáng" and sang.emoji == "🌅"
 
 
@@ -57,10 +57,10 @@ def test_upsert_overrides_a_seed_source_user_wins(db):
     """Upsert with a SEED id → the list shows the USER override (source='user', the override's
     fields, NOT the seed's) — override wins; the seed count stays the same (replaced, not added)."""
     before = len(svc.list_templates())
-    svc.upsert_template("checkin-sang", TemplateInput(name="Sáng 5'", goal=5.0, unit="phút", emoji="🌄"))
+    svc.upsert_template("check-in-sang", TemplateInput(name="Sáng 5'", goal=5.0, unit="phút", emoji="🌄"))
     tpls = svc.list_templates()
     assert len(tpls) == before, "overriding a seed must REPLACE it, not add a duplicate"
-    sang = next(t for t in tpls if t.id == "checkin-sang")
+    sang = next(t for t in tpls if t.id == "check-in-sang")
     assert sang.source == "user" and sang.goal == 5.0 and sang.name == "Sáng 5'"
 
 
@@ -81,11 +81,11 @@ def test_delete_seed_tombstones_and_hides_it(db):
     """Delete a SEED → a tombstone HIDES it from the list (the seed lives in code, can't be removed;
     we record a hide-marker). The list shrinks by 1; the id is gone."""
     before = svc.list_templates()
-    assert any(t.id == "report-toi" for t in before)
-    assert svc.delete_template("report-toi") is True
+    assert any(t.id == "bao-cao-toi" for t in before)
+    assert svc.delete_template("bao-cao-toi") is True
     after = svc.list_templates()
     assert len(after) == len(before) - 1
-    assert not any(t.id == "report-toi" for t in after), "a tombstoned seed must be hidden"
+    assert not any(t.id == "bao-cao-toi" for t in after), "a tombstoned seed must be hidden"
 
 
 def test_delete_user_template_removes_its_row(db):
@@ -105,10 +105,10 @@ def test_delete_absent_non_seed_is_idempotent_false(db):
 
 def test_upsert_after_tombstone_unhides(db):
     """Upserting a previously-tombstoned seed id → un-hides it (hidden reset to 0), now source='user'."""
-    svc.delete_template("report-toi")  # tombstone
-    assert not any(t.id == "report-toi" for t in svc.list_templates())
-    svc.upsert_template("report-toi", TemplateInput(name="Tối 20'", goal=20.0))
-    t = next((t for t in svc.list_templates() if t.id == "report-toi"), None)
+    svc.delete_template("bao-cao-toi")  # tombstone
+    assert not any(t.id == "bao-cao-toi" for t in svc.list_templates())
+    svc.upsert_template("bao-cao-toi", TemplateInput(name="Tối 20'", goal=20.0))
+    t = next((t for t in svc.list_templates() if t.id == "bao-cao-toi"), None)
     assert t is not None and t.source == "user" and t.goal == 20.0
 
 
@@ -119,11 +119,11 @@ def test_reset_returns_to_pure_seed(db):
     """Reset deletes ALL overrides → the list is pure seed again (count == seed count, all 'seed')."""
     seed_count = len(svc.list_templates())
     svc.upsert_template("guitar", TemplateInput(name="Tập guitar", goal=20.0))
-    svc.delete_template("report-toi")  # tombstone a seed
-    # the override rows exist (guitar add + report-toi tombstone) — the list is no longer pure seed
+    svc.delete_template("bao-cao-toi")  # tombstone a seed
+    # the override rows exist (guitar add + bao-cao-toi tombstone) — the list is no longer pure seed
     assert len(store.list_template_overrides()) == 2
     assert any(t.source == "user" for t in svc.list_templates())  # guitar shows as user
-    assert not any(t.id == "report-toi" for t in svc.list_templates())  # report-toi hidden
+    assert not any(t.id == "bao-cao-toi" for t in svc.list_templates())  # bao-cao-toi hidden
     n = svc.reset_templates()
     assert n == 2, "reset deletes the 2 override rows (1 user + 1 tombstone)"
     after = svc.list_templates()
@@ -152,10 +152,10 @@ def test_bulk_delete_removes_and_hides_given_ids(db):
     """Bulk-delete a mix of a USER template + a SEED → both gone from the list; returns the count
     that changed. Absent ids are skipped (idempotent, no error)."""
     svc.upsert_template("guitar", TemplateInput(name="Tập guitar", goal=20.0))
-    n = svc.bulk_delete_templates(["guitar", "report-toi", "nope-absent"])
-    assert n == 2, "guitar (user) + report-toi (seed tombstone) changed; nope-absent skipped"
+    n = svc.bulk_delete_templates(["guitar", "bao-cao-toi", "nope-absent"])
+    assert n == 2, "guitar (user) + bao-cao-toi (seed tombstone) changed; nope-absent skipped"
     ids = {t.id for t in svc.list_templates()}
-    assert "guitar" not in ids and "report-toi" not in ids
+    assert "guitar" not in ids and "bao-cao-toi" not in ids
 
 
 def test_bulk_delete_empty_is_noop_zero(db):
@@ -168,7 +168,7 @@ def test_bulk_delete_empty_is_noop_zero(db):
 def test_bulk_delete_does_not_touch_activities(db):
     """Bulk-delete is SCOPED to tracing_template — real activities survive (the #72 lesson, bulk path)."""
     svc.create_activity(ActivityInput(id="run", name="Run", goal=5.0))
-    svc.bulk_delete_templates(["checkin-trua", "report-toi", "checkin-sang"])
+    svc.bulk_delete_templates(["check-in-trua", "bao-cao-toi", "check-in-sang"])
     assert svc.get_activity("run") is not None
 
 
@@ -196,17 +196,17 @@ def test_rest_get_list(api):
 
 
 def test_rest_put_upsert_then_get_shows_override(api):
-    r = api.put("/tracing/templates/checkin-trua",
+    r = api.put("/tracing/templates/check-in-trua",
                 json={"name": "Trưa 12'", "goal": 12.0, "unit": "phút"})
     assert r.status_code == 200 and r.json()["data"]["source"] == "user"
     lst = api.get("/tracing/templates").json()["data"]["templates"]
-    trua = next(t for t in lst if t["id"] == "checkin-trua")
+    trua = next(t for t in lst if t["id"] == "check-in-trua")
     assert trua["goal"] == 12.0 and trua["source"] == "user"
 
 
 def test_rest_delete_then_reset_round_trip(api):
     seed_n = len(api.get("/tracing/templates").json()["data"]["templates"])
-    api.delete("/tracing/templates/report-toi")  # tombstone a seed
+    api.delete("/tracing/templates/bao-cao-toi")  # tombstone a seed
     assert len(api.get("/tracing/templates").json()["data"]["templates"]) == seed_n - 1
     rr = api.post("/tracing/templates/reset")
     assert rr.status_code == 200 and rr.json()["data"]["reset"] is True
@@ -215,7 +215,7 @@ def test_rest_delete_then_reset_round_trip(api):
 
 def test_rest_bulk_delete(api):
     api.put("/tracing/templates/guitar", json={"name": "Tập guitar", "goal": 20.0})
-    r = api.post("/tracing/templates/bulk-delete", json={"ids": ["guitar", "report-toi", "absent"]})
+    r = api.post("/tracing/templates/bulk-delete", json={"ids": ["guitar", "bao-cao-toi", "absent"]})
     assert r.status_code == 200 and r.json()["data"]["deleted"] == 2
 
 

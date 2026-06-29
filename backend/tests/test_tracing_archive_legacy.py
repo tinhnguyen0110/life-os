@@ -19,7 +19,7 @@ from modules.tracing import store as trc_store
 from modules.tracing.schema import ActivityInput, LogInput
 
 LEGACY = ["tap-the-duc", "doc-sach", "ngu", "thien", "di-bo", "hoc", "viet"]
-CHECKINS = ["checkin-sang", "checkin-trua", "report-toi"]
+CHECKINS = ["check-in-sang", "check-in-trua", "bao-cao-toi"]
 
 
 @pytest.fixture
