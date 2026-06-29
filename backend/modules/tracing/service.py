@@ -778,3 +778,47 @@ def reset_template_sets() -> list[TemplateSet]:
     members = [TemplateMember(**m) for m in d["activities"]]  # type: ignore[arg-type]
     store.upsert_template_set(id=str(d["id"]), name=str(d["name"]), activities_json=_members_json(members))
     return list_template_sets()
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-UX3A T1 (#170 follow-up): backfill old TIMELESS activities to a       #
+# default time so they leave the "Chưa đặt giờ" bucket + go on the timeline     #
+# rail. New adds now require a time; these are legacy null-time rows.           #
+# --------------------------------------------------------------------------- #
+def backfill_timeless_time(default_time: str = "08:00") -> dict[str, Any]:
+    """Re-runnable maintenance helper (NOT a startup hook; the wiki ``supersede_pending`` pattern).
+
+    For every ACTIVE activity whose ``time`` is null/empty, set its ``time`` via the CANONICAL update
+    path (``update_activity(id, ActivityUpdate(time=...))``) — the audited write, NOT a raw SQL UPDATE.
+
+    🔴 Per-activity rule (T1 REFINEMENT — avoid a UX jump): the FE rail falls back to ``remindAt`` when
+    ``time`` is null (railTime = ``a.time || a.remindAt``), so an activity WITH a reminder already shows
+    at its remindAt on the rail. To keep what's on screen:
+      - time=null AND remindAt set   → time = remindAt   (e.g. "Viết nhật ký" 07:00 → no visible jump)
+      - time=null AND no remindAt     → time = default_time ("08:00")
+      - time already set              → SKIP (idempotent — a re-run touches 0)
+
+    🔴 SCOPED: sets ONLY ``time`` (→ sched_time col); the reminder field itself is UNTOUCHED in all cases
+    (model_dump(exclude_none=True) on a 1-field update yields ONE column). Name/goal/streak/logs/remindAt
+    are preserved.
+
+    Returns ``{"beforeTimeless": N, "afterTimeless": M, "set": {id: time}, "touched": [ids],
+    "defaultTime": "08:00"}`` — ``set`` shows the per-id time chosen (the #72 before/after discipline +
+    the refined per-activity audit)."""
+    rows = store.list_activities()  # ACTIVE only (excludes archived), created-order
+    acts = [_row_to_activity(r) for r in rows]
+    timeless = [a for a in acts if not (a.time and a.time.strip())]
+    before = len(timeless)
+    chosen: dict[str, str] = {}
+    for a in timeless:
+        # prefer the activity's remindAt (matches what the FE rail already shows) else the default
+        new_time = a.remindAt.strip() if (a.remindAt and a.remindAt.strip()) else default_time
+        update_activity(a.id, ActivityUpdate(time=new_time))  # canonical, audited, scoped to `time`
+        chosen[a.id] = new_time
+    # re-read to confirm the after-count (don't trust the in-memory list)
+    after = sum(1 for r in store.list_activities()
+                if not ((_row_to_activity(r).time or "").strip()))
+    logger.info("tracing backfill_timeless_time: before=%d after=%d set=%s default=%s",
+                before, after, chosen, default_time)
+    return {"beforeTimeless": before, "afterTimeless": after,
+            "set": chosen, "touched": list(chosen), "defaultTime": default_time}
