@@ -116,11 +116,13 @@ describe("#136 Tracing — timeline DEFAULT + NO global edit toggle", () => {
     expect(screen.getByTestId("tpl-open")).toBeInTheDocument();
   });
 
-  it("streak + heatmap KEPT (collapsed <details>) — base preserved", async () => {
+  it("TRACING-UX3 req4 — streak panel is ALWAYS-VISIBLE (no more collapsed <details>) + heatmap kept", async () => {
     getTracing.mockResolvedValue(OVERVIEW([ACT()]));
     render(<TracingPage />);
     await waitFor(() => expect(screen.getByTestId("tracing-stats")).toBeInTheDocument());
-    expect(screen.getByTestId("tracing-stats").tagName.toLowerCase()).toBe("details");
+    // no longer a <details> (always-visible panel now)
+    expect(screen.getByTestId("tracing-stats").tagName.toLowerCase()).not.toBe("details");
+    expect(screen.queryByTestId("tracing-stats-summary")).toBeNull();
     expect(screen.getByTestId("heatmap-grid")).toBeInTheDocument();
   });
 
@@ -185,6 +187,104 @@ describe("#136 Tracing — timeline DEFAULT + NO global edit toggle", () => {
     const body = createActivity.mock.calls[0][0];
     expect(body.time).toBe("08:00");
     expect(body.name).toBe("Đọc sách");
+  });
+});
+
+describe("TRACING-UX3 — req1 giờ bắt buộc · req2 nhắc default=giờ-việc · req3 anytime bucket · req4 streak panel", () => {
+  // req1 — empty time blocks the add (custom message), no createActivity call.
+  it("req1: empty time → blocks add with 'giờ là bắt buộc' message, createActivity NOT called", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Đọc sách" } });
+    // clear the 08:00 prefill → empty time
+    fireEvent.change(screen.getByTestId("todo-time"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(screen.getByTestId("todo-add-error")).toHaveTextContent(/giờ là bắt buộc/i));
+    expect(createActivity).not.toHaveBeenCalled();
+  });
+
+  it("req1: the time input is visually marked required (aria-required + '*' cue)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-time")).toBeInTheDocument());
+    expect(screen.getByTestId("todo-time")).toHaveAttribute("aria-required", "true");
+    expect(screen.getByTestId("todo-time-label")).toHaveTextContent("*");
+  });
+
+  // req2 — toggling the todo-row remind ON seeds remind.time = the activity time (todoTime).
+  it("req2: toggle remind ON in the add-row → nhắc-time defaults to giờ-việc (not 07:00)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    createActivity.mockResolvedValue({ success: true, data: ACT({ id: "doc-sach" }) });
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("todo-add-form")).toBeInTheDocument());
+    // set the activity time to 09:30, then toggle remind on
+    fireEvent.change(screen.getByTestId("todo-time"), { target: { value: "09:30" } });
+    fireEvent.click(screen.getByTestId("todo-remind-toggle"));
+    // the remind-time input now shows the activity time, not the disjoint 07:00
+    const remindTime = screen.getByTestId("todo-remind-time") as HTMLInputElement;
+    expect(remindTime.value).toBe("09:30");
+    // and it's still editable + the add carries it
+    fireEvent.change(screen.getByTestId("todo-input"), { target: { value: "Đọc sách" } });
+    fireEvent.click(screen.getByTestId("todo-submit"));
+    await waitFor(() => expect(createActivity).toHaveBeenCalled());
+    expect(createActivity.mock.calls[0][0].remindAt).toBe("09:30");
+  });
+
+  it("req2: the NOTE add-row remind keeps its own default (no activity time) — still 07:00", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([]));
+    getTracingNotes.mockResolvedValue(NOTES([]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("note-add-form")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("note-remind-toggle"));
+    expect((screen.getByTestId("note-remind-time") as HTMLInputElement).value).toBe("07:00");
+  });
+
+  // req3 — leftover timeless rows go in a labeled "Chưa đặt giờ" bucket at the bottom; đặt-giờ works.
+  it("req3: legacy timeless rows render under a 'Chưa đặt giờ' bucket header (timed rows above it)", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([
+      ACT({ id: "timeless", name: "Cũ", remindAt: null, time: null }),
+      ACT({ id: "timed", name: "Sáng", remindAt: null, time: "06:00" }),
+    ]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-timeless")).toBeInTheDocument());
+    // the bucket header exists + names the count
+    const head = screen.getByTestId("timeline-anytime-head");
+    expect(head).toHaveTextContent(/Chưa đặt giờ/i);
+    expect(head).toHaveTextContent(/1 việc/);
+    // đặt-giờ on the timeless row still works (opens the time editor)
+    fireEvent.click(screen.getByTestId("tl-time-timeless"));
+    await waitFor(() => expect(screen.getByTestId("tl-time-editor-timeless")).toBeInTheDocument());
+  });
+
+  it("req3: NO 'Chưa đặt giờ' bucket header when every row is timed", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([ACT({ id: "timed", time: "06:00" })]));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("tl-timed")).toBeInTheDocument());
+    expect(screen.queryByTestId("timeline-anytime-head")).toBeNull();
+  });
+
+  // req4 — streak tiles: current = max(a.streak), best = topStreak; heatmap renders 84 cells.
+  it("req4: streak tiles show current = max(a.streak) 🔥 + best = topStreak ✦ + 84 heatmap cells", async () => {
+    getTracing.mockResolvedValue(OVERVIEW(
+      [ACT({ id: "a", streak: 4 }), ACT({ id: "b", streak: 9 }), ACT({ id: "c", streak: 2 })],
+      { score: { total: 3, done: 0, pct: 0, timeActive: "", topStreak: 21 } },
+    ));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("streak-tiles")).toBeInTheDocument());
+    // current = max running streak across activities = 9
+    expect(screen.getByTestId("streak-current")).toHaveTextContent("9");
+    // best = topStreak = 21
+    expect(screen.getByTestId("streak-best")).toHaveTextContent("21");
+    // heatmap renders all 84 cells (12w × 7)
+    expect(screen.getByTestId("heatmap-grid").querySelectorAll('[data-testid^="hc-"]').length).toBe(84);
+  });
+
+  it("req4: current streak = 0 (no crash) when there are no activities", async () => {
+    getTracing.mockResolvedValue(OVERVIEW([], { score: { total: 0, done: 0, pct: 0, timeActive: "", topStreak: 0 } }));
+    render(<TracingPage />);
+    await waitFor(() => expect(screen.getByTestId("streak-tiles")).toBeInTheDocument());
+    expect(screen.getByTestId("streak-current")).toHaveTextContent("0");
   });
 });
 

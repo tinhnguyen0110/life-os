@@ -74,13 +74,26 @@ function todayVnDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false }: {
+function RemindControls({ value, onChange, channels, idPrefix, allowOnce = false, defaultTime }: {
   value: RemindState; onChange: (next: RemindState) => void; channels: ReminderChannelOption[]; idPrefix: string;
   allowOnce?: boolean;
+  /** TRACING-UX3 req2 — when the toggle flips OFF→ON, seed remind.time from this (the
+   *  activity's own time) instead of the disjoint 07:00 default. Sync is ON TOGGLE-ON ONLY
+   *  (we don't fight a later explicit remind-time edit). Undefined → keep value.time. */
+  defaultTime?: string;
 }) {
+  // toggle handler: flipping ON seeds the time from defaultTime (the activity time) when one
+  // is provided; flipping OFF just clears `on`. Toggle-on-only so a user's later edit sticks.
+  function toggle() {
+    if (!value.on) {
+      onChange({ ...value, on: true, time: defaultTime || value.time });
+    } else {
+      onChange({ ...value, on: false });
+    }
+  }
   return (
     <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button type="button" className={`tab${value.on ? " on" : ""}`} onClick={() => onChange({ ...value, on: !value.on })}
+      <button type="button" className={`tab${value.on ? " on" : ""}`} onClick={toggle}
         data-testid={`${idPrefix}-remind-toggle`} aria-pressed={value.on}>
         🔔 {value.on ? "Bật" : "Nhắc nhở"}
       </button>
@@ -216,6 +229,9 @@ export default function TracingPage() {
   const sc = data.score;
   const heatMax = useMemo(() => Math.max(sc.total, ...data.heatmap12w), [data.heatmap12w, sc.total]);
   const { timed, anytime } = useMemo(() => timelineOrder(acts), [acts]);
+  // TRACING-UX3 req4 — current streak = the best running streak across today's activities
+  // (0 when there are none). best streak = sc.topStreak (BE-computed). Both client-side, no fetch.
+  const currentStreak = useMemo(() => Math.max(0, ...acts.map((a) => a.streak)), [acts]);
 
   // #137 — a template-set was imported → refetch the board + toast "đã thêm N việc".
   function onTemplateImported(created: number, skipped: string[]) {
@@ -237,10 +253,13 @@ export default function TracingPage() {
     if (!text) { setAddErr("Nhập nội dung việc cần làm."); return; }
     const id = slugifyVi(text);
     if (!id) { setAddErr("Nội dung không tạo được id — thử chữ có dấu cách / chữ cái."); return; }
+    // TRACING-UX3 req1 — giờ là BẮT BUỘC: block submit when the time is empty (the user
+    // cleared the 08:00 prefill). No more silent fallback-to-null; every new activity is timed.
+    if (!todoTime) { setAddErr("Chọn giờ cho việc — giờ là bắt buộc."); return; }
     const body: ActivityInput = {
       id, name: text, goal: 1,
-      // #139 — a time is always sent (default 08:00) so every new activity is timed.
-      time: todoTime || null,
+      // TRACING-UX3 req1 — always a real time (validation above guarantees todoTime is set).
+      time: todoTime,
       remindAt: todoRemind.on ? todoRemind.time : null,
       remindRepeat: todoRemind.on ? todoRemind.repeat : "off",
       remindChannel: todoRemind.on ? todoRemind.channel : undefined,
@@ -589,18 +608,34 @@ export default function TracingPage() {
             {/* #136 — add-via-text + "+ Từ mẫu" ALWAYS visible (not gated behind a global
                 edit toggle — the template button was hidden before, the user's complaint). */}
             <div style={{ padding: "12px 16px 6px", display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-tools">
-                <form onSubmit={onAddTodo} style={{ display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-form">
+                {/* noValidate — a type="time" input reports validity.badInput when empty/incomplete,
+                    and native constraint-validation fires its OWN (English) tooltip BEFORE our onSubmit
+                    runs → our custom Vietnamese "giờ là bắt buộc" message would never show. We own the
+                    validation (onAddTodo), so disable the native pass and let our guard be the gate. */}
+                <form onSubmit={onAddTodo} noValidate style={{ display: "flex", flexDirection: "column", gap: 8 }} data-testid="todo-add-form">
                   <div className="row" style={{ gap: 8 }}>
                     <input className="finput" style={{ flex: 1 }} value={todoText} onChange={(e) => setTodoText(e.target.value)}
                       placeholder="Thêm việc cần làm hôm nay…" data-testid="todo-input" aria-label="Việc cần làm" />
-                    {/* #139 — every activity has a time. Defaults to ADD_TIME_DEFAULT; editable before adding. */}
-                    <input className="finput num" type="time" style={{ width: 110 }} value={todoTime}
-                      onChange={(e) => setTodoTime(e.target.value)} data-testid="todo-time" aria-label="Giờ" title="Giờ của việc" />
+                    {/* TRACING-UX3 req1 — giờ là BẮT BUỘC. Prefilled 08:00 (least friction) but the
+                        user must see/confirm/edit it: required + aria-required + an accent-border cue +
+                        a "*" label so it reads as mandatory (no longer a silent fallback). */}
+                    <label className="trk-req-time" data-testid="todo-time-label" title="Giờ của việc — bắt buộc">
+                      {/* aria-required (a11y) but NOT native `required`: a native-required empty
+                          time would trigger the browser's own tooltip + block submit BEFORE our JS
+                          guard runs — so we'd never show the custom Vietnamese message. We own the
+                          validation (onAddTodo) → keep the cue, let our message be the source of truth. */}
+                      <input className="finput num trk-req" type="time" style={{ width: 110 }} value={todoTime}
+                        onChange={(e) => setTodoTime(e.target.value)} data-testid="todo-time" aria-label="Giờ (bắt buộc)"
+                        aria-required="true" />
+                      <span className="trk-req-star" aria-hidden="true">*</span>
+                    </label>
                     <button className="btn accent" type="submit" disabled={addBusy} data-testid="todo-submit">{addBusy ? "…" : "Thêm"}</button>
                     {/* #137 — opens the template-SET modal (replaced the rejected 1-word chip row). */}
                     <button className="btn" type="button" onClick={() => setTplModalOpen(true)} data-testid="tpl-open">+ Từ mẫu</button>
                   </div>
-                  <RemindControls value={todoRemind} onChange={setTodoRemind} channels={channels} idPrefix="todo" />
+                  {/* TRACING-UX3 req2 — the todo add-row passes its own time as the remind default:
+                      toggling 🔔 ON seeds the nhắc-time = giờ-việc (not the disjoint 07:00). */}
+                  <RemindControls value={todoRemind} onChange={setTodoRemind} channels={channels} idPrefix="todo" defaultTime={todoTime} />
                   {addErr && <span className="hint neg" data-testid="todo-add-error">{addErr}</span>}
                 </form>
               </div>
@@ -619,10 +654,19 @@ export default function TracingPage() {
                 </div>
               ) : (
                 <>
-                  {/* #139 — every new activity is timed; the old "CẢ NGÀY" bucket/header is
-                      removed. Timed rows first (ascending), then any legacy timeless rows at the
-                      END with no separate header. */}
+                  {/* TRACING-UX3 req3 — the left column is a real vertical time-rail: every NEW
+                      activity has a time (req1) → timed rows ascending. OLD timeless rows (time=null,
+                      pre-this-sprint) are NOT backfilled with a fake time — they drop into a small
+                      labeled "Chưa đặt giờ" bucket at the BOTTOM, keeping their "đặt giờ" affordance. */}
                   {timed.map((a) => <TimelineRow key={a.id} a={a} />)}
+                  {anytime.length > 0 && (
+                    <div className="trk-anytime-head" data-testid="timeline-anytime-head">
+                      <span className="kicker">Chưa đặt giờ</span>
+                      <span className="hint faint" style={{ marginLeft: "auto", fontSize: 10.5 }}>
+                        {anytime.length} việc · bấm ⏰ để đưa lên rail
+                      </span>
+                    </div>
+                  )}
                   {anytime.map((a) => <TimelineRow key={a.id} a={a} />)}
                 </>
               )}
@@ -666,25 +710,29 @@ export default function TracingPage() {
         </div>
       )}
 
-      {/* ===== streak + heatmap — KEPT but small / collapsed ===== */}
+      {/* ===== TRACING-UX3 req4 — streak + 12-week history: ALWAYS-VISIBLE "pro" panel
+              (no more collapse-by-default). Prominent current + best streak stat tiles, a
+              clearer 12-week heatmap (bigger cells, week columns, day labels, legend). ===== */}
       {status === "ready" && (
-        <details className="panel" data-testid="tracing-stats" style={{ marginTop: 14 }}>
-          <summary className="phead" style={{ cursor: "pointer", listStyle: "revert" }} data-testid="tracing-stats-summary">
+        <div className="panel" data-testid="tracing-stats" style={{ marginTop: 14 }}>
+          <div className="phead">
             <span className="kicker">Streak &amp; lịch sử 12 tuần</span>
-            <span className="hint" style={{ marginLeft: "auto" }}>streak tốt nhất {sc.topStreak}d · mở để xem</span>
-          </summary>
+          </div>
           <div style={{ padding: "12px 16px 16px" }}>
-            {acts.length > 0 && (
-              <div className="hm-acts" data-testid="streak-list" style={{ marginBottom: 14 }}>
-                {acts.map((a) => (
-                  <div className="hma-row" key={a.id} data-testid={`streak-${a.id}`}>
-                    <span style={{ fontSize: 12, flex: 1 }}>{a.name}</span>
-                    <span className="num" style={{ fontSize: 11.5, color: "var(--accent)" }}>{a.streak}d streak {streakBadge(a.streak)}</span>
-                  </div>
-                ))}
+            {/* prominent streak stat tiles */}
+            <div className="trk-streak-tiles" data-testid="streak-tiles">
+              <div className="trk-streak-tile" data-testid="streak-current">
+                <span className="trk-streak-num num">🔥 {currentStreak}</span>
+                <span className="trk-streak-lbl">streak hiện tại {streakBadge(currentStreak)}</span>
               </div>
-            )}
-            <div className="heatmap-wrap">
+              <div className="trk-streak-tile" data-testid="streak-best">
+                <span className="trk-streak-num num">✦ {sc.topStreak}</span>
+                <span className="trk-streak-lbl">streak tốt nhất</span>
+              </div>
+            </div>
+
+            {/* the 12-week heatmap — bigger cells, week columns, day labels, legend */}
+            <div className="heatmap-wrap trk-hm" style={{ marginTop: 14 }}>
               <div className="hm-days">{WEEK_DAYS.map((d) => <div className="hm-day" key={d}>{d}</div>)}</div>
               <div className="hm-grid" data-testid="heatmap-grid" role="img" aria-label="Lịch sử 12 tuần — số việc xong mỗi ngày">
                 {data.heatmap12w.map((v, i) => (
@@ -697,8 +745,20 @@ export default function TracingPage() {
               {[0, 1, 2, 3, 4].map((v) => <div className="hc" key={v} style={{ background: heatColor(v, 4) }} />)}
               <span className="faint">Nhiều</span>
             </div>
+
+            {/* per-activity streak list — kept, secondary (below the headline + heatmap) */}
+            {acts.length > 0 && (
+              <div className="hm-acts" data-testid="streak-list" style={{ marginTop: 14 }}>
+                {acts.map((a) => (
+                  <div className="hma-row" key={a.id} data-testid={`streak-${a.id}`}>
+                    <span style={{ fontSize: 12, flex: 1 }}>{a.name}</span>
+                    <span className="num" style={{ fontSize: 11.5, color: "var(--accent)" }}>{a.streak}d streak {streakBadge(a.streak)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </details>
+        </div>
       )}
 
       {/* #137 — the template-SET modal (list/edit/import/reset). */}
