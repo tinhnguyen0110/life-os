@@ -179,14 +179,13 @@ export default function WikiVaultPage() {
           <button type="button" className="btn" onClick={() => setShowTrash(true)} data-testid="vault-trash-btn">
             🗑 Thùng rác
           </button>
-          <Link href="/wiki/inbox" className="btn" data-testid="vault-inbox-link">
-            <Icon name="i-note" /> Inbox
-          </Link>
+          {/* WIKI-AIFIRST: the /wiki/inbox triage screen was removed — nothing to triage on an
+              empty vault. Capture via the command bar `note …`; AI writes land directly. */}
         </div>
         {trashedToast}
         <div className="hint" style={{ padding: "24px 4px" }} data-testid="vault-empty">
           🌱 Vault rỗng — chưa có note nào. {warning ? <span className="mut">({warning})</span> : null} Bắt đầu bằng cách
-          <b> Import .md</b> (nhập file có sẵn) hoặc capture một fleeting note (command bar <code>note …</code>) rồi triage ở Inbox.
+          <b> Import .md</b> (nhập file có sẵn) hoặc capture một fleeting note (command bar <code>note …</code>) — note hiện ngay trong Vault để refine tại chỗ.
         </div>
       </div>
     );
@@ -240,8 +239,8 @@ export default function WikiVaultPage() {
         <button type="button" className="btn" onClick={() => setShowTrash(true)} data-testid="vault-trash-btn">
           🗑 Thùng rác
         </button>
-        <Link href="/wiki/inbox" className="btn accent" data-testid="vault-newnote-link">
-          <Icon name="i-plus" /> Inbox
+        <Link href="/wiki/proposals" className="btn accent" data-testid="vault-audit-link">
+          <Icon name="i-pin" /> Nhật ký AI
         </Link>
       </div>
 
@@ -326,7 +325,8 @@ export default function WikiVaultPage() {
                 its true meaning — the refine queue (matches this panel's "Inbox cần refine" kicker) —
                 so the two read distinctly + honestly. Pure label, no logic. */}
             <span className="wstatus" style={{ color: "var(--amber)", background: "var(--amber-dim)" }} data-testid="vault-inbox-count">{inbox.length} cần refine</span>
-            <Link className="link" href="/wiki/inbox" style={{ marginLeft: "auto" }}>triage →</Link>
+            {/* WIKI-AIFIRST: no separate triage screen — click a row to refine the note in place. */}
+            <span className="hint" style={{ marginLeft: "auto" }}>mở note để refine</span>
           </div>
           <div className="wlist" data-testid="vault-inbox-list">
             {inbox.length === 0

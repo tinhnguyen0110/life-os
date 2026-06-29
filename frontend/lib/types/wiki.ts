@@ -130,8 +130,9 @@ export interface WikiBacklinks {
   unlinked: WikiUnlinkedMention[];
   outbound: WikiOutboundLink[];
 }
-/** One inbox (fleeting) item — mirrors reader.inbox (W1c). `aiSuggest` is null at
- *  M1 (no embedded AI); the shape is kept so M4 slots in unchanged. */
+/** One "cần refine" (fleeting) row in the Vault overview — mirrors reader.inbox (W1c).
+ *  `aiSuggest` is null at M1. (The standalone /wiki/inbox triage screen was removed in
+ *  WIKI-AIFIRST; this type now only feeds the /wiki Vault "cần refine" column.) */
 export interface WikiInboxItem {
   id: number;
   /** null = no title yet (raw fleeting capture). */
@@ -147,10 +148,6 @@ export interface WikiInboxItem {
   linkCount: number;
   /** null at M1 — M4 populates {titleClaim,summary,atomicityFlag,dupeOf}. */
   aiSuggest: WikiAiSuggest | null;
-}
-/** GET /wiki/inbox payload — mirrors reader.inbox. */
-export interface WikiInbox {
-  items: WikiInboxItem[];
 }
 
 /* ============================================================================

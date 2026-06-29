@@ -19,7 +19,6 @@ import type {
   WikiGraph,
   WikiImportInput,
   WikiImportResponse,
-  WikiInbox,
   WikiMocList,
   WikiNote,
   WikiNoteCreateInput,
@@ -81,15 +80,6 @@ export function bulkDeleteWikiNotes(ids: number[]): Promise<ApiResponse<WikiBulk
 /** W2 — a note's connections: linked + unlinked mentions + outbound (resolved/ghost). */
 export function getWikiBacklinks(id: number): Promise<ApiResponse<WikiBacklinks>> {
   return apiGet<WikiBacklinks>(`/wiki/notes/${id}/backlinks`);
-}
-/** W3 refine — apply edit + flip status. ≥1-link gate is SERVER-enforced: 0-link &
- *  non-cold-start → ApiError(422) (surface visibly); cold-start → 200 + warning. */
-export function refineWikiNote(id: number, body: WikiNoteUpdateInput): Promise<ApiResponse<WikiNote>> {
-  return apiPost<WikiNote>(`/wiki/notes/${id}/refine`, body);
-}
-/** W3 — fleeting notes awaiting triage (oldest→newest). aiSuggest null at M1. */
-export function getWikiInbox(): Promise<ApiResponse<WikiInbox>> {
-  return apiGet<WikiInbox>("/wiki/inbox");
 }
 /** W1 — vault overview (stats + inbox/orphan summaries + op-log + proposalCount).
  *  `warning` carries the empty-vault note on a cold-start vault. */

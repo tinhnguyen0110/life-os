@@ -22,8 +22,10 @@ export const OP: Record<WikiOpKind, { lbl: string; color: string }> = {
 };
 
 export function InboxRow({ it }: { it: WikiInboxItem }) {
+  // WIKI-AIFIRST: the /wiki/inbox triage screen is gone. A "cần refine" row now opens
+  // the note DIRECTLY at /wiki/{id} (refine in place) instead of the removed queue.
   return (
-    <Link href="/wiki/inbox" className="wlist-row clickable" data-testid="vault-inbox-row">
+    <Link href={`/wiki/${it.id}`} className="wlist-row clickable" data-testid="vault-inbox-row">
       <span className="runi run" style={{ width: 16, height: 16, fontSize: 9 }}>{it.linkCount}</span>
       <div className="wlr-body">
         <div className="wlr-t">{it.title ?? <span className="faint">chưa có title</span>}</div>

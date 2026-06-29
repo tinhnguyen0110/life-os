@@ -86,12 +86,16 @@ export const NAV: NavGroup[] = [
   {
     sec: "Tri thức",
     items: [
-      // W1 Vault · W3 Inbox · W4 Graph · P1 Proposals · W5 MOC · A1c Sync —
+      // W1 Vault · W4 Graph · P1 Nhật ký AI (audit) · W5 MOC · A1c Sync —
       // all live + linked (each resolves to a real screen). No inbox badge.
+      // WIKI-AIFIRST: the /wiki/inbox "duyệt/refine queue" screen was REMOVED
+      // (AI-first: writes land directly, no triage gate). Fleeting notes still
+      // surface in the /wiki Vault "cần refine" column — refine in place at /wiki/{id}.
       { route: "/wiki", label: "Wiki Home", icon: "i-home", screen: "W1" },
-      { route: "/wiki/inbox", label: "Wiki Inbox", icon: "i-note", screen: "W3" },
       { route: "/wiki/graph", label: "Graph", icon: "i-graph", screen: "W4" },
-      { route: "/wiki/proposals", label: "Proposals", icon: "i-pin", screen: "P1" },
+      // WIKI-AIFIRST: backend is autonomous (writes auto-apply) → this is now an
+      // AI WRITE AUDIT-LOG ("Nhật ký AI"), not a duyệt-gate. Route path unchanged.
+      { route: "/wiki/proposals", label: "Nhật ký AI", icon: "i-pin", screen: "P1" },
       { route: "/wiki/moc", label: "MOC", icon: "i-moc", screen: "W5" },
       { route: "/wiki/sync", label: "Sync & Integrity", icon: "i-merge", screen: "A1c" },
     ],
@@ -150,9 +154,8 @@ export const CRUMB: Record<string, string> = {
   // Wiki (W1–W5) — detail route /wiki/[id] resolves to the parent crumb (TopBar
   // crumbFor falls back to the first path segment). Full "Tri thức" NAV group = T3.
   "/wiki": "Vault · Tri thức",
-  "/wiki/inbox": "Inbox / Refine",
   "/wiki/graph": "Graph Explorer",
-  "/wiki/proposals": "Proposal Queue",
+  "/wiki/proposals": "Nhật ký AI · audit",
   "/wiki/moc": "MOC · Synthesize",
   "/wiki/sync": "Sync & Integrity",
 };

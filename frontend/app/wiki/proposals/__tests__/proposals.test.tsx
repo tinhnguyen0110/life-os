@@ -5,6 +5,7 @@ const getWikiProposals = vi.fn();
 const acceptWikiProposal = vi.fn();
 const rejectWikiProposal = vi.fn();
 const batchAcceptWikiProposals = vi.fn();
+const deleteWikiNote = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -13,6 +14,7 @@ vi.mock("@/lib/api", async () => {
     acceptWikiProposal: (...a: unknown[]) => acceptWikiProposal(...a),
     rejectWikiProposal: (...a: unknown[]) => rejectWikiProposal(...a),
     batchAcceptWikiProposals: (...a: unknown[]) => batchAcceptWikiProposals(...a),
+    deleteWikiNote: (...a: unknown[]) => deleteWikiNote(...a),
   };
 });
 vi.mock("next/link", () => ({
@@ -42,7 +44,7 @@ const PENDING: WikiProposalList = {
   counts: { pending: 2, accepted: 4, rejected: 1 },
 };
 
-describe("P1 Proposal Queue", () => {
+describe("P1 Nhật ký AI (AI audit-log, WIKI-AIFIRST)", () => {
   it("renders pending proposals with kind badge + rationale + actor", async () => {
     getWikiProposals.mockResolvedValueOnce(ok(PENDING));
     render(<WikiProposalsPage />);
@@ -90,10 +92,14 @@ describe("P1 Proposal Queue", () => {
     await waitFor(() => expect(rejectWikiProposal).toHaveBeenCalledWith(1, undefined));
   });
 
+  // batch-duyệt is now a DEMOTED legacy lane (only on the explicit pending filter, no
+  // longer the default headline). Switch to pending first to exercise it.
   it("batch-accept selected pending → calls accept-batch with the ids + shows success notice", async () => {
     getWikiProposals.mockResolvedValue(ok(PENDING));
     batchAcceptWikiProposals.mockResolvedValueOnce(ok({ results: [{ id: 1, ok: true }, { id: 2, ok: true }], accepted: 2, failed: 0 }));
     render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("prop-filter-pending"));
     await waitFor(() => expect(screen.getAllByTestId("prop-card").length).toBe(2));
     const sels = screen.getAllByTestId("prop-select");
     fireEvent.click(sels[0]);
@@ -111,6 +117,8 @@ describe("P1 Proposal Queue", () => {
       accepted: 1, failed: 1,
     }));
     render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("prop-filter-pending"));
     await waitFor(() => expect(screen.getAllByTestId("prop-card").length).toBe(2));
     const sels = screen.getAllByTestId("prop-select");
     fireEvent.click(sels[0]);
@@ -122,22 +130,26 @@ describe("P1 Proposal Queue", () => {
     expect(err).toHaveTextContent("target note 5 not found");
   });
 
-  it("honest empty: 0 pending → queue-clean message (not a fabricated card)", async () => {
-    getWikiProposals.mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 0, accepted: 4, rejected: 1 } }));
+  it("honest empty: 0 AI writes (accepted default) → audit-log empty message (not a fabricated card, not a queue-empty)", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 0, accepted: 0, rejected: 1 } }));
     render(<WikiProposalsPage />);
     await waitFor(() => expect(screen.getByTestId("prop-empty")).toBeInTheDocument());
-    expect(screen.getByTestId("prop-empty")).toHaveTextContent(/Claude Code/i);
+    const empty = screen.getByTestId("prop-empty");
+    // audit-log framing, NOT "chờ duyệt / queue" framing.
+    expect(empty).toHaveTextContent(/Chưa có ghi nhớ AI nào/i);
+    expect(empty).toHaveTextContent(/Claude Code/i);
+    expect(empty).not.toHaveTextContent(/chờ duyệt/i);
     expect(screen.queryByTestId("prop-card")).toBeNull();
   });
 
-  it("decided card (accepted) shows outcome + applied-note link, NO accept/reject buttons", async () => {
+  it("decided card (accepted) shows 'AI đã ghi' + applied-note link, NO accept/reject buttons", async () => {
     getWikiProposals.mockResolvedValueOnce(ok({
       proposals: [prop({ id: 9, status: "accepted", decidedBy: "human", appliedNoteId: 42 })],
       counts: { pending: 0, accepted: 1, rejected: 0 },
     }));
     render(<WikiProposalsPage />);
     await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
-    expect(screen.getByTestId("prop-decided-status")).toHaveTextContent("accepted");
+    expect(screen.getByTestId("prop-decided-status")).toHaveTextContent("AI đã ghi");
     expect(screen.getByTestId("prop-applied-link")).toHaveAttribute("href", "/wiki/42");
     expect(screen.queryByTestId("prop-accept")).toBeNull();
     expect(screen.queryByTestId("prop-reject")).toBeNull();
@@ -176,9 +188,113 @@ describe("P1 Proposal Queue", () => {
     await waitFor(() => expect(getWikiProposals).toHaveBeenLastCalledWith("rejected"));
   });
 
-  it("loads with status=pending by default", async () => {
-    getWikiProposals.mockResolvedValueOnce(ok(PENDING));
+  it("WIKI-AIFIRST: loads with status=accepted by default (audit-log working set)", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 0, accepted: 4, rejected: 1 } }));
     render(<WikiProposalsPage />);
-    await waitFor(() => expect(getWikiProposals).toHaveBeenCalledWith("pending"));
+    await waitFor(() => expect(getWikiProposals).toHaveBeenCalledWith("accepted"));
+  });
+
+  it("reframed: title 'Nhật ký AI' + sub 'N lần AI ghi' + AI-first banner (not duyệt-gate)", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 0, accepted: 4, rejected: 1 } }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
+    expect(screen.getByText("Nhật ký AI")).toBeInTheDocument();
+    expect(screen.getByTestId("prop-subcount")).toHaveTextContent("4 lần AI ghi");
+    expect(screen.getByTestId("prop-banner")).toHaveTextContent(/ghi thẳng vào Vault/i);
+  });
+
+  it("REVERSE note_create: accepted note_create row → 'Lùi' soft-deletes the applied note + shows khôi phục", async () => {
+    // The PROPOSAL record stays `accepted` after a reverse (only the applied NOTE is
+    // soft-deleted) → the post-reverse refetch returns the SAME proposal; the card
+    // persists and shows the "đã lùi" state (held in the card's local reversed state).
+    getWikiProposals.mockResolvedValue(ok({
+      proposals: [prop({ id: 40, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 55, payload: { title: "auto" } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    deleteWikiNote.mockResolvedValueOnce(ok({ deleted: true, deletedAt: "now" }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("prop-reverse"));
+    await waitFor(() => expect(deleteWikiNote).toHaveBeenCalledWith(55));
+    const reversed = await screen.findByTestId("prop-reversed");
+    expect(reversed).toHaveTextContent(/đã lùi/i);
+    expect(screen.getByTestId("prop-reversed-restore")).toHaveAttribute("href", "/wiki?trashed=55");
+  });
+
+  it("REVERSE fail-closed: delete 4xx → error on the row, NOT marked reversed", async () => {
+    getWikiProposals.mockResolvedValue(ok({
+      proposals: [prop({ id: 41, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 56, payload: { title: "x" } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    deleteWikiNote.mockRejectedValueOnce(new ApiError(404, "note 56 not found"));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("prop-reverse"));
+    const err = await screen.findByTestId("prop-error");
+    expect(err).toHaveTextContent("note 56 not found");
+    expect(screen.queryByTestId("prop-reversed")).toBeNull();
+  });
+
+  it("REVERSE manual (note_edit): NO reverse button — honest manual-refine deep-link + hint instead", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 42, kind: "note_edit", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 60, payload: { title: "edited" } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    expect(screen.queryByTestId("prop-reverse")).toBeNull();
+    const manual = screen.getByTestId("prop-reverse-manual");
+    expect(manual).toHaveTextContent(/mở note #60 để refine/i);
+    expect(manual).toHaveTextContent(/chưa có version-undo/i);
+  });
+
+  // ── T4: collapse / expand / markdown for a LONG note_create `content` payload ──
+  const LONG_MD = "# Blog roadmap\n\nMột đoạn dài về tracing.\n\n## Chuỗi bài\n- Bài 1: validate\n- Bài 2: tracing\n\nCòn nhiều dòng nữa để vượt ngưỡng 120 ký tự và có newline.";
+
+  it("T4: long note_create content is COLLAPSED by default — preview clamp + 'xem thêm' toggle, full markdown NOT rendered yet", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 50, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 70, payload: { title: "Blog roadmap", content: LONG_MD } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    // collapsed: a raw-text preview + a toggle; the markdown body is NOT mounted yet.
+    expect(screen.getByTestId("prop-content-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("prop-content-toggle")).toHaveTextContent(/xem thêm/i);
+    expect(screen.getByTestId("prop-content-toggle")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("prop-content-expanded")).toBeNull();
+    // the long content does NOT leak into the inline payload dump (it's pulled out).
+    expect(screen.queryByTestId("prop-payload")).not.toHaveTextContent(/Chuỗi bài/);
+  });
+
+  it("T4: click 'xem thêm' → EXPANDS to WikiMarkdown (heading + list elements render), toggle flips to 'thu gọn'", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 51, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 71, payload: { title: "Blog roadmap", content: LONG_MD } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("prop-content-toggle"));
+    // expanded: the markdown body mounts + emits real heading/list elements.
+    const md = await screen.findByTestId("prop-content-md");
+    expect(md.querySelector("h2, h3")).toBeTruthy();          // # / ## → heading
+    expect(md.querySelectorAll("li").length).toBeGreaterThan(0); // - items → list
+    expect(screen.getByTestId("prop-content-toggle")).toHaveTextContent(/thu gọn/i);
+    expect(screen.getByTestId("prop-content-toggle")).toHaveAttribute("aria-expanded", "true");
+    // preview is gone once expanded
+    expect(screen.queryByTestId("prop-content-preview")).toBeNull();
+  });
+
+  it("T4: SHORT content → NO collapse toggle, rendered inline in the generic payload (1-liner doesn't need a toggle)", async () => {
+    getWikiProposals.mockResolvedValueOnce(ok({
+      proposals: [prop({ id: 52, kind: "note_create", status: "accepted", decidedBy: "agent:auto", appliedNoteId: 72, payload: { title: "t", content: "hi" } })],
+      counts: { pending: 0, accepted: 1, rejected: 0 },
+    }));
+    render(<WikiProposalsPage />);
+    await waitFor(() => expect(screen.getByTestId("prop-card")).toBeInTheDocument());
+    expect(screen.queryByTestId("prop-content-toggle")).toBeNull();
+    expect(screen.queryByTestId("prop-content-block")).toBeNull();
+    // short content stays inline in the generic dict render
+    expect(screen.getByTestId("prop-payload")).toHaveTextContent(/content: hi/);
   });
 });

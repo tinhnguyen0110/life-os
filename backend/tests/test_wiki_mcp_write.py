@@ -28,6 +28,7 @@ from modules.settings import service as ssvc
 from modules.settings.schema import AppConfigPatch
 from modules.wiki import proposals_service as psvc
 from modules.wiki import proposals_store as pstore
+from modules.wiki.proposals_schema import ProposalCreateInput
 from modules.wiki import reader
 from modules.wiki import service as wsvc
 from modules.wiki import store as wiki_store
@@ -63,6 +64,62 @@ def test_propose_note_writes_through_returns_noteid(wiki_db):
     note = wsvc.get_note(r["noteId"])
     assert note is not None and note.title == "AI idea"
     assert note.author == "mcp:writer"  # provenance: the agent-authored note carries the actor
+
+
+# --------------------------------------------------------------------------- #
+# WIKI-AIFIRST T1 — LOCK the guarantees the FE audit-log + reverse rely on.      #
+# These pin the contract that "AI writes apply directly, fully audited +         #
+# reversible" (USER-CHỐT) — so the reframed Proposals screen (audit-log +        #
+# reverse) can be built against a STABLE backend contract.                       #
+# --------------------------------------------------------------------------- #
+def test_aifirst_autonomous_default_is_on_fresh_config(wiki_db):
+    """T1.1 — the autonomous (write-through) DEFAULT is ON for a fresh config (no config.md).
+    This is the load-bearing default that makes MCP writes apply directly. (The `wiki_db`
+    fixture also asserts it; this is the explicit, named guard.)"""
+    # fresh isolated config — nothing was PATCHed; the schema default must be ON
+    assert ssvc.get_config().wikiAgentAutonomous is True
+
+
+def test_aifirst_mcp_propose_keeps_accepted_record_for_audit_log(wiki_db):
+    """T1.2 — THE FE audit-log + reverse contract: an MCP propose_note (autonomous ON) not only
+    lands the note NOW, it leaves a PROPOSAL ROW the FE renders/reverses against. The row MUST
+    be status=accepted, decidedBy="agent:auto", and appliedNoteId == the created note id (the
+    FE 'Lùi' uses appliedNoteId to soft-delete a note_create). Verified live on HTTP first
+    (proposal 180 → note 110, decidedBy agent:auto)."""
+    before = wiki_store.count_notes()
+    r = write_server.propose_note("AI audit note", "body", rationale="trace me")
+    assert r["applied"] is True and r["noteId"] is not None
+    assert wiki_store.count_notes() == before + 1, "the note landed NOW (write-through)"
+
+    # the proposal ROW is the audit-log record the FE renders + reverses against
+    row = psvc.get_proposal(r["proposalId"])
+    assert row is not None, "the auto-applied write MUST keep a proposal row (the audit trace)"
+    assert row["status"] == "accepted", "auto-applied → status accepted (not pending/rejected)"
+    assert row["decidedBy"] == "agent:auto", "auto-apply is attributed to agent:auto (FE filters on this)"
+    assert row["appliedNoteId"] == r["noteId"], "appliedNoteId == the created note id (FE reverse soft-deletes THIS)"
+    assert row["kind"] == "note_create", "kind drives reverse-vs-deeplink in the FE"
+
+    # the FE audit-read fields are ALL present on the row (the GET /wiki/proposals contract)
+    for field in ("kind", "decidedBy", "appliedNoteId", "status", "created", "rationale", "targetId"):
+        assert field in row, f"audit-log contract missing field {field!r}"
+
+
+def test_aifirst_rest_propose_does_not_auto_apply_autonomous_on(wiki_db):
+    """T1.3 — the human-channel boundary the reverse relies on: a REST POST /wiki/proposals
+    (no auto_apply_eligible — router.py NEVER passes it) with autonomy ON STAYS PENDING; nothing
+    lands. This proves auto-apply keys on the trusted CALLER (only the MCP write-server), not the
+    actor string — so the FE audit-log's 'accepted/agent:auto' rows are exclusively agent writes.
+    (The end-to-end actor-spoof variant is covered by test_api_S1_rest_post_cannot_bypass_p1_*
+    in test_wiki_proposals.py; this is the service-layer twin.)"""
+    assert ssvc.get_config().wikiAgentAutonomous is True  # autonomy ON (the distinguishing condition)
+    before = wiki_store.count_notes()
+    # the REST path = create_proposal WITHOUT auto_apply_eligible (router.py:create_proposal(body))
+    proposal = psvc.create_proposal(
+        ProposalCreateInput(kind="note_create",
+                            payload={"title": "human note", "content": "via REST"}))
+    assert proposal["status"] == "pending", "REST propose must NOT auto-apply even with autonomy ON"
+    assert proposal["appliedNoteId"] is None
+    assert wiki_store.count_notes() == before, "the vault is UNCHANGED (nothing landed)"
 
 
 # --------------------------------------------------------------------------- #

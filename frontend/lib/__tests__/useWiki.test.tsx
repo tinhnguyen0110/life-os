@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
-import { useWikiNote, useWikiInbox } from "../useWiki";
-import type { WikiNote, WikiBacklinks, WikiInbox, WikiNoteUpdateInput } from "../types";
+import { render, screen, waitFor } from "@testing-library/react";
+import { useWikiNote } from "../useWiki";
+import type { WikiNote, WikiBacklinks } from "../types";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -75,62 +75,5 @@ describe("useWikiNote", () => {
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
     expect(screen.getByTestId("title")).toHaveTextContent("Knowledge work accretes");
     expect(screen.getByTestId("linked")).toHaveTextContent("0"); // empty, not crash
-  });
-});
-
-const INBOX: WikiInbox = {
-  items: [
-    { id: 47, title: null, status: "fleeting", rawContent: "dump…", captured: "08:12", captureSource: "command_bar", linkCount: 0, aiSuggest: null },
-  ],
-};
-
-function InboxProbe({ onReady }: { onReady?: (refine: (id: number, i: WikiNoteUpdateInput) => Promise<string | null>) => void }) {
-  const { items, status, refine } = useWikiInbox();
-  if (status === "ready" && onReady) onReady(refine);
-  return (
-    <div>
-      <span data-testid="status">{status}</span>
-      <span data-testid="count">{items.length}</span>
-    </div>
-  );
-}
-
-describe("useWikiInbox + refine gate", () => {
-  it("loads the fleeting list", async () => {
-    mockFetchSequence([{ body: { success: true, data: INBOX } }]);
-    render(<InboxProbe />);
-    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
-    expect(screen.getByTestId("count")).toHaveTextContent("1");
-  });
-
-  it("refine THROWS ApiError(422) when the ≥1-link gate fails (fail-closed surface)", async () => {
-    const fn = mockFetchSequence([{ body: { success: true, data: INBOX } }]);
-    let refineFn: ((id: number, i: WikiNoteUpdateInput) => Promise<string | null>) | null = null;
-    render(<InboxProbe onReady={(r) => (refineFn = r)} />);
-    await waitFor(() => expect(refineFn).not.toBeNull());
-
-    // next fetch = the refine POST → 422
-    fn.mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ detail: "refine requires ≥1 link" }) } as Response);
-    await expect(
-      act(async () => {
-        await refineFn!(47, { title: "T", content: "no links", status: "developing" });
-      }),
-    ).rejects.toMatchObject({ status: 422 });
-  });
-
-  it("refine returns the cold-start warning on success (200 + warning)", async () => {
-    const fn = mockFetchSequence([{ body: { success: true, data: INBOX } }]);
-    let refineFn: ((id: number, i: WikiNoteUpdateInput) => Promise<string | null>) | null = null;
-    render(<InboxProbe onReady={(r) => (refineFn = r)} />);
-    await waitFor(() => expect(refineFn).not.toBeNull());
-
-    fn.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, data: NOTE, warning: "vault too small to link" }) } as Response);
-    // the post-refine reload also fetches the inbox again
-    fn.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, data: INBOX }) } as Response);
-    let warn: string | null = "x";
-    await act(async () => {
-      warn = await refineFn!(47, { content: "c", status: "developing" });
-    });
-    expect(warn).toContain("vault too small");
   });
 });

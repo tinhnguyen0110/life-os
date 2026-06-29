@@ -149,8 +149,8 @@ export default function WikiNotePage({ params }: { params?: { id?: string } }) {
 
       {/* Header */}
       <div className="wnote-head">
-        <a className="btn sm ghost" href="/wiki/inbox" data-testid="wiki-back">
-          <Icon name="i-back" /> Inbox
+        <a className="btn sm ghost" href="/wiki" data-testid="wiki-back">
+          <Icon name="i-back" /> Vault
         </a>
         <span className="wnote-id num" data-testid="wiki-id">
           #{note.id}

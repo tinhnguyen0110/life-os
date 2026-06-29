@@ -800,6 +800,21 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wprop-actor { font-family:var(--mono); font-size:11px; color:var(--amber); }
 .wprop-link { font-size:13px; color:var(--tx-0); margin-bottom:9px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; line-height:1.4; }
 .wprop-content { font-size:11.5px; line-height:1.45; margin-top:5px; padding:8px 10px; background:var(--bg-0); border-radius:7px; white-space:pre-wrap; word-break:break-word; }
+/* WIKI-AIFIRST T4 — collapsible markdown for a LONG note_create/moc `content` payload.
+   Block container is full-width (the content field breaks out of the inline .wprop-link row). */
+.wprop-content-block { margin-top:6px; padding:8px 10px; background:var(--bg-0); border-radius:7px; }
+/* collapsed preview = raw text clamped to 3 lines. overflow-hidden is SAFE here: it only
+   wraps the clamped PREVIEW <div>, NOT the toggle (the toggle is a sibling, outside) — so
+   the expand button is never clipped (overflow-hidden-clips-expanding-content guard). */
+.wprop-preview { font-size:11.5px; line-height:1.45; color:var(--tx-1); white-space:pre-wrap; word-break:break-word;
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; }
+/* expanded markdown render — NO clamp, NO overflow-hidden, so the full body + toggle show. */
+.wprop-content-md { font-size:11.5px; line-height:1.5; }
+.wprop-content-md .wmd-h { font-size:12.5px; margin:8px 0 4px; }
+.wprop-toggle { display:inline-flex; align-items:center; gap:4px; margin-top:6px; padding:2px 7px;
+  font-family:var(--mono); font-size:10.5px; color:var(--accent); background:transparent;
+  border:1px solid color-mix(in oklch,var(--accent) 30%,transparent); border-radius:6px; cursor:pointer; }
+.wprop-toggle:hover { background:color-mix(in oklch,var(--accent) 12%,transparent); }
 .wprop-why { font-size:12px; line-height:1.5; color:var(--tx-1); margin-bottom:11px; }
 .wprop-why .acc { font-family:var(--mono); font-weight:600; }
 .wprop-warn { font-size:11.5px; color:var(--amber-soft); background:var(--amber-dim); border-radius:7px; padding:8px 11px; margin-bottom:11px; line-height:1.4; }

@@ -7,8 +7,9 @@
    phantom-saved note). The W1c-frozen recompute (backlinks / linkCount) comes from
    the server refetch — never spliced client-side (single source of truth).
 
-   Hooks: useWikiNote(id) → W2 (note + backlinks + edit) · useWikiInbox() → W3
-   (fleeting list + refine, ≥1-link gate is SERVER-enforced → the 422 surfaces).
+   Hooks: useWikiNote(id) → W2 (note + backlinks + edit).
+   WIKI-AIFIRST: the /wiki/inbox triage screen + its useWikiInbox/refine hook were
+   removed (AI-first: writes land directly, fleeting notes refine in place at /wiki/{id}).
    ============================================================ */
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,8 +17,6 @@ import {
   getWikiBacklinks,
   updateWikiNote,
   deleteWikiNote,
-  refineWikiNote,
-  getWikiInbox,
   getWikiOverview,
   getWikiGraph,
   getWikiGraphGlobal,
@@ -36,7 +35,6 @@ import { subscribeWikiTree, wikiTreeVersion } from "@/lib/wikiTreeBus";
 import type {
   WikiNote,
   WikiBacklinks,
-  WikiInboxItem,
   WikiNoteUpdateInput,
   WikiOverview,
   WikiGraph,
@@ -133,66 +131,6 @@ export function useWikiNote(id: number | null): UseWikiNote {
   }, [id, reload]);
 
   return { note, backlinks, status, errMsg, warning, reload, save, remove };
-}
-
-/* ------------------------------------------------------------------ */
-/* W3 — inbox (fleeting list) + refine (≥1-link gate is server-side)  */
-/* ------------------------------------------------------------------ */
-export interface UseWikiInbox {
-  items: WikiInboxItem[];
-  status: WikiStatusState;
-  errMsg: string;
-  warning: string | null;
-  reload: () => void;
-  /** refine (POST /wiki/notes/{id}/refine) → refetch list. Returns the server
-   *  warning (cold-start) on success; THROWS ApiError(422) when the ≥1-link gate
-   *  fails (caller surfaces it visibly — the rule lives server-side, not here). */
-  refine: (id: number, input: WikiNoteUpdateInput) => Promise<string | null>;
-}
-
-export function useWikiInbox(): UseWikiInbox {
-  const [items, setItems] = useState<WikiInboxItem[]>([]);
-  const [status, setStatus] = useState<WikiStatusState>("loading");
-  const [errMsg, setErrMsg] = useState("");
-  const [warning, setWarning] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
-
-  useEffect(() => {
-    let alive = true;
-    setStatus("loading");
-    (async () => {
-      try {
-        const res = await getWikiInbox();
-        if (!alive) return;
-        setItems(Array.isArray(res?.data?.items) ? res.data.items : []);
-        setWarning(res?.warning ?? null);
-        setStatus("ready");
-      } catch (e) {
-        if (!alive) return;
-        setErrMsg(errMessage(e));
-        setStatus("error");
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [nonce]);
-
-  const refine = useCallback(
-    async (id: number, input: WikiNoteUpdateInput): Promise<string | null> => {
-      // Throws ApiError(422) on a gate failure → the caller keeps the panel open
-      // and shows the error (fail-closed). On success (incl. cold-start 200+warning)
-      // → refetch the list so linkCount/status reflect the server truth.
-      const res = await refineWikiNote(id, input);
-      reload();
-      return res?.warning ?? null;
-    },
-    [reload],
-  );
-
-  return { items, status, errMsg, warning, reload, refine };
 }
 
 /* ------------------------------------------------------------------ */
