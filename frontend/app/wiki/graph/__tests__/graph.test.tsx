@@ -643,6 +643,82 @@ describe("W4 Graph Explorer", () => {
     }
   });
 
+  // ─────────── GRAPH-CLUSTER: color-by-component (A) + island separation (B) ───────────
+  // the MAIN circle's fill (the r-circle = the 2nd circle in a non-center node's <g>, or the
+  // one with data-status). We read the circle that carries data-status (the cluster-fill circle).
+  function nodeFill(g: Element): string {
+    const c = g.querySelector("circle[data-status]") || g.querySelector("circle[r]");
+    return c ? (c.getAttribute("fill") || "") : "";
+  }
+  // a 2-component fixture: comp X = a {1,2,3} CLIQUE (dense, tight) + comp Y = {10,11} pair
+  // + an orphan {99}. Cliques mirror real components (multiple internal edges → cohesive island).
+  const TWO_COMP: WikiGraph = {
+    center: null,
+    nodes: [
+      { id: 1, title: "x1", status: "evergreen", degree: 2 },
+      { id: 2, title: "x2", status: "developing", degree: 2 },
+      { id: 3, title: "x3", status: "fleeting", degree: 2 },
+      { id: 10, title: "y1", status: "evergreen", degree: 1 },
+      { id: 11, title: "y2", status: "evergreen", degree: 1 },
+      { id: 99, title: "orphan", status: "fleeting", degree: 0 },
+    ],
+    edges: [
+      { source: 1, target: 2, type: "relates", isResolved: true },
+      { source: 2, target: 3, type: "relates", isResolved: true },
+      { source: 1, target: 3, type: "relates", isResolved: true }, // clique closes X
+      { source: 10, target: 11, type: "relates", isResolved: true },
+    ],
+    clusters: [],
+  };
+
+  it("GRAPH-CLUSTER A: same-component nodes share a FILL; a DIFFERENT component differs; orphan = grey", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(TWO_COMP));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const byId = (id: string) => screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === id)!;
+    const f1 = nodeFill(byId("1")), f2 = nodeFill(byId("2")), f3 = nodeFill(byId("3"));
+    const f10 = nodeFill(byId("10")), f11 = nodeFill(byId("11")), fOrphan = nodeFill(byId("99"));
+    // component X (1,2,3) all share one fill
+    expect(f1).toBe(f2); expect(f2).toBe(f3);
+    // component Y (10,11) share a fill, DIFFERENT from X
+    expect(f10).toBe(f11); expect(f10).not.toBe(f1);
+    // orphan (singleton) = grey, not a cluster color
+    expect(fOrphan).toBe("#5b6472");
+    // status moved to a RING (stroke) on the cluster-colored circle — status info kept.
+    const circle1 = byId("1").querySelector("circle[data-status]")!;
+    expect(circle1.getAttribute("stroke")).toBeTruthy();
+    expect(circle1.getAttribute("stroke")).not.toBe("none");
+  });
+
+  it("GRAPH-CLUSTER A: cluster colors are DETERMINISTIC (same vault → same fills on re-render)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValue(ok(TWO_COMP));
+    const cap = async () => {
+      const { unmount } = render(<WikiGraphPage />);
+      await screen.findByTestId("graph-svg");
+      const fills = screen.getAllByTestId("graph-node").map((g) => `${g.getAttribute("data-node-id")}:${nodeFill(g)}`).sort().join("|");
+      unmount();
+      return fills;
+    };
+    expect(await cap()).toBe(await cap()); // deterministic palette
+  });
+
+  it("GRAPH-CLUSTER B: islands SEPARATE — cross-component avg distance > within-component avg", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(TWO_COMP));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const pos = new Map(screen.getAllByTestId("graph-node").map((g) => [g.getAttribute("data-node-id")!, nodeXY(g)]));
+    const dist = (a: string, b: string) => Math.hypot(pos.get(a)!.x - pos.get(b)!.x, pos.get(a)!.y - pos.get(b)!.y);
+    // within component X (1,2,3)
+    const within = (dist("1", "2") + dist("2", "3") + dist("1", "3")) / 3;
+    // cross X↔Y (1,2,3 vs 10,11)
+    const crossPairs = [["1", "10"], ["1", "11"], ["2", "10"], ["2", "11"], ["3", "10"], ["3", "11"]];
+    const cross = crossPairs.reduce((a, [p, q]) => a + dist(p, q), 0) / crossPairs.length;
+    expect(cross).toBeGreaterThan(within); // the two components sit as separated islands
+  });
+
   it("GRAPH-POLISH-B: hierarchy layout is DETERMINISTIC (same input → same positions + radii)", async () => {
     mockNoteParam = null;
     getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));

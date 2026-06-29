@@ -63,6 +63,39 @@ function hash01(id: number): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** GRAPH-CLUSTER D1 — CLIENT-SIDE connected components over the rendered edges (no BE).
+ *  Union-find, then a DETERMINISTIC label: each component is identified by its MIN member
+ *  node-id, components sorted by that min-id → a stable palette index (0,1,2,…). Same vault →
+ *  same component-index → same colors on reload. Pure fn (no Math.random). Returns node-id →
+ *  {comp: palette index, size}. A degree-0 / singleton node is its own (size-1) component. */
+function connectedComponents(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<number, { comp: number; size: number }> {
+  const parent = new Map<number, number>();
+  const find = (x: number): number => { let r = x; while (parent.get(r) !== r) r = parent.get(r)!; while (parent.get(x) !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; } return r; };
+  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(Math.max(ra, rb), Math.min(ra, rb)); };
+  for (const nd of nodes) parent.set(nd.id, nd.id);
+  for (const e of edges) if (parent.has(e.source) && parent.has(e.target)) union(e.source, e.target);
+  // group by root → min member-id; sort roots by min-id → stable palette index.
+  const rootMembers = new Map<number, number[]>();
+  for (const nd of nodes) { const r = find(nd.id); (rootMembers.get(r) ?? rootMembers.set(r, []).get(r)!).push(nd.id); }
+  const roots = [...rootMembers.keys()].sort((a, b) => a - b); // root == min member-id (union keeps the min)
+  const out = new Map<number, { comp: number; size: number }>();
+  roots.forEach((root, idx) => { const members = rootMembers.get(root)!; for (const id of members) out.set(id, { comp: idx, size: members.length }); });
+  return out;
+}
+
+/** GRAPH-CLUSTER A — a fixed, distinct cluster palette (cycled by component index). Picked
+ *  for hue separation on the dark base; singleton/orphan components render GREY instead (honest,
+ *  not a fake group color). Inline fill (NOT a CSS class) → no dead-selector risk. */
+const CLUSTER_PALETTE = [
+  "#5aa9ff", "#34e08a", "#f5b43d", "#ff6a8a", "#b78bff", "#3ed6c4",
+  "#ff9a5c", "#9ad24e", "#ff5c5c", "#4dd0e1", "#e57fd8", "#c0ca33",
+];
+const ORPHAN_FILL = "#5b6472"; // grey for singleton/orphan components
+function clusterFill(comp: number, size: number): string {
+  if (size <= 1) return ORPHAN_FILL;
+  return CLUSTER_PALETTE[comp % CLUSTER_PALETTE.length];
+}
+
 /** Deterministic global layout: seed each node on a spiral by hash(id), then run a
  *  FIXED number of force iterations (repulsion + edge springs + centering). Pure
  *  function of (nodes, edges) — same vault → identical layout. Coords in 0..100 %. */
@@ -109,6 +142,13 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
   // size; minD = (layoutR_i+layoutR_j)×COLLIDE_GAP gives the measurable breathing gap.
   const renderRpx = (id: number) => Math.max(6, Math.min(4 + 6 * Math.sqrt(deg.get(id) ?? 1), 30));
   const layoutR = (id: number) => renderRpx(id) / (W / 100);
+  // GRAPH-CLUSTER B — cluster-aware force: components attract to their own centroid (island)
+  // + repel HARDER across components (so islands separate). GENTLE — must compose with the
+  // #176 spacing (4.79×) + #175 hierarchy, not overwhelm them. Deterministic (CC is pure).
+  const comps = connectedComponents(nodes, edges);
+  const compOf = (id: number) => comps.get(id)?.comp ?? -1;
+  const SAME_CLUSTER_PULL = 0.018;  // gentle pull toward own-component centroid (the island)
+  const CROSS_REPEL_MULT = 1.5;     // cross-component pairs repel 1.5× → islands push apart
   for (let it = 0; it < iters; it++) {
     const disp = new Map<number, Pos>(ids.map((id) => [id, { x: 0, y: 0 }]));
     // pairwise repulsion (charge cube × degree-lever) + soft collide (O(n²) — fine at vault scale).
@@ -119,7 +159,10 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
         const pj = pos.get(ids[j])!; const dj = disp.get(ids[j])!;
         let dx = pi.x - pj.x, dy = pi.y - pj.y;
         let d2 = dx * dx + dy * dy; if (d2 < 0.01) { dx = (hash01(ids[i] + it) - 0.5); dy = (hash01(ids[j] + it) - 0.5); d2 = 0.01; }
-        const f = CHARGE / d2; // charge-cube repulsion (base)
+        // GRAPH-CLUSTER B — cross-component pairs repel HARDER (×CROSS_REPEL_MULT) → the two
+        // components push apart into separate islands; same-component charge is unchanged.
+        const crossMult = compOf(ids[i]) !== compOf(ids[j]) ? CROSS_REPEL_MULT : 1;
+        const f = (CHARGE / d2) * crossMult; // charge-cube repulsion (base × cross-cluster lever)
         let fx = dx * f, fy = dy * f;
         // GRAPH-POLISH-C collide: keep a GAP of ≥ COLLIDE_GAP × the summed radii between
         // neighbors (the measurable breathing gap). Firmer COLLIDE_STR enforces it.
@@ -146,14 +189,27 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
       const fx = (dx / dist) * f, fy = (dy / dist) * f;
       da.x += fx; da.y += fy; db.x -= fx; db.y -= fy;
     }
-    // apply + centering (easeStrength), with a cooling factor + a per-frame STEP clamp (±6,
-    // stability — NOT the old box clamp). NO hard box clamp → nodes spread organically; the
+    // GRAPH-CLUSTER B — per-iter component CENTROIDS (mean position of each component's nodes)
+    // → each node gets pulled gently toward its own centroid (the island cohesion). Skips
+    // singletons (no centroid pull for orphans — they sit where charge/center put them).
+    const cAcc = new Map<number, { x: number; y: number; n: number }>();
+    for (const id of ids) {
+      const c = compOf(id); if (c < 0) continue;
+      const p = pos.get(id)!;
+      const acc = cAcc.get(c) ?? cAcc.set(c, { x: 0, y: 0, n: 0 }).get(c)!;
+      acc.x += p.x; acc.y += p.y; acc.n++;
+    }
+    const centroid = (c: number): Pos | null => { const a = cAcc.get(c); return a && a.n > 1 ? { x: a.x / a.n, y: a.y / a.n } : null; };
+    // apply + centering (easeStrength) + same-cluster pull, with a cooling factor + a per-frame
+    // STEP clamp (±6, stability — NOT the old box clamp). NO hard box clamp → nodes spread; the
     // auto-fit viewBox frames them.
     const cool = 1 - it / (iters * 1.4);
     for (const id of ids) {
       const p = pos.get(id)!; const d = disp.get(id)!;
       p.x += Math.max(-6, Math.min(6, d.x)) * cool + (50 - p.x) * CENTER;
       p.y += Math.max(-6, Math.min(6, d.y)) * cool + (50 - p.y) * CENTER;
+      const ce = centroid(compOf(id));
+      if (ce) { p.x += (ce.x - p.x) * SAME_CLUSTER_PULL; p.y += (ce.y - p.y) * SAME_CLUSTER_PULL; }
     }
   }
   return pos;
@@ -415,6 +471,10 @@ function WikiGraphInner() {
     return m;
   }, [graph]);
 
+  // GRAPH-CLUSTER A — node-id → connected-component {comp, size} (same fn the layout uses for
+  // the island force, so color + position agree). Deterministic; memoized off the graph.
+  const clusterMap = useMemo(() => graph ? connectedComponents(graph.nodes, graph.edges) : new Map<number, { comp: number; size: number }>(), [graph]);
+
   // GRAPH-POLISH-A (E) — GREEDY collision-cull of GLOBAL labels (the tight Obsidian cluster
   // packed many deg≥6 hubs → labels overlapped). Sort by degree desc, place a label only if
   // its bbox doesn't overlap an already-placed one. Deterministic (pure fn of pos+nodes+zoom);
@@ -498,7 +558,14 @@ function WikiGraphInner() {
     // uses this big radius → hubs carve room. "Glance → that big one is a hub."
     const r = (isGlobal ? 1 : 1.2) * Math.max(6, Math.min(4 + 6 * Math.sqrt(n.degree), 30));
     const isCenter = !isGlobal && n.id === graph?.center;
-    const col = STATUS_COLOR[n.status] ?? "var(--tx-1)";
+    const statusCol = STATUS_COLOR[n.status] ?? "var(--tx-1)";
+    // GRAPH-CLUSTER A — in GLOBAL mode: fill = CLUSTER color (palette by component, grey for
+    // orphan/singleton); status moves to a thin RING (stroke) on the main circle so status info
+    // isn't lost. In ego/local mode: keep the status fill (focused view, clusters N/A). The
+    // center-ring (r+6) + orphan-ring (r+3) are separate concentric rings — no conflict.
+    const cm = clusterMap.get(n.id);
+    const clusterCol = cm ? clusterFill(cm.comp, cm.size) : "var(--tx-1)";
+    const col = isGlobal ? clusterCol : statusCol; // node FILL
     const isOrphan = n.degree === 0 && !isCenter;
     const label = n.title && n.title.length > 22 ? n.title.slice(0, 20) + "…" : (n.title || `#${n.id}`);
     const dimmedByFilter = statusFilter !== "all" && n.status !== statusFilter && !isCenter;
@@ -526,8 +593,19 @@ function WikiGraphInner() {
         data-dimmed={dimmed || undefined}
         opacity={dimmed ? 0.2 : 1}
       >
-        {isCenter && <circle r={r + 6} fill="none" stroke={col} strokeWidth={1.5} strokeDasharray="2 3" opacity={0.6} />}
-        <circle r={r} fill={col} fillOpacity={isOrphan ? 0.3 : 1} style={isCenter ? { filter: `drop-shadow(0 0 8px ${col})` } : undefined} />
+        {isCenter && <circle r={r + 6} fill="none" stroke={statusCol} strokeWidth={1.5} strokeDasharray="2 3" opacity={0.6} />}
+        {/* GRAPH-CLUSTER A — main circle: CLUSTER fill (global) + a STATUS ring (stroke) so the
+            status (green/blue/amber) is still readable on the cluster-colored node. Orphan = grey
+            fill + no status ring (a degree-0 node's status is incidental). */}
+        <circle
+          r={r}
+          fill={col}
+          fillOpacity={isOrphan ? 0.45 : 1}
+          stroke={isGlobal && !isOrphan ? statusCol : "none"}
+          strokeWidth={isGlobal && !isOrphan ? 2 : 0}
+          data-status={n.status}
+          style={isCenter ? { filter: `drop-shadow(0 0 8px ${statusCol})` } : undefined}
+        />
         {orphanRing && <circle r={r + 3} fill="none" stroke="var(--red)" strokeWidth={highlightOrphan ? 1.6 : 1} strokeDasharray="2 2" />}
         {showLabel && (
           // GRAPH-POLISH-B F4 — READABLE labels: (a) y clears the (bigger) node radius so the
@@ -614,11 +692,14 @@ function WikiGraphInner() {
           ◳ Cụm{graph && graph.clusters.length > 0 ? ` (${graph.clusters.length})` : ""}
         </button>
         <span className="sp" style={{ flex: 1 }} />
-        {/* legend (compact) + reset, right-aligned */}
-        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--green)" }} />evergreen</span>
-        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--blue)" }} />developing</span>
-        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--amber)" }} />fleeting</span>
-        <span className="wgleg"><span className="wgl-dot" style={{ border: "1px dashed var(--red)", background: "transparent" }} />orphan</span>
+        {/* GRAPH-CLUSTER A — legend reflects the new encoding: FILL = cụm (cluster palette),
+            VIỀN/ring = trạng thái (status). Status shown as ring-dots; cluster encoded by the
+            node fills themselves (too many to legend). Local/ego mode = status fill (no clusters). */}
+        {isGlobal && <span className="wgleg" data-testid="graph-legend-note" style={{ color: "var(--tx-2)" }}>màu = cụm · viền =</span>}
+        <span className="wgleg"><span className="wgl-dot" style={{ border: "2px solid var(--green)", background: "transparent" }} />evergreen</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ border: "2px solid var(--blue)", background: "transparent" }} />developing</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ border: "2px solid var(--amber)", background: "transparent" }} />fleeting</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ background: "#5b6472" }} />orphan</span>
         <button type="button" className="wgraph-reset" onClick={resetView} data-testid="graph-reset-view" title="Đặt lại khung nhìn (zoom/pan)" aria-label="Đặt lại khung nhìn">⟲</button>
       </div>
 
