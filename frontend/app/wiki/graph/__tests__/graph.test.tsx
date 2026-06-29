@@ -179,6 +179,42 @@ describe("W4 Graph Explorer", () => {
     expect(screen.queryByTestId("graph-docs-title")).toBeNull(); // no fabricated note
   });
 
+  it("GRAPH-FIX (Fix 1): a wiki:graph-open-note event → focuses the node + opens its docs (in-place)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    getWikiNote.mockResolvedValueOnce(ok({ id: 88, title: "from explorer", status: "evergreen", noteType: "concept", trustTier: "verified", author: "human", aliases: [], tags: [], content: "body", created: "", updated: "", contentHash: "x" }));
+    getWikiBacklinks.mockResolvedValueOnce(ok({ linked: [], unlinked: [], outbound: [] }));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    mockReplace.mockClear();
+    // the left explorer (a layout component) dispatches this when a file is clicked on the graph route.
+    act(() => { window.dispatchEvent(new CustomEvent("wiki:graph-open-note", { detail: { id: 88 } })); });
+    // focuses the node (ego ?note=88) AND opens the docs panel — both, in-place.
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+    expect(await screen.findByTestId("graph-docs-panel")).toBeInTheDocument();
+  });
+
+  it("GRAPH-FIX (Fix 2): the node menu point uses the SVG getScreenCTM transform (letterbox-proof)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
+    const { container } = render(<WikiGraphPage />);
+    const svg = await screen.findByTestId("graph-svg");
+    // mock the SVG CTM API jsdom lacks: a CTM that doubles+offsets, and a point that applies it.
+    (svg as any).getScreenCTM = () => ({ a: 2, b: 0, c: 0, d: 2, e: 100, f: 50 });
+    (svg as any).createSVGPoint = () => {
+      const p: any = { x: 0, y: 0 };
+      p.matrixTransform = (m: any) => ({ x: p.x * m.a + p.y * m.c + m.e, y: p.x * m.b + p.y * m.d + m.f });
+      return p;
+    };
+    const node = screen.getAllByTestId("graph-node")[0];
+    fireEvent.click(node);
+    // the portaled menu mounts (its position comes from getScreenCTM, not the manual letterbox calc).
+    expect(await screen.findByTestId("graph-node-menu")).toBeInTheDocument();
+    // the anchor div is positioned at the CTM-transformed point (fixed left/top px).
+    const anchor = container.querySelector('[aria-hidden="true"][style*="position: fixed"]') as HTMLElement | null;
+    expect(anchor).toBeTruthy();
+  });
+
   it("Global toggle from local → goes back to global (URL /wiki/graph)", async () => {
     mockNoteParam = "47";
     getWikiGraph.mockResolvedValue(ok(GRAPH));

@@ -772,7 +772,7 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 /* GRAPH-NODE-ACTION D2 — a flex row: graph (flex:1, shrinks) + docs side-panel (fixed width). */
 .wg-row { display:flex; gap:12px; align-items:stretch; }
 .wg-row .wgraph-canvas { flex:1; min-width:0; } /* the graph takes the remaining width + shrinks */
-.wg-docs-panel { width:380px; flex:0 0 380px; display:flex; flex-direction:column; max-height:580px; overflow:hidden; }
+.wg-docs-panel { width:460px; flex:0 0 460px; display:flex; flex-direction:column; max-height:580px; overflow:hidden; }
 .wg-docs-body { padding:12px 14px; overflow:auto; font-size:12.5px; line-height:1.55; }
 .wg-docs-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .wg-docs-title { font-size:14px; margin:0; color:var(--tx-0); }

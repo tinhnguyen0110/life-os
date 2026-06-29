@@ -16,7 +16,7 @@
    🔴 the W1 gotcha: after a delete, "gone" is observed via the REFRESHED /wiki/tree
    (reload()), NOT get_note (still returns the tombstone). All folder ops bump the tree bus.
    ============================================================ */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWikiTree } from "@/lib/useWiki";
 import { Icon } from "@/lib/icons";
@@ -142,6 +142,17 @@ export function WikiExplorer() {
   const pathname = usePathname();
   const { tree, status, errMsg, reload, move } = useWikiTree();
   const root = tree ?? EMPTY_NODE;
+
+  // GRAPH-FIX (Fix 1) — opening a file is pathname-aware. On the GRAPH route, a click should
+  // focus the node + open its docs IN-PLACE (not navigate away) → dispatch a window event the
+  // graph page listens for. EVERY OTHER route keeps the normal router.push(`/wiki/{id}`).
+  const handleOpen = useCallback((id: number) => {
+    if (pathname === "/wiki/graph") {
+      window.dispatchEvent(new CustomEvent("wiki:graph-open-note", { detail: { id } }));
+    } else {
+      router.push(`/wiki/${id}`);
+    }
+  }, [pathname, router]);
 
   const activeId = useMemo(() => {
     const seg = pathname?.split("/")[2];
@@ -277,11 +288,11 @@ export function WikiExplorer() {
       ) : (
         <div className="wex-tree" data-testid="wex-tree">
           {topFolders.map((f) => (
-            <FolderNode key={f.path} node={f} depth={0} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={(id) => router.push(`/wiki/${id}`)} onMove={setMoving} onFolderOp={startFolderOp} />
+            <FolderNode key={f.path} node={f} depth={0} openFolders={openFolders} toggle={toggle} activeId={activeId} onOpen={handleOpen} onMove={setMoving} onFolderOp={startFolderOp} />
           ))}
           {root.notes.length > 0 && (
             <div className="wex-root-notes" data-testid="wex-root-notes">
-              {root.notes.map((n) => <NoteRow key={n.id} note={n} activeId={activeId} onOpen={(id) => router.push(`/wiki/${id}`)} onMove={setMoving} />)}
+              {root.notes.map((n) => <NoteRow key={n.id} note={n} activeId={activeId} onOpen={handleOpen} onMove={setMoving} />)}
             </div>
           )}
         </div>

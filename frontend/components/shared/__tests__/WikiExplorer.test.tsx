@@ -72,7 +72,31 @@ describe("WikiExplorer (WEXP tree pane)", () => {
     expect(screen.getAllByTestId("wex-folder").map((f) => f.getAttribute("data-folder"))).toContain("pkm/zettel");
   });
 
-  it("click a file → router.push(/wiki/[id])", async () => {
+  it("click a file → router.push(/wiki/[id]) on a NON-graph route (unchanged)", async () => {
+    mockPath = "/wiki"; // default route
+    getWikiTree.mockResolvedValueOnce(ok(TREE));
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-root-notes")).toBeInTheDocument());
+    fireEvent.click(within(screen.getByTestId("wex-root-notes")).getByTestId("wex-file-open"));
+    expect(mockPush).toHaveBeenCalledWith("/wiki/1");
+  });
+
+  it("GRAPH-FIX (Fix 1): on /wiki/graph → DISPATCHES wiki:graph-open-note (does NOT navigate away)", async () => {
+    mockPath = "/wiki/graph";
+    getWikiTree.mockResolvedValueOnce(ok(TREE));
+    const events: number[] = [];
+    const onEvt = (e: Event) => events.push((e as CustomEvent<{ id: number }>).detail.id);
+    window.addEventListener("wiki:graph-open-note", onEvt);
+    render(<WikiExplorer />);
+    await waitFor(() => expect(screen.getByTestId("wex-root-notes")).toBeInTheDocument());
+    fireEvent.click(within(screen.getByTestId("wex-root-notes")).getByTestId("wex-file-open"));
+    window.removeEventListener("wiki:graph-open-note", onEvt);
+    expect(events).toEqual([1]);          // dispatched the open-note event for id 1
+    expect(mockPush).not.toHaveBeenCalled(); // and did NOT navigate away from the graph
+  });
+
+  it("GRAPH-FIX (Fix 1): on /wiki/[id] → still router.push (other routes NOT broken)", async () => {
+    mockPath = "/wiki/47";
     getWikiTree.mockResolvedValueOnce(ok(TREE));
     render(<WikiExplorer />);
     await waitFor(() => expect(screen.getByTestId("wex-root-notes")).toBeInTheDocument());

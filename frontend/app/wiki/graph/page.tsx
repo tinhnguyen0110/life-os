@@ -486,6 +486,21 @@ function WikiGraphInner() {
     }
   }, [openDocsId]);
 
+  // GRAPH-FIX (Fix 1) — the LEFT explorer (a layout component) dispatches a window event when a
+  // file is clicked ON the graph route; listen + focus the node + open its docs IN-PLACE (same
+  // as a node's Xem-docs + Focus), so the user doesn't navigate away. Cleaned up on unmount.
+  useEffect(() => {
+    function onExplorerOpen(e: Event) {
+      const id = (e as CustomEvent<{ id: number }>).detail?.id;
+      if (typeof id !== "number") return;
+      setCenter(id);
+      router.replace(`/wiki/graph?note=${id}`);
+      setOpenDocsId(id);
+    }
+    window.addEventListener("wiki:graph-open-note", onExplorerOpen);
+    return () => window.removeEventListener("wiki:graph-open-note", onExplorerOpen);
+  }, [router]);
+
   // adjacency for hover-highlight (neighbors of the hovered node).
   const neighbors = useMemo<Map<number, Set<number>>>(() => {
     const m = new Map<number, Set<number>>();
@@ -551,12 +566,21 @@ function WikiGraphInner() {
     const p = pos.get(id);
     const el = svgRef.current;
     if (!p || !el) { focusNote(id); return; } // defensive fallback: no layout/svg → just focus
-    const rect = el.getBoundingClientRect();
-    // node layout (0..100) → rendered viewBox px → screen px via the current view + the svg rect.
     const nodeX = (p.x / 100) * W, nodeY = (p.y / 100) * H;
-    const sx = rect.left + ((nodeX - view.x) / view.w) * rect.width;
-    const sy = rect.top + ((nodeY - view.y) / view.h) * rect.height;
-    setMenuPt({ x: sx, y: sy });
+    // GRAPH-FIX (Fix 2) — use the SVG's OWN screen-CTM: it accounts for viewBox +
+    // preserveAspectRatio LETTERBOX + the current pan/zoom automatically → the menu lands
+    // EXACTLY on the node at ANY zoom/pan (the old manual calc ignored the letterbox margins).
+    const ctm = el.getScreenCTM?.();
+    if (ctm && typeof el.createSVGPoint === "function") {
+      const pt = el.createSVGPoint();
+      pt.x = nodeX; pt.y = nodeY;
+      const s = pt.matrixTransform(ctm);
+      setMenuPt({ x: s.x, y: s.y });
+    } else {
+      // jsdom has no getScreenCTM/createSVGPoint → fall back to the manual (letterbox-unaware) calc.
+      const rect = el.getBoundingClientRect();
+      setMenuPt({ x: rect.left + ((nodeX - view.x) / view.w) * rect.width, y: rect.top + ((nodeY - view.y) / view.h) * rect.height });
+    }
     setMenuNodeId(id);
   }
   function closeNodeMenu() { setMenuNodeId(null); setMenuPt(null); }
