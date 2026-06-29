@@ -388,15 +388,15 @@ def archive_activity(activity_id: str) -> bool:
 # The immutable SEED templates (in code, NOT editable). A user who "edits a seed"
 # creates an override row with the SAME id (override wins); deleting a seed writes
 # a tombstone (hidden=1). Goals/units are sensible Vietnamese-habit prefills.
+# TRACING-DEFAULT T2 (#173): the seed templates "+ Từ mẫu" suggests = ONLY the 3 check-ins (the
+# user's intent — Daily Tracing defaults to the morning/noon/evening check-ins, not the old habits).
+# unit="lần" + goal=1 (a daily binary check). Distinct emojis (🌅/☀️/🌙) + hues. The merge logic
+# (list_templates SEED⊕override) is UNCHANGED — only the seed CONTENTS change. (icon is a free-form
+# string the FE doesn't currently render — the emoji is what shows — so the keys are advisory.)
 _SEED_TEMPLATES: list[dict[str, Any]] = [
-    {"id": "uong-nuoc",   "name": "Uống nước",      "emoji": "💧", "icon": "droplet",  "unit": "ly",    "goal": 8.0,  "color": "#38bdf8"},
-    {"id": "tap-the-duc", "name": "Tập thể dục",    "emoji": "🏃", "icon": "run",      "unit": "phút",  "goal": 30.0, "color": "#f97316"},
-    {"id": "doc-sach",    "name": "Đọc sách",       "emoji": "📖", "icon": "book",     "unit": "trang", "goal": 20.0, "color": "#a78bfa"},
-    {"id": "ngu",         "name": "Ngủ đủ giấc",    "emoji": "😴", "icon": "moon",     "unit": "giờ",   "goal": 8.0,  "color": "#818cf8"},
-    {"id": "thien",       "name": "Thiền",          "emoji": "🧘", "icon": "lotus",    "unit": "phút",  "goal": 10.0, "color": "#34d399"},
-    {"id": "di-bo",       "name": "Đi bộ",          "emoji": "🚶", "icon": "walk",     "unit": "bước",  "goal": 6000.0, "color": "#fbbf24"},
-    {"id": "hoc",         "name": "Học",            "emoji": "📚", "icon": "study",    "unit": "phút",  "goal": 60.0, "color": "#60a5fa"},
-    {"id": "viet",        "name": "Viết nhật ký",   "emoji": "✍️", "icon": "pen",      "unit": "phút",  "goal": 15.0, "color": "#f472b6"},
+    {"id": "checkin-sang", "name": "Check-in sáng", "emoji": "🌅", "icon": "sunrise", "unit": "lần", "goal": 1.0, "color": "#fbbf24"},
+    {"id": "checkin-trua", "name": "Check-in trưa", "emoji": "☀️", "icon": "sun",     "unit": "lần", "goal": 1.0, "color": "#f97316"},
+    {"id": "report-toi",   "name": "Báo cáo tối",   "emoji": "🌙", "icon": "moon",    "unit": "lần", "goal": 1.0, "color": "#818cf8"},
 ]
 
 
@@ -805,22 +805,25 @@ def import_template_set(set_id: str) -> tuple[list[ActivityView], list[str]] | N
     return created, skipped
 
 
-# #137: the default template-set re-seeded by reset (a sensible "Buổi sáng" morning routine).
+# #137 / TRACING-DEFAULT T3 (#173): the default template-set re-seeded by reset. Now the 3 daily
+# check-ins (mirroring the seeded activities) — NOT the old "Buổi sáng" habit routine. Importing this
+# set creates the 3 check-in activities with their times + reminders (checkin-* fire Mon–Fri via the
+# #172 custom mask, báo-cáo-tối every day). TemplateMember carries remindRepeat="custom" + remindDays.
 _DEFAULT_TEMPLATE_SET = {
-    "id": "buoi-sang",
-    "name": "Buổi sáng",
+    "id": "check-in",
+    "name": "Check-in hàng ngày",
     "activities": [
-        {"content": "Uống nước", "time": "07:00", "remindRepeat": "daily", "remindChannel": "in_app"},
-        {"content": "Tập thể dục", "time": "07:30", "remindRepeat": "daily", "remindChannel": "in_app"},
-        {"content": "Đọc sách", "time": "08:00", "remindRepeat": "off", "remindChannel": "in_app"},
+        {"content": "Check-in sáng", "time": "07:00", "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4], "remindChannel": "in_app"},
+        {"content": "Check-in trưa", "time": "12:00", "remindRepeat": "custom", "remindDays": [0, 1, 2, 3, 4], "remindChannel": "in_app"},
+        {"content": "Báo cáo tối", "time": "21:00", "remindRepeat": "daily", "remindChannel": "in_app"},
     ],
 }
 
 
 def reset_template_sets() -> list[TemplateSet]:
-    """RESET: discard ALL template-sets + re-seed the ONE sensible default ('Buổi sáng'). Returns the
-    resulting list (the default). 🔴 SCOPED to tracing_template_set — NEVER touches activities/logs
-    (the #72 lesson). Mirrors the #109 reset pattern."""
+    """RESET: discard ALL template-sets + re-seed the ONE sensible default ('Check-in hàng ngày', the
+    3 daily check-ins — #173). Returns the resulting list (the default). 🔴 SCOPED to
+    tracing_template_set — NEVER touches activities/logs (the #72 lesson). Mirrors the #109 reset."""
     store.delete_all_template_sets()
     d = _DEFAULT_TEMPLATE_SET
     members = [TemplateMember(**m) for m in d["activities"]]  # type: ignore[arg-type]
@@ -919,3 +922,39 @@ def seed_checkin_activities() -> dict[str, Any]:
     logger.info("tracing seed_checkin_activities: created=%s skipped=%s", created, skipped)
     return {"created": created, "skipped": skipped,
             "createdCount": len(created), "skippedCount": len(skipped)}
+
+
+# --------------------------------------------------------------------------- #
+# TRACING-DEFAULT T1 (#173): archive the 7 legacy habit activities so /tracing  #
+# defaults to ONLY the 3 check-ins (the user's original intent). RECOVERABLE.   #
+# --------------------------------------------------------------------------- #
+# The 7 legacy habits to retire (verified streak=0/no-log → safe). The 3 check-ins are KEPT.
+_LEGACY_HABIT_IDS: list[str] = ["tap-the-duc", "doc-sach", "ngu", "thien", "di-bo", "hoc", "viet"]
+
+
+def archive_legacy_habits() -> dict[str, Any]:
+    """Re-runnable maintenance helper (NOT a startup hook; the #171 pattern). Archives (SOFT-deletes,
+    RECOVERABLE) EXACTLY the 7 legacy habit activities so /tracing defaults to the 3 check-ins.
+
+    🔴 SCOPED + IDEMPOTENT: only the 7 ``_LEGACY_HABIT_IDS`` are touched — NEVER the 3 check-ins. An
+    id that is absent OR already archived is SKIPPED (a re-run archives 0). archive_activity also
+    deletes the linked reminder (correct — a retired habit shouldn't nag). The activity row + its logs
+    are KEPT (archive = soft-delete; restore by un-archiving), so this is reversible.
+
+    Returns ``{"archived": [ids], "skipped": [ids], "archivedCount": N,
+    "activeBefore": X, "activeAfter": Y}`` (the #171 before/after discipline for a real-store write)."""
+    active_before = sum(1 for r in store.list_activities())  # active (excludes archived)
+    archived: list[str] = []
+    skipped: list[str] = []
+    for aid in _LEGACY_HABIT_IDS:
+        act = get_activity(aid)  # includes archived
+        if act is None or act.archived:  # absent or already archived → SKIP (idempotent)
+            skipped.append(aid)
+            continue
+        archive_activity(aid)  # soft-delete (recoverable) + drops the linked reminder
+        archived.append(aid)
+    active_after = sum(1 for r in store.list_activities())
+    logger.info("tracing archive_legacy_habits: archived=%s skipped=%s active %d→%d",
+                archived, skipped, active_before, active_after)
+    return {"archived": archived, "skipped": skipped, "archivedCount": len(archived),
+            "activeBefore": active_before, "activeAfter": active_after}

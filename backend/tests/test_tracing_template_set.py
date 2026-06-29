@@ -141,10 +141,35 @@ def test_reset_reseeds_one_default(db):
     svc.create_template_set(TemplateSetInput(name="Mine", activities=[_M("a")]))
     svc.create_template_set(TemplateSetInput(name="Other", activities=[_M("b")]))
     out = svc.reset_template_sets()
-    assert len(out) == 1 and out[0].id == "buoi-sang" and out[0].name == "Buổi sáng"
-    assert len(out[0].activities) == 3  # the default morning routine
+    # TRACING-DEFAULT (#173): the default set is the 3 daily check-ins, NOT the old "Buổi sáng" habits
+    assert len(out) == 1 and out[0].id == "check-in" and out[0].name == "Check-in hàng ngày"
+    assert len(out[0].activities) == 3  # the 3 check-ins
+    assert [m.content for m in out[0].activities] == ["Check-in sáng", "Check-in trưa", "Báo cáo tối"]
+    # the morning + noon check-ins fire Mon–Fri (custom mask); báo cáo tối daily
+    sang = out[0].activities[0]
+    assert sang.remindRepeat == "custom" and sang.remindDays == [0, 1, 2, 3, 4] and sang.time == "07:00"
+    assert out[0].activities[2].remindRepeat == "daily"
     # the user's sets are gone
-    assert {s.name for s in svc.list_template_sets()} == {"Buổi sáng"}
+    assert {s.name for s in svc.list_template_sets()} == {"Check-in hàng ngày"}
+
+
+def test_import_default_set_creates_three_checkins_with_masks(db):
+    """🔴 #173: importing the default 'Check-in hàng ngày' set creates the 3 check-in activities with
+    the right times + reminder masks (checkin-* fire Mon–Fri via the #172 custom mask; báo cáo tối
+    daily). Proves the TemplateMember remindRepeat='custom'+remindDays thread through the import."""
+    svc.reset_template_sets()  # seed the default check-in set
+    created, skipped = svc.import_template_set("check-in")
+    assert skipped == [] and len(created) == 3
+    names = {v.name for v in created}
+    assert names == {"Check-in sáng", "Check-in trưa", "Báo cáo tối"}
+
+    sang = next(v for v in created if v.name == "Check-in sáng")
+    assert sang.time == "07:00" and sang.remindRepeat == "custom" and sang.remindDays == [0, 1, 2, 3, 4]
+    toi = next(v for v in created if v.name == "Báo cáo tối")
+    assert toi.time == "21:00" and toi.remindRepeat == "daily" and toi.remindDays is None
+    # the linked reminder carries the Mon–Fri mask for the morning check-in
+    linked = rem_store.find_by_activity(sang.id, source="tracing")
+    assert linked is not None and linked["days"] == "0,1,2,3,4"
 
 
 # --- 🔴 SCOPED (#72): reset/delete never touch real activities/logs ---------- #
@@ -195,7 +220,7 @@ def test_rest_crud_import_reset(api):
     rs = api.post("/tracing/template-sets/reset")
     assert rs.status_code == 200
     sets = rs.json()["data"]["sets"]
-    assert len(sets) == 1 and sets[0]["name"] == "Buổi sáng"
+    assert len(sets) == 1 and sets[0]["name"] == "Check-in hàng ngày"  # #173: default = the 3 check-ins
 
 
 def test_rest_import_unknown_404(api):
