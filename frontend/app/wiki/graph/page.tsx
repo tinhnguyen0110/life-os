@@ -24,11 +24,9 @@ import type { WikiGraph, WikiGraphNode, WikiGraphEdge, WikiSearchHit, WikiStatus
 
 const W = 760;
 const H = 460;
-/** zoom clamp: view.w ∈ [W*0.25 (zoomed IN), W*2.5 (zoomed OUT)]. */
-const ZOOM_MIN_W = W * 0.25;
-const ZOOM_MAX_W = W * 2.5;
-/** below this view.w (zoomed in past ~0.7) → show MORE labels (zoom-aware declutter). */
-const LABEL_ZOOM_W = W * 0.7;
+/** zoom-aware labels: show MORE labels once zoomed in to < 70% of the FITTED width
+ *  (GRAPH-POLISH-A makes the default = the fitted box, so "zoomed in" is relative to it). */
+const LABEL_ZOOM_FRAC = 0.7;
 /** click-vs-drag threshold (px). Movement under this = a click; over = a pan. */
 const DRAG_THRESHOLD = 4;
 type ViewBox = { x: number; y: number; w: number; h: number };
@@ -84,42 +82,88 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
   const iters = n > 200 ? 60 : n > 60 ? 90 : 120;
   const adj = edges.filter((e) => pos.has(e.source) && pos.has(e.target));
   const ids = nodes.map((nd) => nd.id);
-  const REPULSE = 14, SPRING = 0.02, SPRING_LEN = 14, CENTER = 0.012;
+  // GRAPH-POLISH-A (B) — OBSIDIAN force formulas (lifted, NOT d3 — written by hand; our
+  // hash-seed init is KEPT for determinism). Tuned to our 0..100 layout space:
+  //  · charge = −repel³ (the CUBE is the point — strong separation). Obsidian repel=10
+  //    → −1000 in d3 world units; scaled to ~−0.9 here so spread is organic not explosive.
+  //  · link strength = linkForce / min(deg_s,deg_t) (adaptive — hubs pull LESS per-edge →
+  //    organic clusters, hubs don't collapse). · link distance ~16.
+  //  · center via easeStrength(0.52)≈0.1 → ~0.055 in our space (centers WITHOUT a box).
+  //  · collide: soft push when two nodes overlap their layout radii (anti-stack).
+  const REPEL = 9.7;                          // "repelForce" slider equivalent (10-ish)
+  const CHARGE = Math.pow(REPEL, 3) / 1000;   // = −repel³ scaled (≈0.91) → pairwise f=CHARGE/d²
+  const LINK_FORCE = 0.9, SPRING_LEN = 16, CENTER = 0.055;
+  const COLLIDE_STR = 0.5;
+  // per-node degree (for adaptive link strength + collide radius). Defensive: ≥1.
+  const deg = new Map<number, number>(nodes.map((nd) => [nd.id, Math.max(1, nd.degree || 0)]));
+  // node layout-radius (Obsidian getSize shape max(8,min(3√(deg+1),30)) scaled to 0..100).
+  const layoutR = (id: number) => 1.0 + 0.32 * Math.min(3 * Math.sqrt((deg.get(id) ?? 1) + 1), 30) / 3;
   for (let it = 0; it < iters; it++) {
     const disp = new Map<number, Pos>(ids.map((id) => [id, { x: 0, y: 0 }]));
-    // pairwise repulsion (O(n²) — fine at vault scale; T1 left the >cap seam to BE)
+    // pairwise repulsion (charge cube) + soft collide (O(n²) — fine at vault scale).
     for (let i = 0; i < n; i++) {
       const pi = pos.get(ids[i])!; const di = disp.get(ids[i])!;
       for (let j = i + 1; j < n; j++) {
         const pj = pos.get(ids[j])!; const dj = disp.get(ids[j])!;
         let dx = pi.x - pj.x, dy = pi.y - pj.y;
         let d2 = dx * dx + dy * dy; if (d2 < 0.01) { dx = (hash01(ids[i] + it) - 0.5); dy = (hash01(ids[j] + it) - 0.5); d2 = 0.01; }
-        const f = REPULSE / d2;
-        const fx = dx * f, fy = dy * f;
+        const f = CHARGE / d2; // charge-cube repulsion
+        let fx = dx * f, fy = dy * f;
+        // soft collide: if closer than the sum of layout radii, push apart gently.
+        const dist = Math.sqrt(d2);
+        const minD = layoutR(ids[i]) + layoutR(ids[j]);
+        if (dist < minD) {
+          const push = COLLIDE_STR * (minD - dist) / dist;
+          fx += dx * push; fy += dy * push;
+        }
         di.x += fx; di.y += fy; dj.x -= fx; dj.y -= fy;
       }
     }
-    // edge springs (attraction)
+    // edge springs (attraction) — ADAPTIVE strength = linkForce / min(deg_s, deg_t).
     for (const e of adj) {
       const a = pos.get(e.source)!, b = pos.get(e.target)!;
       const da = disp.get(e.source)!, db = disp.get(e.target)!;
       const dx = b.x - a.x, dy = b.y - a.y;
       const dist = Math.hypot(dx, dy) || 0.01;
-      const f = SPRING * (dist - SPRING_LEN);
+      const strength = LINK_FORCE / Math.min(deg.get(e.source) ?? 1, deg.get(e.target) ?? 1);
+      const f = 0.02 * strength * (dist - SPRING_LEN);
       const fx = (dx / dist) * f, fy = (dy / dist) * f;
       da.x += fx; da.y += fy; db.x -= fx; db.y -= fy;
     }
-    // apply + centering + clamp, with a cooling factor
+    // apply + centering (easeStrength), with a cooling factor + a per-frame STEP clamp (±6,
+    // stability — NOT the old box clamp). NO hard box clamp → nodes spread organically; the
+    // auto-fit viewBox frames them.
     const cool = 1 - it / (iters * 1.4);
     for (const id of ids) {
       const p = pos.get(id)!; const d = disp.get(id)!;
       p.x += Math.max(-6, Math.min(6, d.x)) * cool + (50 - p.x) * CENTER;
       p.y += Math.max(-6, Math.min(6, d.y)) * cool + (50 - p.y) * CENTER;
-      p.x = Math.max(3, Math.min(97, p.x));
-      p.y = Math.max(4, Math.min(96, p.y));
     }
   }
   return pos;
+}
+
+/** GRAPH-POLISH-A — auto-fit the viewBox to the REAL node bounds (rendered coord space:
+ *  each node draws at (p.x/100)*W, (p.y/100)*H). Pads ~8% of the larger side. With the
+ *  hard clamp removed, nodes can spread past 0..100; the fitted box is what frames them.
+ *  Degenerate (no nodes / w or h ~0 — 1 node or all-same-pos) → a default-sized box
+ *  centered on the node. Pure fn of `pos` → deterministic (memoized off the layout deps). */
+function fitBounds(pos: Map<number, Pos>): ViewBox {
+  if (pos.size === 0) return { ...DEFAULT_VIEW };
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pos.values()) {
+    const X = (p.x / 100) * W, Y = (p.y / 100) * H;
+    if (X < minX) minX = X; if (X > maxX) maxX = X;
+    if (Y < minY) minY = Y; if (Y > maxY) maxY = Y;
+  }
+  const bw = maxX - minX, bh = maxY - minY;
+  // degenerate (single node / all-same-position) → a sensible default box around the center.
+  if (bw < 1 && bh < 1) {
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    return { x: cx - W / 2, y: cy - H / 2, w: W, h: H };
+  }
+  const pad = Math.max(40, 0.08 * Math.max(bw, bh));
+  return { x: minX - pad, y: minY - pad, w: bw + 2 * pad, h: bh + 2 * pad };
 }
 
 function WikiGraphInner() {
@@ -132,6 +176,9 @@ function WikiGraphInner() {
   const [statusFilter, setStatusFilter] = useState<"all" | WikiStatus>("all");
   const [highlightOrphan, setHighlightOrphan] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
+  // GRAPH-POLISH-A (D) — the cluster list is a collapsible popover (out of the always-on
+  // toolbar) so the graph gets full width; the feature is KEPT, just tucked behind a toggle.
+  const [showClusters, setShowClusters] = useState(false);
 
   /* ---- GRAPH-POLISH: Obsidian-style zoom/pan via a stateful viewBox ----
      The deterministic layout (globalLayout/egoLayout) is UNTOUCHED — the viewBox
@@ -142,16 +189,19 @@ function WikiGraphInner() {
   const panRef = useRef<{ active: boolean; startX: number; startY: number; viewX: number; viewY: number }>(
     { active: false, startX: 0, startY: 0, viewX: 0, viewY: 0 });
   const didPanRef = useRef(false);
-  // reset the camera when the graph MODE actually changes (global↔local) so a focus
-  // re-frames. Skip the mount fire (and any no-op) by only resetting when the view isn't
-  // already the default — avoids a redundant setState on initial render.
-  const prevCenterRef = useRef<number | null>(center);
-  useEffect(() => {
-    if (prevCenterRef.current !== center) {
-      prevCenterRef.current = center;
-      setView({ ...DEFAULT_VIEW });
-    }
-  }, [center]);
+  // GRAPH-POLISH-A (C) — smooth zoom-lerp state: a viewRef mirror (read inside rAF without a
+  // stale closure), the target view.w the wheel sets, the anchor viewBox-point to pin, and
+  // the rAF handle (cleaned up on unmount).
+  const viewRef = useRef<ViewBox>(view);
+  viewRef.current = view; // keep the mirror current every render
+  // a ref mirror of the fitted box (declared after `pos`); the wheel handler reads it to
+  // clamp zoom RELATIVE to the natural graph size. Assigned just below fitView's useMemo.
+  const fitViewRef = useRef<ViewBox>(DEFAULT_VIEW);
+  const zoomTargetWRef = useRef<number | null>(null);     // target view.w (null = no zoom anim)
+  const zoomAnchorRef = useRef<{ wx: number; wy: number } | null>(null); // viewBox point to pin
+  const rafRef = useRef<number | null>(null);
+  // GRAPH-POLISH-A — the camera re-frames to the auto-fit bounds on a NEW layout (graph
+  // load / global↔local mode); that effect lives next to `fitView` (after `pos` is known).
 
   // px → viewBox-unit scale (the SVG renders at width:100%, so client width varies).
   function pxToViewScale(): number {
@@ -179,26 +229,102 @@ function WikiGraphInner() {
   }
   function endPan() { panRef.current.active = false; }
 
-  // ZOOM — wheel scales view.w/view.h toward the cursor (the pointed-at point stays fixed).
-  function onSvgWheel(e: React.WheelEvent<SVGSVGElement>) {
+  // GRAPH-POLISH-A (C) — SMOOTH zoom: one rAF step lerps view.w 15%/frame toward the target,
+  // pinning the anchor's viewBox-point (Obsidian's updateZoom 0.85/0.15 ease). Returns true
+  // while still animating. NOTE: smaller view.w = zoomed IN (maps to Obsidian's k = 1/w).
+  function stepZoom(): boolean {
+    const target = zoomTargetWRef.current;
+    if (target == null) return false;
+    const v = viewRef.current;
+    const anchor = zoomAnchorRef.current ?? { wx: v.x + v.w / 2, wy: v.y + v.h / 2 };
+    // converged → snap to the exact target + stop.
+    if (Math.abs(v.w - target) / target < 0.01) {
+      const ratio = target / v.w;
+      const next: ViewBox = {
+        x: anchor.wx - (anchor.wx - v.x) * ratio,
+        y: anchor.wy - (anchor.wy - v.y) * ratio,
+        w: target, h: v.h * ratio,
+      };
+      viewRef.current = next; // 🔴 update the mirror NOW so the next frame reads fresh
+      setView(next);
+      zoomTargetWRef.current = null;
+      return false;
+    }
+    const nw = v.w * 0.85 + target * 0.15; // ease 15%/frame
+    const ratio = nw / v.w;
+    const next: ViewBox = {
+      x: anchor.wx - (anchor.wx - v.x) * ratio,
+      y: anchor.wy - (anchor.wy - v.y) * ratio,
+      w: nw, h: v.h * ratio,
+    };
+    // 🔴 update the ref mirror SYNCHRONOUSLY (don't wait for React's render to refresh it)
+    // so consecutive rAF frames lerp off the latest value — else it'd recompute the same
+    // step forever and never converge (the live-stuck bug jsdom's sync-raf hid).
+    viewRef.current = next;
+    setView(next);
+    return true;
+  }
+  function runZoomLoop() {
+    if (rafRef.current != null) return; // already looping
+    const tick = () => {
+      const more = stepZoom();
+      rafRef.current = more ? requestAnimationFrame(tick) : null;
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }
+  // ZOOM — wheel sets a TARGET view.w (Obsidian targetScale ×= 1.5^(−ΔY/120)); the rAF loop
+  // eases the actual view.w toward it. Anchor: zoom-IN at the cursor, zoom-OUT at the center.
+  // NATIVE non-passive listener (attached in an effect below): React's onWheel is PASSIVE so
+  // e.preventDefault() there would no-op + log a console warning; a native {passive:false}
+  // listener lets preventDefault actually stop page-scroll-during-zoom + keeps the console clean.
+  function onWheelNative(e: WheelEvent) {
     const el = svgRef.current;
     if (!el) return;
+    e.preventDefault();
     const rect = el.getBoundingClientRect();
-    // cursor position in viewBox coords (the fixed point of the zoom).
-    const cx = view.x + ((e.clientX - rect.left) / (rect.width || 1)) * view.w;
-    const cy = view.y + ((e.clientY - rect.top) / (rect.height || 1)) * view.h;
-    const factor = e.deltaY < 0 ? 0.9 : 1.1; // wheel up = zoom IN (smaller w)
-    let nw = view.w * factor;
-    nw = Math.max(ZOOM_MIN_W, Math.min(ZOOM_MAX_W, nw));
-    const ratio = nw / view.w;
-    const nh = view.h * ratio;
-    // keep (cx,cy) fixed: new origin so the cursor maps to the same viewBox point.
-    const nx = cx - (cx - view.x) * ratio;
-    const ny = cy - (cy - view.y) * ratio;
-    setView({ x: nx, y: ny, w: nw, h: nh });
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 40; else if (e.deltaMode === 2) dy *= 800; // line / page → px
+    const v = viewRef.current;
+    const baseW = zoomTargetWRef.current ?? v.w;
+    // wheel UP (dy<0) → zoom IN → SMALLER w. factor = 1 / 1.5^(−dy/120) = 1.5^(dy/120).
+    let targetW = baseW * Math.pow(1.5, dy / 120);
+    // clamp RELATIVE to the natural graph size (the fitted box) — NOT the fixed W. The
+    // fitted box can be far smaller/larger than W now (organic spread), so a W-based clamp
+    // would block zooming in on a small graph. min = 0.12× fit (deep in), max = 3× fit (out).
+    const fw = fitViewRef.current.w || W;
+    targetW = Math.max(fw * 0.12, Math.min(fw * 3, targetW));
+    zoomTargetWRef.current = targetW;
+    if (targetW < v.w) {
+      // zoom IN → anchor at the cursor's current viewBox point.
+      const wx = v.x + ((e.clientX - rect.left) / (rect.width || 1)) * v.w;
+      const wy = v.y + ((e.clientY - rect.top) / (rect.height || 1)) * v.h;
+      zoomAnchorRef.current = { wx, wy };
+    } else {
+      zoomAnchorRef.current = null; // zoom OUT → anchor at the viewport center
+    }
+    runZoomLoop();
   }
-  function resetView() { setView({ ...DEFAULT_VIEW }); }
-  const isZoomedIn = view.w < LABEL_ZOOM_W;
+  // keep a ref to the latest wheel handler so the native listener (attached once) always
+  // calls the current closure (which reads up-to-date refs).
+  const wheelHandlerRef = useRef(onWheelNative);
+  wheelHandlerRef.current = onWheelNative;
+  // attach the NATIVE non-passive wheel listener (once) so preventDefault works + no warning.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => wheelHandlerRef.current(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [svgRef.current]); // re-attach if the SVG element instance changes (e.g. after a remount)
+
+  // GRAPH-POLISH-A — ⟲ reset frames the WHOLE graph (the auto-fit bounds), not the old
+  // hardcoded 0,0,W,H. Cancels any in-flight zoom-lerp so the reset lands cleanly (instant).
+  // (fitView is declared just below, after `pos`; referenced at call-time.)
+  function resetView() {
+    zoomTargetWRef.current = null;
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    setView(fitView);
+  }
 
   // seed mode from ?note= (deep-link to local); absent → global.
   useEffect(() => {
@@ -238,6 +364,32 @@ function WikiGraphInner() {
     return isGlobal ? globalLayout(graph.nodes, graph.edges) : egoLayout(graph.nodes, graph.center);
   }, [graph, isGlobal]);
 
+  // GRAPH-POLISH-A — the auto-fit viewBox: frames the real node bounds (deterministic,
+  // memoized off the same layout). This is the INITIAL view + the ⟲ RESET target. When
+  // the layout identity changes (graph loaded / global↔local mode), snap the camera to it.
+  const fitView = useMemo<ViewBox>(() => fitBounds(pos), [pos]);
+  fitViewRef.current = fitView; // mirror for the wheel handler's fit-relative zoom clamp
+  // zoom-aware labels: "zoomed in" = the current view is < 70% of the FITTED width.
+  const isZoomedIn = view.w < fitView.w * LABEL_ZOOM_FRAC;
+  // sync the camera to the fitted box on a NEW layout (initial load or mode change) — keyed
+  // on the fitView identity so a user's pan/zoom (which only changes `view`, not the layout)
+  // is NOT overridden. useMemo gives a fresh fitView object only when `pos` changes.
+  const lastFitRef = useRef<ViewBox | null>(null);
+  useEffect(() => {
+    if (lastFitRef.current !== fitView) {
+      lastFitRef.current = fitView;
+      // a NEW layout cancels any in-flight zoom-lerp + snaps to the fitted frame.
+      zoomTargetWRef.current = null;
+      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      setView(fitView);
+    }
+  }, [fitView]);
+
+  // GRAPH-POLISH-A (C) — cancel the zoom rAF on unmount (no leak).
+  useEffect(() => () => {
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  }, []);
+
   // adjacency for hover-highlight (neighbors of the hovered node).
   const neighbors = useMemo<Map<number, Set<number>>>(() => {
     const m = new Map<number, Set<number>>();
@@ -246,6 +398,43 @@ function WikiGraphInner() {
     for (const e of graph.edges) { add(e.source, e.target); add(e.target, e.source); }
     return m;
   }, [graph]);
+
+  // GRAPH-POLISH-A (E) — GREEDY collision-cull of GLOBAL labels (the tight Obsidian cluster
+  // packed many deg≥6 hubs → labels overlapped). Sort by degree desc, place a label only if
+  // its bbox doesn't overlap an already-placed one. Deterministic (pure fn of pos+nodes+zoom);
+  // recomputed only when the layout / zoom-band changes (NOT on hover — hover labels render on
+  // top separately). Caps the count too (Obsidian global shows very few by default). Returns
+  // the set of node-ids that get a base label. Ego mode = always-label (empty set, the node
+  // render labels all in ego). */
+  const labeledIds = useMemo<Set<number>>(() => {
+    const ids = new Set<number>();
+    if (!graph || !isGlobal) return ids; // ego labels everything itself
+    // candidacy threshold: zoomed-IN → deg≥2 pool (room to show more), default → deg≥4 pool.
+    const minDeg = isZoomedIn ? 2 : 4;
+    // hard cap on labels (Obsidian-global is sparse). More when zoomed in.
+    const cap = isZoomedIn ? 24 : 8;
+    const placed: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    const CHAR_W = 5.4, FONT_H = 12, PAD = 2; // 10px label, ~0.54em/char, a little breathing room
+    const cand = graph.nodes
+      .filter((n) => n.degree >= minDeg && pos.has(n.id))
+      .sort((a, b) => b.degree - a.degree || a.id - b.id); // degree desc, id tiebreak = deterministic
+    for (const n of cand) {
+      if (ids.size >= cap) break;
+      const p = pos.get(n.id)!;
+      const nx = (p.x / 100) * W, ny = (p.y / 100) * H;
+      const r = Math.max(8, Math.min(3 * Math.sqrt(n.degree + 1), 30));
+      const text = n.title && n.title.length > 22 ? n.title.slice(0, 20) + "…" : (n.title || `#${n.id}`);
+      const halfW = (text.length * CHAR_W) / 2 + PAD;
+      // the label sits centered under the node at y = ny + r + 11 (matches the render).
+      const cy = ny + r + 11;
+      const box = { x1: nx - halfW, y1: cy - FONT_H / 2, x2: nx + halfW, y2: cy + FONT_H / 2 };
+      const overlaps = placed.some((q) => box.x1 < q.x2 && box.x2 > q.x1 && box.y1 < q.y2 && box.y2 > q.y1);
+      if (overlaps) continue;
+      placed.push(box);
+      ids.add(n.id);
+    }
+    return ids;
+  }, [graph, isGlobal, isZoomedIn, pos]);
 
   const centerNode = graph?.nodes.find((n) => n.id === graph.center) ?? null;
 
@@ -285,7 +474,9 @@ function WikiGraphInner() {
     const p = pos.get(n.id);
     if (!p) return null;
     const x = (p.x / 100) * W, y = (p.y / 100) * H;
-    const r = (isGlobal ? 5 : 8) + n.degree * (isGlobal ? 1.6 : 2.4);
+    // GRAPH-POLISH-A (B) — Obsidian node sizing: max(8, min(3·√(deg+1), 30)). Hubs bigger,
+    // leaves smaller. Ego mode scales up a touch for the focused view.
+    const r = (isGlobal ? 1 : 1.25) * Math.max(8, Math.min(3 * Math.sqrt(n.degree + 1), 30));
     const isCenter = !isGlobal && n.id === graph?.center;
     const col = STATUS_COLOR[n.status] ?? "var(--tx-1)";
     const isOrphan = n.degree === 0 && !isCenter;
@@ -295,9 +486,10 @@ function WikiGraphInner() {
     const litByHover = hovered == null || n.id === hovered || neighbors.get(hovered)?.has(n.id);
     const dimmed = dimmedByFilter || !litByHover;
     const orphanRing = isOrphan || (highlightOrphan && n.degree === 0);
-    // labels: always in ego; in global, hovered/high-degree by default — but ZOOM-AWARE:
-    // when zoomed IN (view.w < LABEL_ZOOM_W) show more (degree≥2) since there's room.
-    const showLabel = !isGlobal || n.id === hovered || n.degree >= (isZoomedIn ? 2 : 4);
+    // GRAPH-POLISH-A (E) — labels: always in ego; ALWAYS on hover; in global, only the
+    // COLLISION-CULLED set (labeledIds — greedy by degree, non-overlapping bbox, capped) so
+    // the tight cluster's hub labels don't overlap/pile up. Zoom-in widens the culled set.
+    const showLabel = !isGlobal || n.id === hovered || labeledIds.has(n.id);
     return (
       <g
         key={`n-${n.id}`}
@@ -371,21 +563,74 @@ function WikiGraphInner() {
         </div>
       )}
 
-      <div className="wgraph-grid">
-        <div className="panel wgraph-canvas">
-          <div className="phead">
-            <span className="kicker">{isGlobal ? "Global graph · toàn vault" : `Ego · #${graph?.center} ${centerNode?.title ?? ""}`}</span>
-            <span className="sp" style={{ flex: 1 }} />
-            <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--green)" }} />evergreen</span>
-            <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--blue)" }} />developing</span>
-            <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--amber)" }} />fleeting</span>
-            <span className="wgleg"><span className="wgl-dot" style={{ border: "1px dashed var(--red)", background: "transparent" }} />orphan</span>
-            {/* GRAPH-POLISH — reset the zoom/pan camera to the default frame. */}
-            <button type="button" className="wgraph-reset" onClick={resetView} data-testid="graph-reset-view" title="Đặt lại khung nhìn (zoom/pan)" aria-label="Đặt lại khung nhìn">
-              ⟲
+      {/* GRAPH-POLISH-A (D) — a thin filter TOOLBAR above the graph (was a right side column).
+          Status chips + orphan toggle + Nodes·Edges inline + a Clusters popover toggle. The
+          graph below is FULL-WIDTH (the auto-fit + zoom from A/B/C get the whole canvas). */}
+      <div className="wgtoolbar" data-testid="graph-toolbar">
+        <div className="seg" role="group" aria-label="status filter">
+          {(["all", "evergreen", "developing", "fleeting"] as const).map((s) => (
+            <button key={s} type="button" className={statusFilter === s ? "on" : ""} onClick={() => setStatusFilter(s)} data-testid={`graph-filter-${s}`}>
+              {s === "all" ? "all" : s.slice(0, 4)}
             </button>
+          ))}
+        </div>
+        <button type="button" className={`tab ${highlightOrphan ? "on" : ""}`} onClick={() => setHighlightOrphan((v) => !v)} aria-pressed={highlightOrphan} data-testid="graph-highlight-orphan" title="Làm nổi orphan (degree 0)">
+          ⊘ orphan {highlightOrphan ? "ON" : "OFF"}
+        </button>
+        <span className="wgtb-count" data-testid="graph-counts">
+          <b className="num">{graph?.nodes.length ?? 0}</b> nodes · <b className="num">{graph?.edges.length ?? 0}</b> edges
+        </span>
+        {/* clusters popover toggle (the big cluster panel moved out of an always-on column) */}
+        <button type="button" className={`tab ${showClusters ? "on" : ""}`} onClick={() => setShowClusters((v) => !v)} aria-expanded={showClusters} data-testid="graph-clusters-toggle" title="Cụm / Groups">
+          ◳ Cụm{graph && graph.clusters.length > 0 ? ` (${graph.clusters.length})` : ""}
+        </button>
+        <span className="sp" style={{ flex: 1 }} />
+        {/* legend (compact) + reset, right-aligned */}
+        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--green)" }} />evergreen</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--blue)" }} />developing</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ background: "var(--amber)" }} />fleeting</span>
+        <span className="wgleg"><span className="wgl-dot" style={{ border: "1px dashed var(--red)", background: "transparent" }} />orphan</span>
+        <button type="button" className="wgraph-reset" onClick={resetView} data-testid="graph-reset-view" title="Đặt lại khung nhìn (zoom/pan)" aria-label="Đặt lại khung nhìn">⟲</button>
+      </div>
+
+      {/* the cluster popover (collapsible — KEPT feature, out of the toolbar) */}
+      {showClusters && (
+        <div className="panel wcluster-pop" data-testid="graph-clusters-pop">
+          <div className="phead">
+            <span className="kicker">Cluster · Groups</span>
+            <span className="sp" style={{ flex: 1 }} />
+            <button type="button" className="wgraph-reset" onClick={() => setShowClusters(false)} aria-label="Đóng" title="Đóng">✕</button>
           </div>
-          <div className="wgraph-stage">
+          {graph && graph.clusters.length > 0 ? (
+            graph.clusters.map((c, i) => (
+              <div className="wcluster" key={`c-${i}`} data-testid="graph-cluster">
+                <div className="wcluster-top">
+                  <b>{c.suggestedTitle ?? `Cụm ${c.size} note`}</b>
+                  <span className="wconf">mật độ {(c.density * 100).toFixed(0)}%</span>
+                </div>
+                <div className="wcluster-members">
+                  {c.members.map((m) => (
+                    <span key={m.id} className="tagchip clickable" onClick={() => focusNote(m.id)}>#{m.id} {(m.title || "").slice(0, 14)}</span>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="wcluster-empty" data-testid="graph-cluster-empty">
+              Chưa có cụm. Khoanh vùng cụm dày (ứng viên MOC) đến qua Claude Code (MCP) ở giai đoạn sau — AI propose, bạn quyết.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* the graph — FULL WIDTH (single column, no side panel) */}
+      <div className="panel wgraph-canvas" data-testid="graph-canvas">
+        <div className="phead">
+          <span className="kicker">{isGlobal ? "Global graph · toàn vault" : `Ego · #${graph?.center} ${centerNode?.title ?? ""}`}</span>
+          <span className="sp" style={{ flex: 1 }} />
+          <span className="hint" style={{ fontSize: 11 }}>Click node → focus · kéo để pan · cuộn để zoom</span>
+        </div>
+        <div className="wgraph-stage">
             {status === "loading" ? (
               <div className="wgraph-empty" data-testid="graph-loading">Đang dựng graph…</div>
             ) : status === "error" ? (
@@ -404,7 +649,6 @@ function WikiGraphInner() {
                 onMouseDown={onSvgMouseDown}
                 onMouseMove={onSvgMouseMove}
                 onMouseUp={endPan}
-                onWheel={onSvgWheel}
               >
                 <g className="wedges">{graph!.edges.map(edge)}</g>
                 <g className="wnodes">{graph!.nodes.map(node)}</g>
@@ -420,61 +664,6 @@ function WikiGraphInner() {
             )}
           </div>
         </div>
-
-        <div className="wgraph-side">
-          <div className="panel">
-            <div className="phead"><span className="kicker">Bộ lọc & tóm tắt</span></div>
-            <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="wfilter-row">
-                <span className="mut">Status</span>
-                <div className="seg" role="group" aria-label="status filter">
-                  {(["all", "evergreen", "developing", "fleeting"] as const).map((s) => (
-                    <button key={s} type="button" className={statusFilter === s ? "on" : ""} onClick={() => setStatusFilter(s)} data-testid={`graph-filter-${s}`}>
-                      {s === "all" ? "all" : s.slice(0, 4)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="wfilter-row">
-                <span className="mut">Highlight orphan</span>
-                <button type="button" className={`tab ${highlightOrphan ? "on" : ""}`} onClick={() => setHighlightOrphan((v) => !v)} aria-pressed={highlightOrphan} data-testid="graph-highlight-orphan">
-                  {highlightOrphan ? "ON" : "OFF"}
-                </button>
-              </div>
-              <div className="wfilter-row"><span className="mut">Mode</span><span className="num">{isGlobal ? "global" : "local"}</span></div>
-              <div className="wfilter-row"><span className="mut">Nodes</span><span className="num">{graph?.nodes.length ?? 0}</span></div>
-              <div className="wfilter-row"><span className="mut">Edges</span><span className="num">{graph?.edges.length ?? 0}</span></div>
-              {!isGlobal && centerNode && (
-                <div className="wfilter-row"><span className="mut">Tâm</span><span className={`wstatus ${centerNode.status}`}>{centerNode.status}</span></div>
-              )}
-              <div className="hint" style={{ lineHeight: 1.5 }}>Click một node → focus (local). Hover → sáng hàng xóm.</div>
-            </div>
-          </div>
-
-          <div className="panel wcluster-box">
-            <div className="phead"><span className="kicker">Cluster · Groups</span></div>
-            {graph && graph.clusters.length > 0 ? (
-              graph.clusters.map((c, i) => (
-                <div className="wcluster" key={`c-${i}`} data-testid="graph-cluster">
-                  <div className="wcluster-top">
-                    <b>{c.suggestedTitle ?? `Cụm ${c.size} note`}</b>
-                    <span className="wconf">mật độ {(c.density * 100).toFixed(0)}%</span>
-                  </div>
-                  <div className="wcluster-members">
-                    {c.members.map((m) => (
-                      <span key={m.id} className="tagchip clickable" onClick={() => focusNote(m.id)}>#{m.id} {(m.title || "").slice(0, 14)}</span>
-                    ))}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="wcluster-empty" data-testid="graph-cluster-empty">
-                Chưa có cụm. Khoanh vùng cụm dày (ứng viên MOC) đến qua Claude Code (MCP) ở giai đoạn sau — AI propose, bạn quyết.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
