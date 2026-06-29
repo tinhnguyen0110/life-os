@@ -103,7 +103,11 @@ describe("Sidebar", () => {
     // Count derived from NAV (was hardcoded 21; the career module's /career made it
     // grow — deriving keeps the test robust to legitimate module additions).
     expect(ALL_ROUTES).toHaveLength(NAV.flatMap((g) => g.items).length);
-    expect(container.querySelector('a[href="/wiki/sync"]')).toBeTruthy();
+    // WIKI-TRIM: the MOC + Sync wiki screens were removed → no sidebar links for them.
+    expect(container.querySelector('a[href="/wiki/moc"]')).toBeNull();
+    expect(container.querySelector('a[href="/wiki/sync"]')).toBeNull();
+    // a kept wiki route still links (the AI-first audit log).
+    expect(container.querySelector('a[href="/wiki/proposals"]')).toBeTruthy();
     expect(container.querySelector('a[href="/decision-journal"]')).toBeTruthy();
     await settleSidebar();
   });

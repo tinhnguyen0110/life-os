@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { NAV, CRUMB, ALL_ROUTES } from "../nav";
 
-describe("nav config (D3 — 14 foundation screens + Wiki [AI-first, no Inbox] + Career, 9 groups, no embedded AI)", () => {
+describe("nav config (D3 — 14 foundation screens + Wiki [AI-first: Vault·Graph·Nhật ký AI, no Inbox/MOC/Sync] + Career, 9 groups, no embedded AI)", () => {
   it("has exactly 9 groups in SPEC §1 order (+ Tin tức for News, + Tri thức for Wiki, + Sự nghiệp for Career)", () => {
     expect(NAV.map((g) => g.sec)).toEqual([
       "Tổng quan",
@@ -16,23 +16,24 @@ describe("nav config (D3 — 14 foundation screens + Wiki [AI-first, no Inbox] +
     ]);
   });
 
-  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W4/P1/W5/A1c) + Career across nav items", () => {
+  it("covers all 14 foundation screens S1–S14 + OKX Exchange + Wiki (W1/W4/P1) + Career across nav items", () => {
     const screens = NAV.flatMap((g) => g.items.map((i) => i.screen));
     const unique = new Set(screens);
     // 14 foundation entries (S1..S14 minus S3 detail, PLUS S-okx) + Wiki nav group:
     // W1 Vault Home · W4 Graph · P1 Nhật ký AI (audit). (WIKI-AIFIRST: the W3 Inbox/
-    // triage screen was REMOVED — AI writes land directly, refine in place at /wiki/{id}.)
+    // triage screen was REMOVED; WIKI-TRIM: W5 MOC + A1c Sync screens REMOVED too —
+    // all three redirect to /wiki, BE endpoints stay for MCP.)
     // + CAR — the Career cockpit (CV · Blog · Demo) under "Sự nghiệp" (CAR-1).
     expect(screens).toContain("S1");
     expect(screens).toContain("S14");
     expect(screens).toContain("S-okx");
     expect(screens).toContain("W1");
-    // WIKI-AIFIRST: W3 (Wiki Inbox) removed — no longer a nav screen.
+    // WIKI-AIFIRST: W3 (Wiki Inbox) removed; WIKI-TRIM: W5 (MOC) + A1c (Sync) removed.
     expect(screens).not.toContain("W3");
+    expect(screens).not.toContain("W5");
+    expect(screens).not.toContain("A1c");
     expect(screens).toContain("W4");
     expect(screens).toContain("P1");
-    expect(screens).toContain("W5");
-    expect(screens).toContain("A1c");
     expect(screens).toContain("DJ");
     expect(screens).toContain("CAR");
     expect(screens).toContain("FE-5-macro");
@@ -50,7 +51,8 @@ describe("nav config (D3 — 14 foundation screens + Wiki [AI-first, no Inbox] +
     // standalone nav entry (was 30 → 29). #120 — DEVACT merged too (29 → 28). Both
     // /graveyard and /dev-activity routes still exist (redirect to the sub-tabs).
     // WIKI-AIFIRST — W3 (Wiki Inbox) route removed → 28 → 27.
-    expect(unique.size).toBe(27);
+    // WIKI-TRIM — W5 (MOC) + A1c (Sync) routes removed → 27 → 25.
+    expect(unique.size).toBe(25);
   });
 
   it("every nav route has a breadcrumb entry", () => {

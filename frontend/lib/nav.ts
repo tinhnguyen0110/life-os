@@ -86,18 +86,20 @@ export const NAV: NavGroup[] = [
   {
     sec: "Tri thức",
     items: [
-      // W1 Vault · W4 Graph · P1 Nhật ký AI (audit) · W5 MOC · A1c Sync —
-      // all live + linked (each resolves to a real screen). No inbox badge.
+      // W1 Vault · W4 Graph · P1 Nhật ký AI (audit) — the AI-first wiki nav.
       // WIKI-AIFIRST: the /wiki/inbox "duyệt/refine queue" screen was REMOVED
       // (AI-first: writes land directly, no triage gate). Fleeting notes still
       // surface in the /wiki Vault "cần refine" column — refine in place at /wiki/{id}.
+      // WIKI-TRIM: the MOC (W5) + Sync & Integrity (A1c) screens were also REMOVED —
+      // over-engineered for a 1-user app (MOC = half-baked cluster-detector; Sync =
+      // multi-user conflict-resolution). MOC notes (kind=moc) stay as normal notes in
+      // Vault/Graph; the BE endpoints stay for MCP/agent. /wiki/moc + /wiki/sync now
+      // redirect to /wiki (old bookmarks don't 404).
       { route: "/wiki", label: "Wiki Home", icon: "i-home", screen: "W1" },
       { route: "/wiki/graph", label: "Graph", icon: "i-graph", screen: "W4" },
       // WIKI-AIFIRST: backend is autonomous (writes auto-apply) → this is now an
       // AI WRITE AUDIT-LOG ("Nhật ký AI"), not a duyệt-gate. Route path unchanged.
       { route: "/wiki/proposals", label: "Nhật ký AI", icon: "i-pin", screen: "P1" },
-      { route: "/wiki/moc", label: "MOC", icon: "i-moc", screen: "W5" },
-      { route: "/wiki/sync", label: "Sync & Integrity", icon: "i-merge", screen: "A1c" },
     ],
   },
   {
@@ -151,13 +153,12 @@ export const CRUMB: Record<string, string> = {
   "/dev-activity": "Dev Activity",
   "/repo-memory": "Repo Memory · Code Insight",
   "/career": "Sự nghiệp · CV / Blog / Demo",
-  // Wiki (W1–W5) — detail route /wiki/[id] resolves to the parent crumb (TopBar
-  // crumbFor falls back to the first path segment). Full "Tri thức" NAV group = T3.
+  // Wiki (W1 Vault · W4 Graph · P1 Nhật ký AI) — detail route /wiki/[id] resolves to
+  // the parent crumb (TopBar crumbFor falls back to the first path segment). The MOC
+  // (W5) + Sync (A1c) screens were removed (WIKI-TRIM); their routes redirect to /wiki.
   "/wiki": "Vault · Tri thức",
   "/wiki/graph": "Graph Explorer",
   "/wiki/proposals": "Nhật ký AI · audit",
-  "/wiki/moc": "MOC · Synthesize",
-  "/wiki/sync": "Sync & Integrity",
 };
 
 /** All 14 screen routes (detail routes resolve under their parent nav item). */
