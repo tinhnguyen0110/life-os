@@ -78,26 +78,46 @@ describe("W1 Vault Overview", () => {
     expect(screen.getByTestId("vault-density-pct")).toHaveTextContent("94.2%");
   });
 
-  it("renders inbox + orphan summary rows + op-log activity", async () => {
+  it("WIKI-HOME-TRIM: NO 'Inbox cần refine' panel; orphan summary rows + op-log activity stay", async () => {
     getWikiOverview.mockResolvedValueOnce(ok(FULL));
     searchWiki.mockResolvedValue(ok([]));
     render(<WikiVaultPage />);
     await waitFor(() => expect(screen.getByTestId("vault-screen")).toBeInTheDocument());
-    expect(screen.getAllByTestId("vault-inbox-row").length).toBe(1);
+    // the inbox-refine panel is removed (AI-first → no manual triage on home)
+    expect(screen.queryByTestId("vault-inbox-list")).toBeNull();
+    expect(screen.queryByTestId("vault-inbox-count")).toBeNull();
+    expect(screen.queryByTestId("vault-inbox-row")).toBeNull();
+    expect(screen.queryByText("Inbox cần refine")).toBeNull();
+    // orphan sweep + op-log stay
     expect(screen.getAllByTestId("vault-orphan-row").length).toBe(1);
     expect(screen.getByText("Spaced repetition is interest-driven")).toBeInTheDocument();
     expect(screen.getAllByTestId("vault-act-row").length).toBe(2);
   });
 
-  it("HONEST: proposalCount 0 → no fabricated queue, shows never-auto-write empty state", async () => {
+  it("WIKI-HOME-TRIM: KPI 'Fleeting' StatTile (byStatus.fleeting) still present (a DIFFERENT metric, not the inbox queue)", async () => {
     getWikiOverview.mockResolvedValueOnce(ok(FULL));
     searchWiki.mockResolvedValue(ok([]));
     render(<WikiVaultPage />);
     await waitFor(() => expect(screen.getByTestId("vault-screen")).toBeInTheDocument());
-    expect(screen.getByTestId("vault-proposal-count")).toHaveTextContent("0");
-    const empty = screen.getByTestId("vault-proposal-empty");
-    expect(empty).toBeInTheDocument();
-    expect(empty.textContent).toMatch(/không bao giờ tự ghi/i);
+    // the Fleeting KPI tile (status count = 8) survives — it's not the removed inbox-queue badge
+    expect(screen.getByText("Fleeting")).toBeInTheDocument();
+    const tiles = screen.getAllByTestId("wtile-v").map((e) => e.textContent);
+    expect(tiles).toContain("8");
+  });
+
+  it("WIKI-HOME-TRIM #183: NO 'Proposal queue · chờ duyệt' panel (AI-first → AI writes directly, no review queue)", async () => {
+    getWikiOverview.mockResolvedValueOnce(ok(FULL));
+    searchWiki.mockResolvedValue(ok([]));
+    render(<WikiVaultPage />);
+    await waitFor(() => expect(screen.getByTestId("vault-screen")).toBeInTheDocument());
+    // the proposal-queue panel + the wrong "never auto-write" copy are removed
+    expect(screen.queryByTestId("vault-proposal-count")).toBeNull();
+    expect(screen.queryByTestId("vault-proposal-empty")).toBeNull();
+    expect(screen.queryByText(/chờ duyệt/i)).toBeNull();
+    expect(screen.queryByText(/không bao giờ tự ghi/i)).toBeNull();
+    expect(screen.queryByText("Proposal queue")).toBeNull();
+    // op-log stays (now full-width)
+    expect(screen.getByTestId("vault-act-list")).toBeInTheDocument();
   });
 
   it("empty vault (0 notes) → 'vault rỗng' prompt, NOT fake tiles (pctWithLink null → no 0%)", async () => {

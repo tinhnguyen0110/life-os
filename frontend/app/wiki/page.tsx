@@ -1,17 +1,18 @@
 "use client";
 /* ============================================================
    W1 — Wiki Home / Vault Overview · /wiki. Ported from mock screens-wiki.js
-   SCREENS.wiki + wiki.css (W1 block). The vault entrance: "how's my knowledge
-   vault + what do I need to triage today".
+   SCREENS.wiki + wiki.css (W1 block). The vault entrance: "how's my knowledge vault".
 
-   Live from GET /wiki/overview (stats + inbox/orphan summaries + op-log +
-   proposalCount) and GET /wiki/search?q= (FTS5 quick search box).
+   Live from GET /wiki/overview (stats + orphan summary + op-log) and
+   GET /wiki/search?q= (FTS5 quick search box).
 
-   HONEST-MIRROR (M1, no embedded AI):
-   - proposalCount is ALWAYS 0 (AI proposals are M4) → render the honest empty
-     "no proposals" state, never a fabricated queue.
+   AI-FIRST (WIKI-HOME-TRIM #182/#183): AI writes land DIRECTLY in the Vault
+   (autonomous, no manual review queue) → the home dropped the "Inbox cần refine"
+   triage panel AND the "Proposal queue · chờ duyệt" panel. AI writes are audited at
+   "Nhật ký AI" (header link). overview.inbox/proposalCount stay in the payload (BE
+   untouched) — the FE just stops rendering those panels.
    - pctWithLink is null on an empty vault → show "—", not "0%".
-   - inbox/orphans are SUMMARIES (slice 4) — full triage lives on W3, full graph on W4.
+   - orphans are a SUMMARY (slice 4) — full graph on W4.
    States: loading · error · empty-vault (0 notes) · ready.
    ============================================================ */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -23,7 +24,7 @@ import { Icon } from "@/lib/icons";
 import { WikiImport } from "@/components/WikiImport";
 import { WikiTrash } from "@/components/WikiTrash";
 import { StatTile } from "./_StatTile";
-import { InboxRow, ActivityRow } from "./_rows";
+import { ActivityRow } from "./_rows";
 import type {
   WikiOrphan,
   WikiSearchHit,
@@ -193,7 +194,6 @@ export default function WikiVaultPage() {
 
   const pct = s && s.pctWithLink != null ? s.pctWithLink : null;
   const pctLabel = pct != null ? `${pct.toFixed(1)}%` : "—";
-  const inbox = overview.inbox ?? [];
   const orphans = overview.orphans ?? [];
   const activity = overview.recentActivity ?? [];
 
@@ -314,26 +314,11 @@ export default function WikiVaultPage() {
         </div>
       </div>
 
-      {/* inbox + orphan columns */}
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", alignItems: "start", marginTop: 12 }}>
-        <div className="panel">
-          <div className="phead">
-            <span className="kicker">Inbox cần refine</span>
-            {/* #143-W2: this badge counts the INBOX/refine-queue (overview.inbox) — a DIFFERENT
-                metric from the KPI "Fleeting" tile (stats.byStatus.fleeting = fleeting-STATUS notes).
-                Both were labeled "fleeting" → confusing (two numbers, one word). Label this one by
-                its true meaning — the refine queue (matches this panel's "Inbox cần refine" kicker) —
-                so the two read distinctly + honestly. Pure label, no logic. */}
-            <span className="wstatus" style={{ color: "var(--amber)", background: "var(--amber-dim)" }} data-testid="vault-inbox-count">{inbox.length} cần refine</span>
-            {/* WIKI-AIFIRST: no separate triage screen — click a row to refine the note in place. */}
-            <span className="hint" style={{ marginLeft: "auto" }}>mở note để refine</span>
-          </div>
-          <div className="wlist" data-testid="vault-inbox-list">
-            {inbox.length === 0
-              ? <div className="wlist-empty" data-testid="vault-inbox-empty">Không có note fleeting — inbox sạch.</div>
-              : inbox.slice(0, 4).map((it) => <InboxRow key={it.id} it={it} />)}
-          </div>
-        </div>
+      {/* WIKI-HOME-TRIM: the "Inbox cần refine" panel was removed (AI-first → no manual refine
+          triage). Notes stay viewable/editable in Vault/Graph; overview.inbox stays in the
+          payload (life_brief may use it) — the home just stops rendering it. Orphan sweep is
+          now full-width. */}
+      <div style={{ marginTop: 12 }}>
         <div className="panel">
           <div className="phead">
             <span className="kicker">Orphan sweep</span>
@@ -392,42 +377,20 @@ export default function WikiVaultPage() {
         </div>
       </div>
 
-      {/* op-log + proposal mini */}
-      <div className="grid" style={{ gridTemplateColumns: "1.5fr 1fr", alignItems: "start", marginTop: 12 }}>
-        <div className="panel">
-          <div className="phead">
-            <span className="kicker">Hoạt động gần đây · op-log</span>
-            <span className="hint" style={{ marginLeft: "auto" }}>single-writer</span>
-          </div>
-          <div className="wact-list" data-testid="vault-act-list">
-            {activity.length === 0
-              ? <div className="wlist-empty" data-testid="vault-act-empty">Chưa có hoạt động.</div>
-              : activity.map((a, i) => <ActivityRow key={`${a.ts}-${a.noteId}-${i}`} a={a} />)}
-          </div>
+      {/* WIKI-HOME-TRIM #183: the "Proposal queue · chờ duyệt" panel was removed. AI-first →
+          AI ghi thẳng vào Vault (autonomous, không qua duyệt) → a review-queue badge + the
+          "không bao giờ tự ghi" copy were WRONG. AI writes are audited at "Nhật ký AI"
+          (header link). op-log is now full-width. overview.proposalCount stays in the payload
+          (BE untouched) — the FE just stops rendering the queue. */}
+      <div className="panel" style={{ marginTop: 12 }}>
+        <div className="phead">
+          <span className="kicker">Hoạt động gần đây · op-log</span>
+          <span className="hint" style={{ marginLeft: "auto" }}>single-writer</span>
         </div>
-        <div className="panel wproposal-mini">
-          <div className="phead">
-            <span className="kicker">Proposal queue</span>
-            {/* #143-W4: accent ONLY when there's something to review; an EMPTY queue (0) RECEDES
-                (muted --tx-2, no accent fill) — same quiet-empty-state principle as the tracing R2
-                pill. Reserve the loud accent for "there's a proposal waiting". Style-only. */}
-            <span
-              className="wstatus"
-              style={
-                overview.proposalCount > 0
-                  ? { color: "var(--accent)", background: "var(--accent-dim)" }
-                  : { color: "var(--tx-2)", background: "transparent" }
-              }
-              data-testid="vault-proposal-count"
-            >
-              {overview.proposalCount} chờ duyệt
-            </span>
-          </div>
-          {/* M1: proposalCount is ALWAYS 0 (no embedded AI). Honest empty state — NOT a fabricated queue. */}
-          <div className="wprop-empty" data-testid="vault-proposal-empty">
-            Chưa có đề xuất AI. Link / MOC / merge candidate sẽ đến qua Claude Code (MCP) ở giai đoạn sau — mỗi cái chờ
-            bạn duyệt, <b>không bao giờ tự ghi</b> vào note evergreen.
-          </div>
+        <div className="wact-list" data-testid="vault-act-list">
+          {activity.length === 0
+            ? <div className="wlist-empty" data-testid="vault-act-empty">Chưa có hoạt động.</div>
+            : activity.map((a, i) => <ActivityRow key={`${a.ts}-${a.noteId}-${i}`} a={a} />)}
         </div>
       </div>
     </div>
