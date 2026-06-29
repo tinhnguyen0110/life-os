@@ -769,6 +769,20 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
    case any stale ref remains. */
 .wgraph-grid { display:block; }
 .wgraph-canvas { overflow:hidden; }
+/* GRAPH-NODE-ACTION D2 — a flex row: graph (flex:1, shrinks) + docs side-panel (fixed width). */
+.wg-row { display:flex; gap:12px; align-items:stretch; }
+.wg-row .wgraph-canvas { flex:1; min-width:0; } /* the graph takes the remaining width + shrinks */
+.wg-docs-panel { width:380px; flex:0 0 380px; display:flex; flex-direction:column; max-height:580px; overflow:hidden; }
+.wg-docs-body { padding:12px 14px; overflow:auto; font-size:12.5px; line-height:1.55; }
+.wg-docs-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.wg-docs-title { font-size:14px; margin:0; color:var(--tx-0); }
+/* D1 — the 2-button node menu (portaled Popover panel). */
+.wg-nodemenu { display:flex; flex-direction:column; min-width:140px; background:var(--bg-1); border:1px solid var(--line-2);
+  border-radius:9px; padding:5px; box-shadow:0 8px 24px -8px rgba(0,0,0,.6); }
+.wg-nodemenu-btn { display:flex; align-items:center; gap:7px; padding:7px 10px; font-size:12.5px; color:var(--tx-0);
+  background:transparent; border:0; border-radius:6px; cursor:pointer; text-align:left; }
+.wg-nodemenu-btn:hover { background:var(--bg-2); color:var(--accent); }
+@media (max-width:900px) { .wg-row { flex-direction:column; } .wg-docs-panel { width:auto; flex:1 1 auto; } }
 /* the full-width stage is taller now (graph is the focus, no side column eating width). */
 .wgraph-stage { height:520px; background:radial-gradient(circle at 50% 45%, var(--bg-2), var(--bg-0) 80%); position:relative; }
 /* (D) the thin filter toolbar above the graph. */

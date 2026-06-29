@@ -4,6 +4,8 @@ import { render, screen, waitFor, fireEvent, act, within } from "@testing-librar
 const getWikiGraph = vi.fn();
 const getWikiGraphGlobal = vi.fn();
 const searchWiki = vi.fn();
+const getWikiNote = vi.fn();        // GRAPH-NODE-ACTION — the docs side-panel uses useWikiNote
+const getWikiBacklinks = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -11,6 +13,8 @@ vi.mock("@/lib/api", async () => {
     getWikiGraph: (...a: unknown[]) => getWikiGraph(...a),
     getWikiGraphGlobal: (...a: unknown[]) => getWikiGraphGlobal(...a),
     searchWiki: (...a: unknown[]) => searchWiki(...a),
+    getWikiNote: (...a: unknown[]) => getWikiNote(...a),
+    getWikiBacklinks: (...a: unknown[]) => getWikiBacklinks(...a),
   };
 });
 const mockPush = vi.fn();
@@ -114,14 +118,65 @@ describe("W4 Graph Explorer", () => {
     expect(screen.getAllByTestId("graph-edge").length).toBe(1);
   });
 
-  it("node click → focuses the note (local mode, URL ?note=id)", async () => {
+  it("GRAPH-NODE-ACTION: node click → the 2-button MENU (Xem docs + Focus), NOT a straight focus", async () => {
     mockNoteParam = "47";
     getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
     render(<WikiGraphPage />);
     const nodes = await screen.findAllByTestId("graph-node");
     const node88 = nodes.find((n) => n.getAttribute("data-node-id") === "88")!;
+    mockReplace.mockClear();
     fireEvent.click(node88);
+    // the menu appears with both buttons; a click does NOT directly focus (no ?note= yet).
+    expect(await screen.findByTestId("graph-node-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("graph-menu-docs")).toHaveTextContent(/Xem docs/);
+    expect(screen.getByTestId("graph-menu-focus")).toHaveTextContent(/Focus/);
+    expect(mockReplace).not.toHaveBeenCalled();
+    // clicking "Focus" → the existing focusNote (ego ?note=88).
+    fireEvent.click(screen.getByTestId("graph-menu-focus"));
     expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+  });
+
+  it("GRAPH-NODE-ACTION D2: 'Xem docs' → the right docs side-panel renders the note (status/title/markdown/full-link)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
+    getWikiNote.mockResolvedValueOnce(ok({ id: 88, title: "MOCs are workstations", status: "evergreen", noteType: "concept", trustTier: "verified", author: "human", aliases: [], tags: [], content: "# Heading\n\nBody with a [[47]] link.", created: "2026-04-02T00:00:00Z", updated: "2026-06-13T00:00:00Z", contentHash: "x" }));
+    getWikiBacklinks.mockResolvedValueOnce(ok({ linked: [], unlinked: [], outbound: [] }));
+    render(<WikiGraphPage />);
+    const node88 = (await screen.findAllByTestId("graph-node")).find((n) => n.getAttribute("data-node-id") === "88")!;
+    fireEvent.click(node88);
+    fireEvent.click(await screen.findByTestId("graph-menu-docs"));
+    // the side-panel renders the note (mirrors /wiki/[id]): title + markdown body + full-link.
+    const panel = await screen.findByTestId("graph-docs-panel");
+    expect(within(panel).getByTestId("graph-docs-title")).toHaveTextContent("MOCs are workstations");
+    expect(within(panel).getByTestId("graph-docs-md").querySelector("h2, h3")).toBeTruthy(); // markdown rendered
+    expect(within(panel).getByTestId("graph-docs-full")).toHaveAttribute("href", "/wiki/88");
+  });
+
+  it("GRAPH-NODE-ACTION D2: docs panel ✕ close → the panel goes away (graph full-width again)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
+    getWikiNote.mockResolvedValue(ok({ id: 88, title: "n88", status: "evergreen", noteType: "concept", trustTier: "verified", author: "human", aliases: [], tags: [], content: "body", created: "", updated: "", contentHash: "x" }));
+    getWikiBacklinks.mockResolvedValue(ok({ linked: [], unlinked: [], outbound: [] }));
+    render(<WikiGraphPage />);
+    const node88 = (await screen.findAllByTestId("graph-node")).find((n) => n.getAttribute("data-node-id") === "88")!;
+    fireEvent.click(node88);
+    fireEvent.click(await screen.findByTestId("graph-menu-docs"));
+    await screen.findByTestId("graph-docs-panel");
+    fireEvent.click(screen.getByTestId("graph-docs-close"));
+    await waitFor(() => expect(screen.queryByTestId("graph-docs-panel")).toBeNull());
+  });
+
+  it("GRAPH-NODE-ACTION D2: docs panel honest ERROR state (useWikiNote 404 → error msg, not a blank/fabricated note)", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH));
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    getWikiNote.mockRejectedValueOnce(new (ApiError as any)(404, "note 88 not found"));
+    render(<WikiGraphPage />);
+    const node88 = (await screen.findAllByTestId("graph-node")).find((n) => n.getAttribute("data-node-id") === "88")!;
+    fireEvent.click(node88);
+    fireEvent.click(await screen.findByTestId("graph-menu-docs"));
+    expect(await screen.findByTestId("graph-docs-error")).toHaveTextContent(/not found/);
+    expect(screen.queryByTestId("graph-docs-title")).toBeNull(); // no fabricated note
   });
 
   it("Global toggle from local → goes back to global (URL /wiki/graph)", async () => {
@@ -418,7 +473,7 @@ describe("W4 Graph Explorer", () => {
     });
   });
 
-  it("GRAPH-POLISH req3: a DRAG (mousedown+move past threshold+up) pans + a node click after it does NOT focus", async () => {
+  it("GRAPH-POLISH req3 / GRAPH-NODE-ACTION: a DRAG pans + a node click after it does NOT open the menu (or focus)", async () => {
     mockNoteParam = null;
     getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
     render(<WikiGraphPage />);
@@ -432,32 +487,31 @@ describe("W4 Graph Explorer", () => {
     });
     const vb = svg.getAttribute("viewBox")!.split(" ").map(Number);
     expect(vb[0] !== 0 || vb[1] !== 0).toBe(true); // panned (x or y moved)
-    // a node click WHILE didPan is still true → ignored (pan didn't open a note)
+    // a node click WHILE didPan is still true → ignored (the menu does NOT open + no focus)
     const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
     fireEvent.click(node);
+    expect(screen.queryByTestId("graph-node-menu")).toBeNull();
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it("GRAPH-POLISH req3: a CLEAN click (mousedown+up, no move) DOES focus the note (regression guard)", async () => {
+  it("GRAPH-POLISH req3: a CLEAN click (mousedown+up, no move) opens the MENU (regression guard — the action fires)", async () => {
     mockNoteParam = null;
     getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
     render(<WikiGraphPage />);
     await screen.findByTestId("graph-svg");
-    mockReplace.mockClear();
     const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
-    // no drag → mousedown then a plain click (didPan stays false) → opens the note
+    // no drag → mousedown then a plain click (didPan stays false) → the node menu opens
     fireEvent.mouseDown(node, { button: 0, clientX: 100, clientY: 100 });
     fireEvent.mouseUp(node, { clientX: 100, clientY: 100 });
     fireEvent.click(node);
-    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+    expect(await screen.findByTestId("graph-node-menu")).toBeInTheDocument();
   });
 
-  it("GRAPH-POLISH req3: a sub-threshold move (<4px) is still a CLICK (opens the note)", async () => {
+  it("GRAPH-POLISH req3: a sub-threshold move (<4px) is still a CLICK (opens the menu)", async () => {
     mockNoteParam = null;
     getWikiGraphGlobal.mockResolvedValueOnce(ok(GLOBAL));
     render(<WikiGraphPage />);
     const svg = await screen.findByTestId("graph-svg");
-    mockReplace.mockClear();
     const node = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "88")!;
     act(() => {
       fireEvent.mouseDown(svg, { button: 0, clientX: 100, clientY: 100 });
@@ -465,7 +519,7 @@ describe("W4 Graph Explorer", () => {
       fireEvent.mouseUp(svg, { clientX: 102, clientY: 101 });
     });
     fireEvent.click(node);
-    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=88");
+    expect(await screen.findByTestId("graph-node-menu")).toBeInTheDocument();
   });
 
   it("GRAPH-POLISH req4: deterministic layout (node transforms are real translate(), may now be negative)", async () => {
@@ -748,7 +802,10 @@ describe("W4 Graph Explorer", () => {
     await screen.findByTestId("graph-svg");
     mockReplace.mockClear();
     const leaf = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "7")!;
+    // a leaf is still clickable → its menu opens → Focus opens the note (#173 path intact).
     fireEvent.click(leaf);
+    expect(await screen.findByTestId("graph-node-menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("graph-menu-focus"));
     expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=7");
   });
 

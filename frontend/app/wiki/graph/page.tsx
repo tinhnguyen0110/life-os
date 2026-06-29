@@ -17,9 +17,12 @@
    ============================================================ */
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useWikiGraph } from "@/lib/useWiki";
+import Link from "next/link";
+import { useWikiGraph, useWikiNote } from "@/lib/useWiki";
 import { searchWiki } from "@/lib/api";
 import { Icon } from "@/lib/icons";
+import { Popover } from "@/components/Popover";
+import { WikiMarkdown, BacklinksPanel, StatusPill } from "@/components/shared";
 import type { WikiGraph, WikiGraphNode, WikiGraphEdge, WikiSearchHit, WikiStatus } from "@/lib/types";
 
 const W = 760;
@@ -252,6 +255,14 @@ function WikiGraphInner() {
   // toolbar) so the graph gets full width; the feature is KEPT, just tucked behind a toggle.
   const [showClusters, setShowClusters] = useState(false);
 
+  /* ---- GRAPH-NODE-ACTION (D1/D2) — click a node → a 2-button Popover menu (Xem docs /
+     Focus); "Xem docs" opens a right side-panel (graph shrinks left). ---- */
+  const [menuNodeId, setMenuNodeId] = useState<number | null>(null);   // node whose menu is open
+  const [menuPt, setMenuPt] = useState<{ x: number; y: number } | null>(null); // anchor screen px
+  const [openDocsId, setOpenDocsId] = useState<number | null>(null);   // node whose docs panel is open
+  // a tiny invisible anchor element at the clicked node's screen point; Popover anchors to it.
+  const menuAnchorRef = useRef<HTMLDivElement | null>(null);
+
   /* ---- GRAPH-POLISH: Obsidian-style zoom/pan via a stateful viewBox ----
      The deterministic layout (globalLayout/egoLayout) is UNTOUCHED — the viewBox
      transform sits ON TOP, so node positions never change; we only move the camera. */
@@ -462,6 +473,19 @@ function WikiGraphInner() {
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
   }, []);
 
+  // GRAPH-NODE-ACTION D2 — when the docs panel opens/closes the canvas WIDTH changes; re-frame
+  // the camera to the fitted bounds so the graph re-fills the new (narrower/wider) width. The
+  // SVG's preserveAspectRatio keeps it visible, but re-snapping to fit re-centers it cleanly.
+  const prevDocsRef = useRef<number | null>(openDocsId);
+  useEffect(() => {
+    if (prevDocsRef.current !== openDocsId) {
+      prevDocsRef.current = openDocsId;
+      zoomTargetWRef.current = null;
+      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      setView(fitViewRef.current);
+    }
+  }, [openDocsId]);
+
   // adjacency for hover-highlight (neighbors of the hovered node).
   const neighbors = useMemo<Map<number, Set<number>>>(() => {
     const m = new Map<number, Set<number>>();
@@ -521,6 +545,21 @@ function WikiGraphInner() {
     setCenter(id);
     router.replace(`/wiki/graph?note=${id}`);
   }
+  // GRAPH-NODE-ACTION D1 — a REAL click on a node opens the 2-button menu AT the node's
+  // screen point (the #173 didPan gate still suppresses it on a drag — wired in the node onClick).
+  function openNodeMenu(id: number) {
+    const p = pos.get(id);
+    const el = svgRef.current;
+    if (!p || !el) { focusNote(id); return; } // defensive fallback: no layout/svg → just focus
+    const rect = el.getBoundingClientRect();
+    // node layout (0..100) → rendered viewBox px → screen px via the current view + the svg rect.
+    const nodeX = (p.x / 100) * W, nodeY = (p.y / 100) * H;
+    const sx = rect.left + ((nodeX - view.x) / view.w) * rect.width;
+    const sy = rect.top + ((nodeY - view.y) / view.h) * rect.height;
+    setMenuPt({ x: sx, y: sy });
+    setMenuNodeId(id);
+  }
+  function closeNodeMenu() { setMenuNodeId(null); setMenuPt(null); }
   function goGlobal() {
     setCenter(null);
     setQ(""); setHits([]);
@@ -582,9 +621,9 @@ function WikiGraphInner() {
         key={`n-${n.id}`}
         className="wgnode clickable"
         transform={`translate(${x},${y})`}
-        // GRAPH-POLISH req3 — a click that was actually a PAN must NOT open the note.
-        // didPanRef is set true on a drag past the threshold; reset on each mousedown.
-        onClick={() => { if (didPanRef.current) return; focusNote(n.id); }}
+        // GRAPH-NODE-ACTION D1 — a real click opens the 2-button MENU (not a straight focus).
+        // GRAPH-POLISH req3 — a click that was actually a PAN must NOT open it (didPan gate kept).
+        onClick={() => { if (didPanRef.current) return; openNodeMenu(n.id); }}
         onMouseEnter={() => setHovered(n.id)}
         onMouseLeave={() => setHovered((h) => (h === n.id ? null : h))}
         data-testid="graph-node"
@@ -733,7 +772,10 @@ function WikiGraphInner() {
         </div>
       )}
 
-      {/* the graph — FULL WIDTH (single column, no side panel) */}
+      {/* GRAPH-NODE-ACTION D2 — a flex row: the graph canvas (shrinks when docs open) + the
+          right docs side-panel. D1 anchor + Popover menu live here too. */}
+      <div className="wg-row" data-testid="graph-row">
+      {/* the graph — full width by default; shrinks left when the docs panel opens. */}
       <div className="panel wgraph-canvas" data-testid="graph-canvas">
         <div className="phead">
           <span className="kicker">{isGlobal ? "Global graph · toàn vault" : `Ego · #${graph?.center} ${centerNode?.title ?? ""}`}</span>
@@ -774,6 +816,61 @@ function WikiGraphInner() {
             )}
           </div>
         </div>
+
+        {/* GRAPH-NODE-ACTION D2 — the docs side-panel (right). Opens when a node's "Xem docs"
+            is chosen; mirrors /wiki/[id]: status + title + markdown + backlinks + full-link + ✕. */}
+        {openDocsId != null && (
+          <DocsSidePanel id={openDocsId} onClose={() => setOpenDocsId(null)} />
+        )}
+      </div>
+
+      {/* D1 — the invisible anchor at the clicked node's screen point + the 2-button Popover.
+          Popover is PORTALED to body (transform-ancestor-traps-fixed memory) → not clipped by
+          the graph's animated container. */}
+      {menuPt && (
+        <div ref={menuAnchorRef} aria-hidden="true" style={{ position: "fixed", left: menuPt.x, top: menuPt.y, width: 1, height: 1, pointerEvents: "none" }} />
+      )}
+      <Popover open={menuNodeId != null} anchorRef={menuAnchorRef} onClose={closeNodeMenu} className="wg-nodemenu" testId="graph-node-menu">
+        <button type="button" role="menuitem" className="wg-nodemenu-btn" data-testid="graph-menu-docs"
+          onClick={() => { const id = menuNodeId; closeNodeMenu(); if (id != null) setOpenDocsId(id); }}>📄 Xem docs</button>
+        <button type="button" role="menuitem" className="wg-nodemenu-btn" data-testid="graph-menu-focus"
+          onClick={() => { const id = menuNodeId; closeNodeMenu(); if (id != null) focusNote(id); }}>🎯 Focus</button>
+      </Popover>
+    </div>
+  );
+}
+
+/** GRAPH-NODE-ACTION D2 — the right docs side-panel. REUSES useWikiNote + the shared
+ *  StatusPill/WikiMarkdown/BacklinksPanel (mirrors /wiki/[id]). Honest states: loading hint,
+ *  error msg (never blank / never a fabricated note). A "→ mở full" deep-link + ✕ close. */
+function DocsSidePanel({ id, onClose }: { id: number; onClose: () => void }) {
+  const { note, backlinks, status, errMsg } = useWikiNote(id);
+  return (
+    <div className="panel wg-docs-panel" data-testid="graph-docs-panel">
+      <div className="phead">
+        <span className="kicker">Docs · #{id}</span>
+        <span className="sp" style={{ flex: 1 }} />
+        <Link className="link" href={`/wiki/${id}`} data-testid="graph-docs-full">→ mở full</Link>
+        <button type="button" className="wgraph-reset" onClick={onClose} data-testid="graph-docs-close" aria-label="Đóng" title="Đóng">✕</button>
+      </div>
+      <div className="wg-docs-body">
+        {status === "loading" ? (
+          <div className="hint" data-testid="graph-docs-loading">Đang tải note…</div>
+        ) : status === "error" ? (
+          <div className="hint neg" data-testid="graph-docs-error">{errMsg || "Không tải được note."}</div>
+        ) : note ? (
+          <>
+            <div className="wg-docs-head">
+              <StatusPill status={note.status} />
+              <h3 className="wg-docs-title" data-testid="graph-docs-title">{note.title ?? `#${note.id}`}</h3>
+            </div>
+            <WikiMarkdown content={note.content} testId="graph-docs-md" />
+            {backlinks && <BacklinksPanel backlinks={backlinks} />}
+          </>
+        ) : (
+          <div className="hint" data-testid="graph-docs-empty">Không có nội dung.</div>
+        )}
+      </div>
     </div>
   );
 }
