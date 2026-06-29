@@ -20,8 +20,7 @@
 
    States: loading · error · empty (0 in this filter — honest) · ready.
    ============================================================ */
-import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useWikiProposals } from "@/lib/useWiki";
 import type { ProposalFilter } from "@/lib/useWiki";
@@ -49,9 +48,10 @@ function kindMeta(k: string) {
   return KIND_META[k as WikiProposalKind] ?? { lbl: k, color: "var(--tx-1)", ic: "i-doc" as IconKey };
 }
 
+// WIKI-NO-APPROVAL #183: the "chờ duyệt" (pending) filter is GONE — AI-first means no manual
+// approval gate, so this is a pure AUDIT log. A rare legacy pending row still shows under "tất cả".
 const FILTERS: { value: ProposalFilter; label: string }[] = [
   { value: "accepted", label: "AI đã ghi" },
-  { value: "pending", label: "chờ duyệt" },
   { value: "rejected", label: "đã reject" },
   { value: "all", label: "tất cả" },
 ];
@@ -118,16 +118,12 @@ function PayloadBody({ p }: { p: WikiProposal }) {
 
 function ProposalCard({
   p,
-  selected,
-  onToggleSelect,
   onAccept,
   onReject,
   onReversed,
   busy,
 }: {
   p: WikiProposal;
-  selected: boolean;
-  onToggleSelect: (id: number) => void;
   onAccept: (id: number) => void;
   onReject: (id: number) => void;
   /** called after a successful reverse (soft-delete) so the list refetches. */
@@ -185,15 +181,6 @@ function ProposalCard({
   return (
     <div className={`wprop-card ${busy ? "deciding" : ""}`} data-testid="prop-card" data-prop-id={p.id} data-status={p.status}>
       <div className="wprop-head">
-        {isPending && (
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={() => onToggleSelect(p.id)}
-            aria-label={`Chọn proposal #${p.id}`}
-            data-testid="prop-select"
-          />
-        )}
         <span className="wprop-kind-badge" style={{ color: km.color, background: `color-mix(in oklch,${km.color} 14%,transparent)` }}>
           <Icon name={km.ic} /> {km.lbl}
         </span>
@@ -279,26 +266,11 @@ function ProposalCard({
 export default function WikiProposalsPage() {
   // WIKI-AIFIRST: default to `accepted` — the working set the human audits (autonomous
   // ON means ~all writes are accepted-by-agent:auto). Pending is now a rare legacy case.
-  const { proposals, counts, filter, setFilter, status, errMsg, reload, accept, reject, batchAccept } = useWikiProposals("accepted");
-  const router = useRouter();
+  // WIKI-NO-APPROVAL #183: pure audit log — no batch-accept gate. Per-row accept/reject stay
+  // (fail-closed) for a rare legacy pending row, but there's no headline batch CTA + no selection.
+  const { proposals, counts, filter, setFilter, status, errMsg, reload, accept, reject } = useWikiProposals("accepted");
 
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [batchErr, setBatchErr] = useState("");
-  const [batchNotice, setBatchNotice] = useState("");
-
-  const toggleSelect = useCallback((id: number) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-
-  // selection only meaningful for pending cards in view; prune on filter change.
-  const pendingIds = useMemo(() => proposals.filter((p) => p.status === "pending").map((p) => p.id), [proposals]);
-  const selectedInView = useMemo(() => [...selected].filter((id) => pendingIds.includes(id)), [selected, pendingIds]);
 
   const onAccept = useCallback(async (id: number) => {
     setBusyId(id);
@@ -317,31 +289,6 @@ export default function WikiProposalsPage() {
       setBusyId(null);
     }
   }, [reject]);
-
-  async function onBatchAccept() {
-    if (!selectedInView.length) return;
-    setBatchErr("");
-    setBatchNotice("");
-    setBatchBusy(true);
-    try {
-      const res = await batchAccept(selectedInView);
-      setSelected(new Set());
-      // A batch can PARTIALLY succeed (200 + failed>0). Surface the outcome honestly:
-      // failures are NOT a thrown error, so without this they'd silently vanish.
-      if (res) {
-        if (res.failed > 0) {
-          const failedIds = res.results.filter((r) => !r.ok).map((r) => `#${r.id} (${r.error ?? "lỗi"})`).join(", ");
-          setBatchErr(`Accept ${res.accepted}/${res.accepted + res.failed} — ${res.failed} lỗi: ${failedIds}`);
-        } else {
-          setBatchNotice(`✓ Đã accept ${res.accepted} proposal.`);
-        }
-      }
-    } catch (e) {
-      setBatchErr(e instanceof ApiError ? e.message : (e as Error).message);
-    } finally {
-      setBatchBusy(false);
-    }
-  }
 
   if (status === "loading") {
     return <div className="hint" style={{ padding: "24px 4px" }} data-testid="prop-loading">Đang tải proposal queue…</div>;
@@ -369,7 +316,7 @@ export default function WikiProposalsPage() {
               key={f.value}
               type="button"
               className={filter === f.value ? "on" : ""}
-              onClick={() => { setFilter(f.value); setSelected(new Set()); }}
+              onClick={() => setFilter(f.value)}
               data-testid={`prop-filter-${f.value}`}
             >
               {f.label}
@@ -392,24 +339,8 @@ export default function WikiProposalsPage() {
         <span className="tagchip" data-testid="prop-count-total">{total} tổng</span>
       </div>
 
-      {/* batch action bar (pending filter, ≥1 selected) */}
-      {filter === "pending" && pendingIds.length > 0 && (
-        <div className="panel wprop-banner" data-testid="prop-batch-bar" style={{ marginTop: 12 }}>
-          <span className="mut" style={{ fontSize: 12 }}>{selectedInView.length} đã chọn</span>
-          <span className="sp" style={{ flex: 1 }} />
-          {batchNotice && <span className="hint" style={{ color: "var(--green)" }} data-testid="prop-batch-notice">{batchNotice}</span>}
-          {batchErr && <span className="wprop-err" style={{ margin: 0 }} data-testid="prop-batch-error">⚠ {batchErr}</span>}
-          <button
-            type="button"
-            className="btn sm accent"
-            onClick={onBatchAccept}
-            disabled={batchBusy || selectedInView.length === 0}
-            data-testid="prop-batch-accept"
-          >
-            <Icon name="i-check" /> {batchBusy ? "Đang accept…" : `Accept ${selectedInView.length} đã chọn`}
-          </button>
-        </div>
-      )}
+      {/* WIKI-NO-APPROVAL #183: the batch-duyệt bar was removed — this is an audit log, not an
+          approval queue. No batch-accept CTA, no selection. */}
 
       {/* list / honest empty — per-filter so the accepted (default) empty reads as an
           AUDIT-LOG empty, NOT a queue empty (team-lead Chrome-gate: empty-state honest). */}
@@ -417,8 +348,8 @@ export default function WikiProposalsPage() {
         <div className="hint" style={{ padding: "24px 4px" }} data-testid="prop-empty">
           {filter === "accepted"
             ? "📭 Chưa có ghi nhớ AI nào — khi Claude Code (MCP) ghi vào Vault, mỗi lần ghi sẽ hiện ở đây."
-            : filter === "pending"
-              ? "✅ Không có proposal nào chờ duyệt (autonomous ON → AI ghi thẳng, hiếm khi có pending)."
+            : filter === "all"
+              ? "📭 Chưa có ghi nhớ AI nào."
               : `Không có proposal nào ở trạng thái “${filter}”.`}
         </div>
       ) : (
@@ -427,12 +358,10 @@ export default function WikiProposalsPage() {
             <ProposalCard
               key={p.id}
               p={p}
-              selected={selected.has(p.id)}
-              onToggleSelect={toggleSelect}
               onAccept={onAccept}
               onReject={onReject}
               onReversed={reload}
-              busy={busyId === p.id || batchBusy}
+              busy={busyId === p.id}
             />
           ))}
         </div>

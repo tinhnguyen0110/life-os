@@ -92,42 +92,38 @@ describe("P1 Nhật ký AI (AI audit-log, WIKI-AIFIRST)", () => {
     await waitFor(() => expect(rejectWikiProposal).toHaveBeenCalledWith(1, undefined));
   });
 
-  // batch-duyệt is now a DEMOTED legacy lane (only on the explicit pending filter, no
-  // longer the default headline). Switch to pending first to exercise it.
-  it("batch-accept selected pending → calls accept-batch with the ids + shows success notice", async () => {
-    getWikiProposals.mockResolvedValue(ok(PENDING));
-    batchAcceptWikiProposals.mockResolvedValueOnce(ok({ results: [{ id: 1, ok: true }, { id: 2, ok: true }], accepted: 2, failed: 0 }));
+  // WIKI-NO-APPROVAL #183: AI-first = no manual approval gate → the page is a PURE AUDIT log.
+  // The "chờ duyệt" filter, the batch-duyệt bar, and the per-card select checkbox are GONE.
+  it("🔴 #183 audit-only: NO 'chờ duyệt' filter, NO batch-accept bar, NO per-card select checkbox", async () => {
+    getWikiProposals.mockResolvedValue(ok(PENDING)); // even with pending rows present
     render(<WikiProposalsPage />);
     await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("prop-filter-pending"));
-    await waitFor(() => expect(screen.getAllByTestId("prop-card").length).toBe(2));
-    const sels = screen.getAllByTestId("prop-select");
-    fireEvent.click(sels[0]);
-    fireEvent.click(sels[1]);
-    fireEvent.click(screen.getByTestId("prop-batch-accept"));
-    await waitFor(() => expect(batchAcceptWikiProposals).toHaveBeenCalledWith({ ids: [1, 2] }));
-    expect(await screen.findByTestId("prop-batch-notice")).toHaveTextContent("2");
+    // the pending filter button is removed; accepted/rejected/all remain
+    expect(screen.queryByTestId("prop-filter-pending")).toBeNull();
+    expect(screen.getByTestId("prop-filter-accepted")).toBeInTheDocument();
+    expect(screen.getByTestId("prop-filter-rejected")).toBeInTheDocument();
+    expect(screen.getByTestId("prop-filter-all")).toBeInTheDocument();
+    // no batch machinery anywhere
+    expect(screen.queryByTestId("prop-batch-bar")).toBeNull();
+    expect(screen.queryByTestId("prop-batch-accept")).toBeNull();
+    expect(screen.queryByTestId("prop-select")).toBeNull();
+    expect(batchAcceptWikiProposals).not.toHaveBeenCalled();
   });
 
-  it("PARTIAL batch failure (200 + failed>0) → surfaced honestly, NOT swallowed", async () => {
+  it("🔴 #183: a legacy PENDING row (under default/all) keeps its per-row accept/reject (no batch gate)", async () => {
+    // a stray pending row still renders with its own accept/reject (fail-closed, per-row) —
+    // the audit log can still resolve an edge case, just without the headline batch CTA.
     getWikiProposals.mockResolvedValue(ok(PENDING));
-    // batch returns 200 but one id failed to apply — must NOT be treated as all-success.
-    batchAcceptWikiProposals.mockResolvedValueOnce(ok({
-      results: [{ id: 1, ok: true }, { id: 2, ok: false, error: "target note 5 not found" }],
-      accepted: 1, failed: 1,
-    }));
+    acceptWikiProposal.mockResolvedValueOnce(ok(prop({ id: 1, status: "accepted", appliedNoteId: 7 })));
     render(<WikiProposalsPage />);
-    await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("prop-filter-pending"));
     await waitFor(() => expect(screen.getAllByTestId("prop-card").length).toBe(2));
-    const sels = screen.getAllByTestId("prop-select");
-    fireEvent.click(sels[0]);
-    fireEvent.click(sels[1]);
-    fireEvent.click(screen.getByTestId("prop-batch-accept"));
-    const err = await screen.findByTestId("prop-batch-error");
-    expect(err).toHaveTextContent("1 lỗi");
-    expect(err).toHaveTextContent("#2");
-    expect(err).toHaveTextContent("target note 5 not found");
+    const card1 = screen.getAllByTestId("prop-card").find((c) => c.getAttribute("data-prop-id") === "1")!;
+    // per-row actions present (NOT a checkbox)
+    expect(within(card1).getByTestId("prop-accept")).toBeInTheDocument();
+    expect(within(card1).getByTestId("prop-reject")).toBeInTheDocument();
+    expect(within(card1).queryByTestId("prop-select")).toBeNull();
+    fireEvent.click(within(card1).getByTestId("prop-accept"));
+    await waitFor(() => expect(acceptWikiProposal).toHaveBeenCalledWith(1, undefined));
   });
 
   it("honest empty: 0 AI writes (accepted default) → audit-log empty message (not a fabricated card, not a queue-empty)", async () => {
@@ -180,7 +176,7 @@ describe("P1 Nhật ký AI (AI audit-log, WIKI-AIFIRST)", () => {
     expect(screen.getByText(/bởi human/i)).toBeInTheDocument();
   });
 
-  it("filter switch (pending→rejected) re-queries with the new status", async () => {
+  it("filter switch (→ rejected) re-queries with the new status", async () => {
     getWikiProposals.mockResolvedValueOnce(ok(PENDING)).mockResolvedValueOnce(ok({ proposals: [], counts: { pending: 2, accepted: 4, rejected: 1 } }));
     render(<WikiProposalsPage />);
     await waitFor(() => expect(screen.getByTestId("prop-screen")).toBeInTheDocument());
