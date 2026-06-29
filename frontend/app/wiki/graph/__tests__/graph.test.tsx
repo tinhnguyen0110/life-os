@@ -294,9 +294,9 @@ describe("W4 Graph Explorer", () => {
     const nodeCount = screen.getAllByTestId("graph-node").length;
     const labels = container.querySelectorAll("text.wgnode-lbl");
     expect(nodeCount).toBe(20);
-    // collision-cull + cap (default ≤ 8) → far fewer labels than nodes (no per-node pile-up).
+    // collision-cull + cap (F4(c) lowered the default to ≤ 5) → far fewer labels than nodes.
     expect(labels.length).toBeLessThan(nodeCount);
-    expect(labels.length).toBeLessThanOrEqual(8);
+    expect(labels.length).toBeLessThanOrEqual(5);
   });
 
   it("(E): hover always labels the hovered node (even if it was culled)", async () => {
@@ -380,18 +380,26 @@ describe("W4 Graph Explorer", () => {
     await withSyncRaf(async () => {
       render(<WikiGraphPage />);
       const svg = await screen.findByTestId("graph-svg");
-      const before = svg.getAttribute("viewBox")!.split(" ").map(Number); // the fitted box
+      // settle the fit-effect (snap to the fitted box) BEFORE measuring, so `before` is the
+      // fitted box deterministically (not a mid-fit DEFAULT_VIEW — that was the flake source).
+      flushRaf(2);
+      const before = svg.getAttribute("viewBox")!.split(" ").map(Number);
       act(() => { fireEvent.wheel(svg, { deltaY: -100, clientX: 380, clientY: 230 }); }); // wheel UP = zoom IN
-      // one step → eased PARTWAY (not a jump): w shrank but not all the way to the target.
-      flushRaf(1);
-      const step1 = svg.getAttribute("viewBox")!.split(" ").map(Number);
-      expect(step1[2]).toBeLessThan(before[2]); // already shrinking (zoom in)
-      // more steps → converges to the (smaller) target; never grows past the start.
-      flushRaf(20);
+      // ease toward the (smaller) target over frames → the SETTLED viewBox is zoomed IN.
+      // (Assert the converged invariant, not a single mid-lerp frame — the eased step count
+      // is timing-sensitive; the END state is the deterministic, meaningful check.)
+      let prevW = before[2];
+      let monotonic = true;
+      for (let i = 0; i < 25; i++) {
+        flushRaf(1);
+        const w = +svg.getAttribute("viewBox")!.split(" ")[2];
+        if (w > prevW + 1e-6) monotonic = false; // never GROWS (eased zoom-in, no bounce)
+        prevW = w;
+      }
       const settled = svg.getAttribute("viewBox")!.split(" ").map(Number);
-      expect(settled[2]).toBeLessThan(before[2]);          // ended zoomed in
-      expect(settled[2]).toBeLessThanOrEqual(step1[2]);    // monotonic toward the target (eased, not bouncing)
-      expect(settled[3]).toBeLessThan(before[3]);          // h shrank proportionally
+      expect(settled[2]).toBeLessThan(before[2]); // ended zoomed in (smaller w)
+      expect(settled[3]).toBeLessThan(before[3]); // h shrank proportionally
+      expect(monotonic).toBe(true);               // eased monotonically toward the target
     });
   });
 
@@ -542,5 +550,138 @@ describe("W4 Graph Explorer", () => {
     const [, , vw, vh] = svg.getAttribute("viewBox")!.split(" ").map(Number);
     expect(vw).toBeGreaterThan(0); // not a zero-width box
     expect(vh).toBeGreaterThan(0);
+  });
+
+  // ─────────── GRAPH-POLISH-B: degree-driven HIERARCHY (hub spread + size) ───────────
+  // helper: read a node's render-circle radius (the first <circle r=> in its <g>).
+  function nodeRadius(g: Element): number {
+    const c = g.querySelector("circle[r]");
+    return c ? parseFloat(c.getAttribute("r") || "0") : 0;
+  }
+  function nodeXY(g: Element): { x: number; y: number } {
+    const m = /translate\((-?[\d.]+),(-?[\d.]+)\)/.exec(g.getAttribute("transform") || "");
+    return m ? { x: +m[1], y: +m[2] } : { x: 0, y: 0 };
+  }
+
+  it("GRAPH-POLISH-B F2: render radius is MONOTONIC in degree + has a ≥6px floor (leaf clickable)", async () => {
+    mockNoteParam = null;
+    const VARIED: WikiGraph = {
+      center: null,
+      nodes: [
+        { id: 1, title: "leaf", status: "evergreen", degree: 0 },
+        { id: 2, title: "mid", status: "evergreen", degree: 4 },
+        { id: 3, title: "hub", status: "evergreen", degree: 12 },
+      ],
+      edges: [{ source: 2, target: 3, type: "relates", isResolved: true }],
+      clusters: [],
+    };
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(VARIED));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const byId = (id: string) => screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === id)!;
+    const rLeaf = nodeRadius(byId("1")), rMid = nodeRadius(byId("2")), rHub = nodeRadius(byId("3"));
+    expect(rLeaf).toBeGreaterThanOrEqual(6); // floor — a leaf stays a clickable target
+    expect(rMid).toBeGreaterThan(rLeaf);     // monotonic: higher degree → bigger
+    expect(rHub).toBeGreaterThan(rMid);      // hub clearly the biggest
+  });
+
+  it("GRAPH-POLISH-B F1: a HIGH-degree hub carves more space than a low-degree leaf (hierarchy spread)", async () => {
+    mockNoteParam = null;
+    // a hub (deg 10) + many leaves (deg 1, each linked only to the hub) → the hub should end
+    // up MORE separated from the field than an average leaf (degree drives personal space).
+    const HUBBY: WikiGraph = {
+      center: null,
+      nodes: [
+        { id: 100, title: "HUB", status: "evergreen", degree: 10 },
+        ...Array.from({ length: 10 }, (_, i) => ({ id: i + 1, title: `leaf${i + 1}`, status: "evergreen" as const, degree: 1 })),
+      ],
+      edges: Array.from({ length: 10 }, (_, i) => ({ source: 100, target: i + 1, type: "relates", isResolved: true })),
+      clusters: [],
+    };
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(HUBBY));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const gs = screen.getAllByTestId("graph-node");
+    const pts = new Map(gs.map((g) => [g.getAttribute("data-node-id")!, nodeXY(g)]));
+    // min pairwise distance from a node to ALL others = how much personal space it has.
+    const minDistTo = (id: string) => {
+      const p = pts.get(id)!;
+      let m = Infinity;
+      for (const [oid, q] of pts) if (oid !== id) m = Math.min(m, Math.hypot(p.x - q.x, p.y - q.y));
+      return m;
+    };
+    const hubSpace = minDistTo("100");
+    const avgLeafSpace = Array.from({ length: 10 }, (_, i) => minDistTo(`${i + 1}`)).reduce((a, b) => a + b, 0) / 10;
+    // the hub carves MORE personal space than the average leaf (F1 degree-charge lever works).
+    expect(hubSpace).toBeGreaterThan(avgLeafSpace);
+  });
+
+  it("GRAPH-POLISH-B: hierarchy layout is DETERMINISTIC (same input → same positions + radii)", async () => {
+    mockNoteParam = null;
+    getWikiGraphGlobal.mockResolvedValue(ok(GLOBAL));
+    const cap = async () => {
+      const { unmount } = render(<WikiGraphPage />);
+      await screen.findByTestId("graph-svg");
+      const snap = screen.getAllByTestId("graph-node").map((g) => `${g.getAttribute("data-node-id")}:${g.getAttribute("transform")}:${nodeRadius(g)}`);
+      unmount();
+      return snap.join("|");
+    };
+    expect(await cap()).toBe(await cap()); // deterministic — positions + radii identical
+  });
+
+  it("GRAPH-POLISH-B: a low-degree LEAF is still CLICKABLE (opens the note — #173 path intact)", async () => {
+    mockNoteParam = null;
+    const VARIED: WikiGraph = {
+      center: null,
+      nodes: [
+        { id: 7, title: "lonely leaf", status: "evergreen", degree: 1 },
+        { id: 8, title: "hub", status: "evergreen", degree: 6 },
+      ],
+      edges: [{ source: 7, target: 8, type: "relates", isResolved: true }],
+      clusters: [],
+    };
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(VARIED));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    mockReplace.mockClear();
+    const leaf = screen.getAllByTestId("graph-node").find((n) => n.getAttribute("data-node-id") === "7")!;
+    fireEvent.click(leaf);
+    expect(mockReplace).toHaveBeenCalledWith("/wiki/graph?note=7");
+  });
+
+  // ─────────── GRAPH-POLISH-B F5 (bold size) + F4 (readable labels) ───────────
+  it("GRAPH-POLISH-B F5: render-radius range is BOLD (hub ≥ ~2.5× a leaf — instant hierarchy)", async () => {
+    mockNoteParam = null;
+    const SPREAD: WikiGraph = {
+      center: null,
+      nodes: [
+        { id: 1, title: "leaf", status: "evergreen", degree: 0 },
+        { id: 2, title: "hub", status: "evergreen", degree: 16 },
+        ...Array.from({ length: 6 }, (_, i) => ({ id: i + 3, title: `n${i}`, status: "evergreen" as const, degree: 1 })),
+      ],
+      edges: Array.from({ length: 6 }, (_, i) => ({ source: 2, target: i + 3, type: "relates", isResolved: true })),
+      clusters: [],
+    };
+    getWikiGraphGlobal.mockResolvedValueOnce(ok(SPREAD));
+    render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const radii = screen.getAllByTestId("graph-node").map((g) => nodeRadius(g));
+    const minR = Math.min(...radii), maxR = Math.max(...radii);
+    expect(minR).toBeGreaterThanOrEqual(6);       // clickable floor
+    expect(maxR / minR).toBeGreaterThanOrEqual(2.5); // BOLD spread — a hub is visibly 2.5×+ a leaf
+  });
+
+  it("GRAPH-POLISH-B F4: a shown label has the HALO class (contrast) + a data-testid + clears the node radius", async () => {
+    mockNoteParam = "47";
+    getWikiGraph.mockResolvedValueOnce(ok(GRAPH)); // ego mode → labels render
+    const { container } = render(<WikiGraphPage />);
+    await screen.findByTestId("graph-svg");
+    const labels = container.querySelectorAll('[data-testid="graph-label"]');
+    expect(labels.length).toBeGreaterThan(0);
+    const lbl = labels[0] as SVGTextElement;
+    // F4(b) — the halo class is applied (paint-order stroke for contrast over a dense cluster).
+    expect(lbl.classList.contains("wgnode-lbl-halo")).toBe(true);
+    // F4(a) — the label y clears the node center (below the node, not on top): y > 0 + a margin.
+    expect(parseFloat(lbl.getAttribute("y") || "0")).toBeGreaterThan(11);
   });
 });

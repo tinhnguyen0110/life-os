@@ -92,22 +92,30 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
   //  · collide: soft push when two nodes overlap their layout radii (anti-stack).
   const REPEL = 9.7;                          // "repelForce" slider equivalent (10-ish)
   const CHARGE = Math.pow(REPEL, 3) / 1000;   // = −repel³ scaled (≈0.91) → pairwise f=CHARGE/d²
-  const LINK_FORCE = 0.9, SPRING_LEN = 16, CENTER = 0.055;
+  // GRAPH-POLISH-B F3 — more breathing room: gentler CENTER + longer SPRING_LEN so the graph
+  // spreads (hubs carve space) instead of piling; the #174 auto-fit viewBox re-frames it snug.
+  const LINK_FORCE = 0.9, SPRING_LEN = 22, CENTER = 0.035;
   const COLLIDE_STR = 0.5;
-  // per-node degree (for adaptive link strength + collide radius). Defensive: ≥1.
+  // per-node degree (for adaptive link strength + collide radius + the F1 charge lever). ≥1.
   const deg = new Map<number, number>(nodes.map((nd) => [nd.id, Math.max(1, nd.degree || 0)]));
-  // node layout-radius (Obsidian getSize shape max(8,min(3√(deg+1),30)) scaled to 0..100).
-  const layoutR = (id: number) => 1.0 + 0.32 * Math.min(3 * Math.sqrt((deg.get(id) ?? 1) + 1), 30) / 3;
+  // GRAPH-POLISH-B F1 — degree-scaled charge multiplier: a HUB exerts MORE repulsion than a
+  // leaf, so hubs carve personal space + leaves bunch near their hub (hierarchy). Applied as
+  // the EXERTING node's multiplier on the OTHER's displacement (asymmetric from a symmetric loop).
+  const chargeMul = (id: number) => 1 + 0.5 * Math.sqrt(deg.get(id) ?? 1);
+  // GRAPH-POLISH-B F2 — collide bubble tracks the WIDER render-radius hierarchy (bigger hubs →
+  // bigger personal bubble → they separate). layoutR spread widened vs #174.
+  const layoutR = (id: number) => 0.9 + 0.5 * Math.min(3 * Math.sqrt((deg.get(id) ?? 1) + 1), 34) / 3;
   for (let it = 0; it < iters; it++) {
     const disp = new Map<number, Pos>(ids.map((id) => [id, { x: 0, y: 0 }]));
-    // pairwise repulsion (charge cube) + soft collide (O(n²) — fine at vault scale).
+    // pairwise repulsion (charge cube × degree-lever) + soft collide (O(n²) — fine at vault scale).
     for (let i = 0; i < n; i++) {
       const pi = pos.get(ids[i])!; const di = disp.get(ids[i])!;
+      const muli = chargeMul(ids[i]);
       for (let j = i + 1; j < n; j++) {
         const pj = pos.get(ids[j])!; const dj = disp.get(ids[j])!;
         let dx = pi.x - pj.x, dy = pi.y - pj.y;
         let d2 = dx * dx + dy * dy; if (d2 < 0.01) { dx = (hash01(ids[i] + it) - 0.5); dy = (hash01(ids[j] + it) - 0.5); d2 = 0.01; }
-        const f = CHARGE / d2; // charge-cube repulsion
+        const f = CHARGE / d2; // charge-cube repulsion (base)
         let fx = dx * f, fy = dy * f;
         // soft collide: if closer than the sum of layout radii, push apart gently.
         const dist = Math.sqrt(d2);
@@ -116,7 +124,10 @@ function globalLayout(nodes: WikiGraphNode[], edges: WikiGraphEdge[]): Map<numbe
           const push = COLLIDE_STR * (minD - dist) / dist;
           fx += dx * push; fy += dy * push;
         }
-        di.x += fx; di.y += fy; dj.x -= fx; dj.y -= fy;
+        // F1 — i is pushed by j's charge (mulj), j is pushed by i's charge (muli). A hub j
+        // shoves leaf i hard; leaf i barely moves hub j → hubs get personal space, leaves bunch.
+        const mulj = chargeMul(ids[j]);
+        di.x += fx * mulj; di.y += fy * mulj; dj.x -= fx * muli; dj.y -= fy * muli;
       }
     }
     // edge springs (attraction) — ADAPTIVE strength = linkForce / min(deg_s, deg_t).
@@ -411,10 +422,12 @@ function WikiGraphInner() {
     if (!graph || !isGlobal) return ids; // ego labels everything itself
     // candidacy threshold: zoomed-IN → deg≥2 pool (room to show more), default → deg≥4 pool.
     const minDeg = isZoomedIn ? 2 : 4;
-    // hard cap on labels (Obsidian-global is sparse). More when zoomed in.
-    const cap = isZoomedIn ? 24 : 8;
+    // GRAPH-POLISH-B F4(c) — FEWER labels by default (few-and-readable > many-and-piled).
+    // Obsidian global shows very few; hover/zoom-in reveals more.
+    const cap = isZoomedIn ? 16 : 5;
     const placed: { x1: number; y1: number; x2: number; y2: number }[] = [];
-    const CHAR_W = 5.4, FONT_H = 12, PAD = 2; // 10px label, ~0.54em/char, a little breathing room
+    // 10.5px label + the 3.5px halo → a touch wider; pad generously so labels don't kiss.
+    const CHAR_W = 5.6, FONT_H = 13, PAD = 3;
     const cand = graph.nodes
       .filter((n) => n.degree >= minDeg && pos.has(n.id))
       .sort((a, b) => b.degree - a.degree || a.id - b.id); // degree desc, id tiebreak = deterministic
@@ -422,11 +435,11 @@ function WikiGraphInner() {
       if (ids.size >= cap) break;
       const p = pos.get(n.id)!;
       const nx = (p.x / 100) * W, ny = (p.y / 100) * H;
-      const r = Math.max(8, Math.min(3 * Math.sqrt(n.degree + 1), 30));
+      const r = Math.max(6, Math.min(4 + 6 * Math.sqrt(n.degree), 30)); // match the F5 render radius
       const text = n.title && n.title.length > 22 ? n.title.slice(0, 20) + "…" : (n.title || `#${n.id}`);
       const halfW = (text.length * CHAR_W) / 2 + PAD;
-      // the label sits centered under the node at y = ny + r + 11 (matches the render).
-      const cy = ny + r + 11;
+      // the label sits centered under the node at the F4 y-offset (matches the render).
+      const cy = ny + r + Math.max(12, r * 0.5 + 7);
       const box = { x1: nx - halfW, y1: cy - FONT_H / 2, x2: nx + halfW, y2: cy + FONT_H / 2 };
       const overlaps = placed.some((q) => box.x1 < q.x2 && box.x2 > q.x1 && box.y1 < q.y2 && box.y2 > q.y1);
       if (overlaps) continue;
@@ -474,9 +487,11 @@ function WikiGraphInner() {
     const p = pos.get(n.id);
     if (!p) return null;
     const x = (p.x / 100) * W, y = (p.y / 100) * H;
-    // GRAPH-POLISH-A (B) — Obsidian node sizing: max(8, min(3·√(deg+1), 30)). Hubs bigger,
-    // leaves smaller. Ego mode scales up a touch for the focused view.
-    const r = (isGlobal ? 1 : 1.25) * Math.max(8, Math.min(3 * Math.sqrt(n.degree + 1), 30));
+    // GRAPH-POLISH-B F5 (STRONGER) — BOLD size hierarchy, a hub reads as 3-4× a leaf at a
+    // glance. leaf (deg0) → 6px floor (clickable); deg1 → ~10; deg4 → ~16; top hub → ~30.
+    // A bigger √-coefficient separates even at the low real degrees in this vault. Collide
+    // uses this big radius → hubs carve room. "Glance → that big one is a hub."
+    const r = (isGlobal ? 1 : 1.2) * Math.max(6, Math.min(4 + 6 * Math.sqrt(n.degree), 30));
     const isCenter = !isGlobal && n.id === graph?.center;
     const col = STATUS_COLOR[n.status] ?? "var(--tx-1)";
     const isOrphan = n.degree === 0 && !isCenter;
@@ -510,7 +525,16 @@ function WikiGraphInner() {
         <circle r={r} fill={col} fillOpacity={isOrphan ? 0.3 : 1} style={isCenter ? { filter: `drop-shadow(0 0 8px ${col})` } : undefined} />
         {orphanRing && <circle r={r + 3} fill="none" stroke="var(--red)" strokeWidth={highlightOrphan ? 1.6 : 1} strokeDasharray="2 2" />}
         {showLabel && (
-          <text y={r + 11} className="wgnode-lbl" style={isCenter ? { fontWeight: 700, fill: "var(--tx-0)" } : undefined}>{label}</text>
+          // GRAPH-POLISH-B F4 — READABLE labels: (a) y clears the (bigger) node radius so the
+          // text lands BELOW it, not on top; (b) bright fill (--tx-0) + a dark HALO via
+          // paint-order:stroke + a bg-colored stroke → reads over a dense cluster. data-testid
+          // for the test. (Center node = bold, same.)
+          <text
+            y={r + Math.max(12, r * 0.5 + 7)}
+            className="wgnode-lbl wgnode-lbl-halo"
+            data-testid="graph-label"
+            style={isCenter ? { fontWeight: 700 } : undefined}
+          >{label}</text>
         )}
         {!isGlobal && <text y={3} textAnchor="middle" className="wgnode-id">{n.id}</text>}
       </g>

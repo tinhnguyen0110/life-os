@@ -787,7 +787,19 @@ h2.wmd-h { font-size:18px; } h3.wmd-h { font-size:15.5px; } h4.wmd-h { font-size
 .wedge-lbl { font-family:var(--mono); font-size:8px; fill:var(--tx-2); text-anchor:middle; }
 .wgnode { cursor:pointer; }
 .wgnode:hover circle { filter:brightness(1.2); }
-.wgnode-lbl { font-family:var(--sans); font-size:10px; fill:var(--tx-1); text-anchor:middle; }
+.wgnode-lbl { font-family:var(--sans); font-size:10.5px; font-weight:500; fill:var(--tx-0); text-anchor:middle; }
+/* GRAPH-POLISH-B F4 — a dark HALO behind BRIGHT label text (paint-order:stroke draws the
+   stroke FIRST, under the fill) so EVERY label reads over the dense cluster / on top of the
+   orange/green nodes. Combined selector (.wgnode-lbl.wgnode-lbl-halo) → guaranteed to win
+   specificity over the base .wgnode-lbl, so the bright fill + halo always apply. */
+.wgnode-lbl.wgnode-lbl-halo {
+  paint-order: stroke;
+  stroke: var(--bg-0);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+  fill: var(--tx-0);   /* bright text for ALL labels (not just the center node) */
+  font-weight: 500;
+}
 .wgnode-id { font-family:var(--mono); font-size:9px; font-weight:700; fill:var(--bg-0); }
 .wgraph-side { display:flex; flex-direction:column; gap:14px; }
 .wfilter-row { display:flex; align-items:center; gap:10px; font-size:12px; justify-content:space-between; }
